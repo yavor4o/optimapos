@@ -1,3 +1,5 @@
+# products/admin/product.py
+
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
@@ -129,7 +131,7 @@ class ProductAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         (_('Unit Configuration'), {
-            'fields': ('base_unit', 'unit_type', 'primary_plu')
+            'fields': ('base_unit', 'unit_type')  # REMOVED primary_plu
         }),
         (_('Settings'), {
             'fields': ('tax_group', 'track_batches')
@@ -212,15 +214,17 @@ class ProductAdmin(admin.ModelAdmin):
     cost_info.short_description = _('Cost Info')
 
     def plu_info(self, obj):
-        """PLU codes information"""
+        """PLU codes information - using related PLU objects"""
+        primary_plu = obj.plu_codes.filter(is_primary=True).first()
+        other_plus = obj.plu_codes.filter(is_active=True).exclude(is_primary=True)[:3]
+
         plu_codes = []
 
-        if obj.primary_plu:
-            plu_codes.append(f"<strong>{obj.primary_plu}</strong>")
+        if primary_plu:
+            plu_codes.append(f"<strong>{primary_plu.plu_code}</strong>")
 
-        for plu in obj.plu_codes.all()[:3]:  # Show first 3
-            if plu.plu_code != obj.primary_plu:
-                plu_codes.append(plu.plu_code)
+        for plu in other_plus:
+            plu_codes.append(plu.plu_code)
 
         if obj.plu_codes.count() > 3:
             plu_codes.append("...")
@@ -260,6 +264,11 @@ class ProductAdmin(admin.ModelAdmin):
 
         if obj.track_batches:
             summary_parts.append("<strong>Batch Tracking:</strong> Enabled")
+
+        # PLU information
+        primary_plu = obj.plu_codes.filter(is_primary=True).first()
+        if primary_plu:
+            summary_parts.append(f"<strong>Primary PLU:</strong> {primary_plu.plu_code}")
 
         return mark_safe('<br>'.join(summary_parts))
 

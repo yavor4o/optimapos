@@ -69,6 +69,13 @@ class Product(models.Model):
         blank=True,
         verbose_name=_('Product Group')
     )
+    product_type = models.ForeignKey(  # ДОБАВИ ТОВА
+        'nomenclatures.ProductType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_('Product Type')
+    )
 
 
     # Unit configuration
@@ -92,13 +99,6 @@ class Product(models.Model):
         verbose_name=_('Tax Group')
     )
 
-    # PLU codes (for weight-based products)
-    primary_plu = models.CharField(
-        _('Primary PLU Code'),
-        max_length=10,
-        blank=True,
-        help_text=_('Main PLU code for weight-based products')
-    )
 
     # Inventory tracking
     track_batches = models.BooleanField(

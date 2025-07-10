@@ -204,13 +204,13 @@ class POSLocation(models.Model):
         max_length=100
     )
 
-    # # Връзка със склад
-    # warehouse = models.ForeignKey(
-    #     'warehouse.Warehouse',
-    #     on_delete=models.PROTECT,
-    #     related_name='pos_locations',
-    #     verbose_name=_('Warehouse')
-    # )
+    # Връзка със склад
+    warehouse = models.ForeignKey(
+        'warehouse.Warehouse',
+        on_delete=models.PROTECT,
+        related_name='pos_locations',
+        verbose_name=_('Warehouse')
+    )
 
     # Адрес (ако е различен от склада)
     address = models.TextField(
@@ -246,13 +246,13 @@ class POSLocation(models.Model):
         help_text=_('Whether customer selection is mandatory')
     )
 
-    # default_customer = models.ForeignKey(
-    #     'partners.Customer',
-    #     on_delete=models.SET_NULL,
-    #     null=True,
-    #     blank=True,
-    #     help_text=_('Default customer for anonymous sales')
-    # )
+    default_customer = models.ForeignKey(
+        'partners.Customer',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text=_('Default customer for anonymous sales')
+    )
 
     # Принтери
     receipt_printer = models.CharField(
