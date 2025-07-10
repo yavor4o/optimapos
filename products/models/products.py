@@ -336,13 +336,6 @@ class Product(models.Model):
                 'unit_type': 'Weight-based products should have at least one PLU code'
             })
 
-        # Batch tracking validation
-        if (self.track_batches and
-                self.product_type and
-                not self.product_type.requires_expiry_date):
-            # Warning, not error
-            pass
-
         # Code validation
         if self.code:
             self.code = self.code.upper().strip()
@@ -358,7 +351,7 @@ class Product(models.Model):
             })
 
         if self.current_stock_qty < 0:
-            self.current_stock_qty = Decimal('0.000')  # Auto-correct
+            self.current_stock_qty = Decimal('0.000')
 
     def save(self, *args, **kwargs):
         self.full_clean()
