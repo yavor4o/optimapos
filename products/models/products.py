@@ -4,29 +4,194 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 from django.utils import timezone
 from .base import ProductType, ProductGroup, Brand
-
+from django.db.models import Q, Sum, Count, F, Avg
+from decimal import Decimal
 
 class ProductManager(models.Manager):
-    """Custom manager for products"""
+    """Enhanced manager for products with business logic queries"""
 
     def active(self):
+        """Only active products"""
         return self.filter(is_active=True)
 
     def by_type(self, product_type):
+        """Products by specific type"""
         return self.filter(product_type=product_type, is_active=True)
 
     def by_group(self, group):
+        """Products by specific group"""
         return self.filter(product_group=group, is_active=True)
 
     def weight_based(self):
-        return self.filter(unit_type=Product.WEIGHT, is_active=True)
+        """Products sold by weight"""
+        return self.filter(unit_type=self.model.WEIGHT, is_active=True)
+
+    def piece_based(self):
+        """Products sold by piece"""
+        return self.filter(unit_type=self.model.PIECE, is_active=True)
 
     def with_plu(self):
+        """Products that have PLU codes"""
         return self.filter(
-            models.Q(primary_plu__isnull=False) |
-            models.Q(plu_codes__isnull=False),
+            plu_codes__isnull=False,
+            plu_codes__is_active=True,
             is_active=True
         ).distinct()
+
+    def without_plu(self):
+        """Products without PLU codes"""
+        return self.filter(
+            plu_codes__isnull=True,
+            is_active=True
+        )
+
+    def with_barcodes(self):
+        """Products that have barcodes"""
+        return self.filter(
+            barcodes__isnull=False,
+            barcodes__is_active=True,
+            is_active=True
+        ).distinct()
+
+    def without_barcodes(self):
+        """Products without barcodes"""
+        return self.filter(
+            barcodes__isnull=True,
+            is_active=True
+        )
+
+    def with_stock(self):
+        """Products with available stock"""
+        return self.filter(
+            current_stock_qty__gt=0,
+            is_active=True
+        )
+
+    def without_stock(self):
+        """Products with zero stock"""
+        return self.filter(
+            current_stock_qty=0,
+            is_active=True
+        )
+
+    def low_stock(self, threshold=10):
+        """Products with stock below threshold"""
+        return self.filter(
+            current_stock_qty__lte=threshold,
+            current_stock_qty__gt=0,
+            is_active=True
+        )
+
+    def high_value(self, min_value=1000):
+        """Products with high inventory value"""
+        return self.annotate(
+            inventory_value=F('current_stock_qty') * F('current_avg_cost')
+        ).filter(
+            inventory_value__gte=min_value,
+            is_active=True
+        )
+
+    def by_brand(self, brand):
+        """Products by specific brand"""
+        return self.filter(brand=brand, is_active=True)
+
+    def without_cost(self):
+        """Products without cost data"""
+        return self.filter(
+            current_avg_cost=0,
+            is_active=True
+        )
+
+    def batch_tracked(self):
+        """Products with batch tracking enabled"""
+        return self.filter(track_batches=True, is_active=True)
+
+    def recent_purchases(self, days=30):
+        """Products purchased in last N days"""
+        from django.utils import timezone
+        from datetime import timedelta
+
+        cutoff_date = timezone.now().date() - timedelta(days=days)
+        return self.filter(
+            last_purchase_date__gte=cutoff_date,
+            is_active=True
+        )
+
+    def search(self, query):
+        """Search products by code, name, or barcode"""
+        if not query:
+            return self.none()
+
+        return self.filter(
+            Q(code__icontains=query) |
+            Q(name__icontains=query) |
+            Q(barcodes__barcode__icontains=query) |
+            Q(plu_codes__plu_code__icontains=query),
+            is_active=True
+        ).distinct()
+
+    def top_by_value(self, limit=10):
+        """Top products by inventory value"""
+        return self.annotate(
+            inventory_value=F('current_stock_qty') * F('current_avg_cost')
+        ).filter(
+            is_active=True
+        ).order_by('-inventory_value')[:limit]
+
+    def with_multiple_units(self):
+        """Products with multiple packaging units"""
+        return self.annotate(
+            unit_count=Count('packagings', filter=Q(packagings__is_active=True))
+        ).filter(
+            unit_count__gt=0,
+            is_active=True
+        )
+
+    def by_tax_group(self, tax_group):
+        """Products by tax group"""
+        return self.filter(tax_group=tax_group, is_active=True)
+
+    def food_products(self):
+        """Food products only"""
+        return self.filter(
+            product_type__category='FOOD',
+            is_active=True
+        )
+
+    def non_food_products(self):
+        """Non-food products"""
+        return self.filter(
+            product_type__category__in=['NONFOOD', 'TOBACCO', 'ALCOHOL'],
+            is_active=True
+        )
+
+    def requiring_expiry(self):
+        """Products that require expiry date tracking"""
+        return self.filter(
+            product_type__requires_expiry_date=True,
+            is_active=True
+        )
+
+    def bulk_update_costs(self, cost_multiplier):
+        """Bulk update costs by multiplier (for inflation adjustments)"""
+        return self.filter(
+            current_avg_cost__gt=0,
+            is_active=True
+        ).update(
+            current_avg_cost=F('current_avg_cost') * cost_multiplier,
+            last_purchase_cost=F('last_purchase_cost') * cost_multiplier
+        )
+
+    def inventory_summary(self):
+        """Get overall inventory summary"""
+        return self.filter(is_active=True).aggregate(
+            total_products=Count('id'),
+            total_value=Sum(F('current_stock_qty') * F('current_avg_cost')),
+            total_quantity=Sum('current_stock_qty'),
+            avg_cost=Avg('current_avg_cost'),
+            products_with_stock=Count('id', filter=Q(current_stock_qty__gt=0)),
+            products_without_cost=Count('id', filter=Q(current_avg_cost=0))
+        )
 
 
 class Product(models.Model):
@@ -162,6 +327,21 @@ class Product(models.Model):
 
     def clean(self):
         super().clean()
+
+        # Weight-based products should have PLU codes
+        if (self.unit_type == self.WEIGHT and
+                self.pk and  # Only for existing products
+                not self.plu_codes.filter(is_active=True).exists()):
+            raise ValidationError({
+                'unit_type': 'Weight-based products should have at least one PLU code'
+            })
+
+        # Batch tracking validation
+        if (self.track_batches and
+                self.product_type and
+                not self.product_type.requires_expiry_date):
+            # Warning, not error
+            pass
 
         # Code validation
         if self.code:
