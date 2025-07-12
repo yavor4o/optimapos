@@ -1,4 +1,4 @@
-# purchases/models/base.py
+# purchases/models/base.py - ОБНОВИ САМО DocumentManager И LineManager
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -6,33 +6,159 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 from django.conf import settings
+from django.db.models import Q, Sum, Count, Avg
+from datetime import timedelta
 
 
 class DocumentManager(models.Manager):
-    """Manager за purchase документи"""
+    """Manager за purchase документи - ОБНОВЕН"""
 
     def draft(self):
-        """Връща draft документи"""
         return self.filter(status='draft')
 
     def confirmed(self):
-        """Връща потвърдени документи"""
         return self.filter(status='confirmed')
 
     def received(self):
-        """Връща получени документи"""
         return self.filter(status='received')
 
     def paid(self):
-        """Връща платени документи"""
         return self.filter(is_paid=True)
 
     def unpaid(self):
-        """Връща неплатени документи"""
         return self.filter(is_paid=False)
 
+    def active(self):
+        """Активни (не отменени) документи"""
+        return self.exclude(status='cancelled')
+
+    def pending_receipt(self):
+        """Потвърдени но неполучени до днес"""
+        return self.filter(
+            status='confirmed',
+            delivery_date__lte=timezone.now().date()
+        )
+
+    def pending_payment(self):
+        """Получени но неплатени"""
+        return self.filter(
+            status__in=['received', 'closed'],
+            is_paid=False
+        )
+
+    def overdue_payment(self, days_threshold: int = 0):
+        """Просрочени плащания"""
+        cutoff_date = timezone.now().date() - timedelta(days=days_threshold)
+        return self.filter(
+            is_paid=False,
+            delivery_date__lt=cutoff_date
+        ).exclude(status='cancelled')
+
+    def due_soon(self, days_ahead: int = 7):
+        """Падеж скоро"""
+        future_date = timezone.now().date() + timedelta(days=days_ahead)
+        return self.filter(
+            is_paid=False,
+            delivery_date__lte=future_date,
+            delivery_date__gte=timezone.now().date()
+        )
+
+    def today_deliveries(self):
+        """Доставки днес"""
+        today = timezone.now().date()
+        return self.filter(delivery_date=today)
+
+    def this_week_deliveries(self):
+        """Доставки тази седмица"""
+        today = timezone.now().date()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        return self.filter(delivery_date__range=[week_start, week_end])
+
+    def this_month(self):
+        """Документи този месец"""
+        today = timezone.now().date()
+        month_start = today.replace(day=1)
+        return self.filter(created_at__date__gte=month_start)
+
+    def for_supplier(self, supplier):
+        return self.filter(supplier=supplier)
+
+    def for_location(self, location):
+        return self.filter(location=location)
+
+    def large_orders(self, threshold: Decimal = Decimal('1000.00')):
+        """Големи поръчки"""
+        return self.filter(grand_total__gte=threshold)
+
+    def with_discounts(self):
+        """С отстъпки"""
+        return self.filter(discount_amount__gt=0)
+
+    def with_quality_issues(self):
+        """Документи с качествени проблеми"""
+        return self.filter(lines__quality_approved=False).distinct()
+
+    def expiring_soon(self, days: int = 30):
+        """Документи с продукти изтичащи скоро"""
+        cutoff_date = timezone.now().date() + timedelta(days=days)
+        return self.filter(
+            lines__expiry_date__isnull=False,
+            lines__expiry_date__lte=cutoff_date
+        ).distinct()
+
+    def search(self, query: str):
+        """Търсене в документи"""
+        return self.filter(
+            Q(document_number__icontains=query) |
+            Q(supplier__name__icontains=query) |
+            Q(supplier__company_name__icontains=query) |
+            Q(supplier_document_number__icontains=query) |
+            Q(external_reference__icontains=query) |
+            Q(notes__icontains=query)
+        )
+
+    def summary_stats(self):
+        """Статистики"""
+        return self.aggregate(
+            total_count=Count('id'),
+            total_amount=Sum('grand_total'),
+            avg_amount=Avg('grand_total'),
+            draft_count=Count('id', filter=Q(status='draft')),
+            confirmed_count=Count('id', filter=Q(status='confirmed')),
+            received_count=Count('id', filter=Q(status='received')),
+            paid_count=Count('id', filter=Q(is_paid=True)),
+            unpaid_count=Count('id', filter=Q(is_paid=False)),
+        )
+
+    def get_dashboard_summary(self):
+        """Dashboard данни"""
+        today = timezone.now().date()
+
+        basic_stats = self.summary_stats()
+        urgent_deliveries = self.today_deliveries().count()
+        overdue_payments = self.overdue_payment().count()
+        due_soon_payments = self.due_soon().count()
+
+        recent_docs = self.filter(
+            created_at__date__gte=today - timedelta(days=7)
+        ).order_by('-created_at')[:5]
+
+        return {
+            'basic_stats': basic_stats,
+            'urgent': {
+                'deliveries_today': urgent_deliveries,
+                'overdue_payments': overdue_payments,
+                'due_soon_payments': due_soon_payments,
+            },
+            'recent_activity': list(recent_docs.values(
+                'document_number', 'supplier__name', 'grand_total',
+                'status', 'delivery_date', 'created_at'
+            ))
+        }
+
     def overdue(self, supplier=None):
-        """Връща просрочени документи"""
+        """Просрочени документи - стария метод за съвместимост"""
         from datetime import timedelta
 
         queryset = self.filter(is_paid=False, status__in=['received', 'closed'])
@@ -46,16 +172,8 @@ class DocumentManager(models.Manager):
 
         return queryset
 
-    def for_location(self, location):
-        """Връща документи за конкретна локация"""
-        return self.filter(location=location)
-
-    def for_supplier(self, supplier):
-        """Връща документи за конкретен доставчик"""
-        return self.filter(supplier=supplier)
-
     def in_date_range(self, date_from, date_to):
-        """Връща документи в определен период"""
+        """Документи в период - стария метод"""
         queryset = self.all()
         if date_from:
             queryset = queryset.filter(document_date__gte=date_from)
@@ -64,7 +182,7 @@ class DocumentManager(models.Manager):
         return queryset
 
     def with_totals(self):
-        """Анотира с общи суми"""
+        """Анотира с общи суми - стария метод"""
         return self.annotate(
             lines_count=models.Count('lines'),
             total_quantity=models.Sum('lines__quantity'),
@@ -73,28 +191,42 @@ class DocumentManager(models.Manager):
 
 
 class LineManager(models.Manager):
-    """Manager за редове в документи"""
+    """Manager за редове в документи - ОБНОВЕН"""
 
     def for_product(self, product):
-        """Връща редове за определен продукт"""
         return self.filter(product=product)
 
     def with_discount(self):
-        """Връща редове с отстъпки"""
         return self.filter(discount_percent__gt=0)
 
     def expired_soon(self, days=30):
-        """Връща редове с products които изтичат скоро"""
-        from datetime import timedelta
-
         cutoff_date = timezone.now().date() + timedelta(days=days)
         return self.filter(
             expiry_date__lte=cutoff_date,
             expiry_date__isnull=False
         )
 
+    def quality_issues(self):
+        """Редове с качествени проблеми"""
+        return self.filter(quality_approved=False)
+
+    def over_received(self):
+        """Редове с повече получено от поръчано"""
+        return self.filter(received_quantity__gt=models.F('quantity'))
+
+    def under_received(self):
+        """Редове с по-малко получено от поръчано"""
+        return self.filter(received_quantity__lt=models.F('quantity'))
+
+    def with_variance(self):
+        """Редове с разлика между поръчано и получено"""
+        return self.exclude(received_quantity=models.F('quantity'))
+
+    def by_batch(self, batch_number):
+        """Редове с конкретен batch"""
+        return self.filter(batch_number=batch_number)
+
     def with_price_analysis(self):
-        """Анотира с price analysis"""
         return self.select_related(
             'product',
             'unit',
@@ -103,6 +235,9 @@ class LineManager(models.Manager):
             'product__packagings'
         )
 
+
+# ОСТАНАЛИТЕ КЛАСОВЕ ОСТАВАТ СЪЩИТЕ (BaseDocument, BaseDocumentLine)...
+# Просто добавям imports ако липсват
 
 class BaseDocument(models.Model):
     """Базов абстрактен клас за всички purchase документи"""
@@ -196,27 +331,21 @@ class BaseDocument(models.Model):
         return f"{self.document_number} - {self.document_date}"
 
     def can_be_modified(self):
-        """Проверява дали документът може да бъде модифициран"""
         return self.status in [self.DRAFT, self.CONFIRMED]
 
     def can_be_received(self):
-        """Проверява дали документът може да бъде получен"""
         return self.status in [self.CONFIRMED]
 
     def can_be_cancelled(self):
-        """Проверява дали документът може да бъде отказан"""
         return self.status in [self.DRAFT, self.CONFIRMED]
 
     def recalculate_totals(self):
-        """Преизчислява общите суми на базата на редовете"""
         lines = self.lines.all()
-
         self.subtotal = sum(line.line_total for line in lines)
         self.vat_amount = sum(line.vat_amount for line in lines)
         self.grand_total = self.subtotal + self.vat_amount - self.discount_amount
 
     def get_status_display_badge(self):
-        """Връща HTML badge за статуса"""
         colors = {
             self.DRAFT: '#6C757D',
             self.CONFIRMED: '#0D6EFD',
@@ -225,10 +354,8 @@ class BaseDocument(models.Model):
             self.PAID: '#6F42C1',
             self.CLOSED: '#495057'
         }
-
         color = colors.get(self.status, '#6C757D')
         display = self.get_status_display()
-
         return f'<span style="background-color: {color}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{display}</span>'
 
 
@@ -254,7 +381,7 @@ class BaseDocumentLine(models.Model):
         verbose_name=_('Unit')
     )
 
-    # Количество в базова единица (автоматично изчислено)
+    # Количество в базова единица
     quantity_base_unit = models.DecimalField(
         _('Quantity (Base Unit)'),
         max_digits=10,
@@ -325,21 +452,13 @@ class BaseDocumentLine(models.Model):
         ordering = ['line_number']
 
     def clean(self):
-        """Валидации на реда"""
         super().clean()
-
         if self.quantity <= 0:
-            raise ValidationError({
-                'quantity': _('Quantity must be positive')
-            })
-
+            raise ValidationError({'quantity': _('Quantity must be positive')})
         if self.unit_price < 0:
-            raise ValidationError({
-                'unit_price': _('Unit price cannot be negative')
-            })
+            raise ValidationError({'unit_price': _('Unit price cannot be negative')})
 
     def save(self, *args, **kwargs):
-        """Автоматично изчислява полетата при записване"""
         # Изчисляваме количеството в базова единица
         if self.product and self.unit:
             conversion_factor = self.get_conversion_factor()
@@ -357,44 +476,31 @@ class BaseDocumentLine(models.Model):
         # Изчисляваме общата сума на реда
         self.line_total = self.final_unit_price * self.quantity
 
-        # VAT изчисления (ако е нужно)
+        # VAT изчисления
         if hasattr(self.product, 'tax_group') and self.product.tax_group:
             self.vat_amount = self.line_total * (self.product.tax_group.rate / 100)
 
         super().save(*args, **kwargs)
 
     def get_conversion_factor(self):
-        """Връща коефициента за преобразуване към базова единица"""
         if not self.product or not self.unit:
             return Decimal('1.00')
-
-        # Ако единицата е базовата единица на продукта
         if self.unit == self.product.base_unit:
             return Decimal('1.00')
-
-        # Търсим packaging rule за тази единица
         try:
             packaging = self.product.packagings.get(unit=self.unit)
             return packaging.conversion_factor
         except:
-            return Decimal('1.00')  # Default conversion
+            return Decimal('1.00')
 
     def get_markup_percentage(self, current_sale_price=None):
-        """Изчислява markup процента спрямо продажна цена"""
-        if not current_sale_price:
+        if not current_sale_price or self.final_unit_price == 0:
             return None
-
-        if self.final_unit_price == 0:
-            return None
-
         markup = ((current_sale_price - self.final_unit_price) / self.final_unit_price) * 100
         return markup
 
     def suggest_sale_price(self, markup_percentage=None):
-        """Предлага продажна цена на база markup"""
         if not markup_percentage:
-            # Използваме default markup от location-а
             markup_percentage = getattr(self, '_default_markup', 30)
-
         suggested_price = self.final_unit_price * (1 + markup_percentage / 100)
         return suggested_price
