@@ -1,4 +1,4 @@
-# inventory/models/locations.py
+# inventory/models/groups.py
 
 from django.conf import settings
 from django.db import models

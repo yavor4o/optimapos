@@ -2,7 +2,7 @@
 Inventory models package
 
 Организация:
-- locations.py: InventoryLocation
+- groups.py: InventoryLocation
 - movements.py: InventoryMovement (source of truth)
 - items.py: InventoryItem, InventoryBatch (cached data)
 """
