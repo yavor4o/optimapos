@@ -4,7 +4,8 @@ from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from decimal import Decimal
 from django.core.exceptions import ValidationError
-
+from inventory.services import MovementService
+from pricing.services import PricingService
 from products.models import ProductPackaging
 
 
@@ -82,15 +83,15 @@ class PurchaseDocument(models.Model):
     delivery_date = models.DateField(_('Delivery Date'))
 
     # Връзки
-    # supplier = models.ForeignKey(
-    #     'partners.Supplier',
-    #     on_delete=models.PROTECT,
-    #     verbose_name=_('Supplier')
-    # )
-    warehouse = models.ForeignKey(
-        'warehouse.Warehouse',
+    supplier = models.ForeignKey(
+        'partners.Supplier',
         on_delete=models.PROTECT,
-        verbose_name=_('Warehouse')
+        verbose_name=_('Supplier')
+    )
+    location = models.ForeignKey(
+        'inventory.InventoryLocation',
+        on_delete=models.PROTECT,
+        verbose_name=_('Location')
     )
     document_type = models.ForeignKey(
         DocumentType,
@@ -238,8 +239,8 @@ class PurchaseDocument(models.Model):
             self.grand_total = self.total_after_discount + self.total_vat
 
     def create_stock_movements(self):
-        """Създава StockMovements при приемане на документа"""
-        from warehouse.models import StockMovement
+        """Създава InventoryMovements при приемане на документа"""
+        from inventory.models import InventoryMovement
 
         for line in self.lines.all():
             # Използвай количеството в базова единица
@@ -252,9 +253,9 @@ class PurchaseDocument(models.Model):
             if base_quantity > 0:
                 # ПОЛОЖИТЕЛНО КОЛИЧЕСТВО - обикновена логика
                 if self.document_type.stock_effect == 1:
-                    movement_type = StockMovement.IN
+                    movement_type = InventoryMovement.IN  # ← Променено
                 elif self.document_type.stock_effect == -1:
-                    movement_type = StockMovement.OUT
+                    movement_type = InventoryMovement.OUT  # ← Променено
                 else:
                     continue  # stock_effect = 0 → няма движение
 
@@ -271,9 +272,9 @@ class PurchaseDocument(models.Model):
 
                 # Обръщаме посоката
                 if self.document_type.stock_effect == 1:
-                    movement_type = StockMovement.OUT  # Вместо IN става OUT
+                    movement_type = InventoryMovement.OUT  # ← Променено
                 elif self.document_type.stock_effect == -1:
-                    movement_type = StockMovement.IN  # Вместо OUT става IN
+                    movement_type = InventoryMovement.IN  # ← Променено
                 else:
                     continue
 
@@ -282,85 +283,92 @@ class PurchaseDocument(models.Model):
 
             print(f"📦 Creating movement: {line.product.code} = {actual_quantity} ({movement_type}){reverse_indicator}")
 
-            StockMovement.objects.create(
-                warehouse=self.warehouse,
+            InventoryMovement.objects.create(  # ← Променено
+                location=self.location,  # ← warehouse → location
                 product=line.product,
                 batch_number=line.batch_number,
                 quantity=actual_quantity,
                 movement_type=movement_type,
-                unit_price=line.unit_price_base,
-                document=self.document_number,
-                document_date=self.delivery_date,
+                cost_price=line.unit_price_base,  # ← unit_price → cost_price
+                source_document_type='PURCHASE',  # ← Ново поле
+                source_document_number=self.document_number,  # ← Ново поле
+                movement_date=self.delivery_date,  # ← document_date → movement_date
                 reason=f"{self.document_type.name} from {self.supplier.name}{reverse_indicator}",
                 expiry_date=line.expiry_date,
-                created_by=self.created_by,
-                purchase_document=self
+                created_by=self.created_by
             )
 
     def delete_stock_movements(self):
-        """Изтрива всички движения от този документ и обновява StockLevels"""
-        from warehouse.models import StockMovement, StockLevel
+        """Изтрива всички движения от този документ и обновява InventoryItems"""
+        from inventory.models import InventoryMovement, InventoryItem, InventoryBatch
 
         print(f"🔍 Търся движения за документ: {self.document_number}")
 
         # Намери всички движения от този документ
-        movements = StockMovement.objects.filter(purchase_document=self)
+        movements = InventoryMovement.objects.filter(
+            source_document_number=self.document_number  # ← Променено
+        )
 
         print(f"📊 Намерени {movements.count()} движения:")
         combinations_to_refresh = []
         for movement in movements:
             print(
-                f"  - {movement.product.code} @ {movement.warehouse.code}: {movement.quantity} ({movement.movement_type})")
+                f"  - {movement.product.code} @ {movement.location.code}: {movement.quantity} ({movement.movement_type})")  # ← warehouse → location
             combinations_to_refresh.append({
-                'warehouse': movement.warehouse,
+                'location': movement.location,  # ← warehouse → location
                 'product': movement.product,
                 'batch_number': movement.batch_number,
                 'expiry_date': movement.expiry_date
             })
 
-        # Провери StockLevel ПРЕДИ изтриване
+        # Провери InventoryItem ПРЕДИ изтриване
         for combo in combinations_to_refresh:
             try:
-                stock_before = StockLevel.objects.get(
-                    warehouse=combo['warehouse'],
-                    product=combo['product'],
-                    batch_number=combo['batch_number'],
-                    expiry_date = combo['expiry_date']
+                item_before = InventoryItem.objects.get(  # ← StockLevel → InventoryItem
+                    location=combo['location'],  # ← warehouse → location
+                    product=combo['product']
                 )
-                print(f"📦 ПРЕДИ: {stock_before.product.code} количество: {stock_before.quantity}")
-            except StockLevel.DoesNotExist:
-                print(f"❌ Няма StockLevel за {combo['product'].code}")
+                print(
+                    f"📦 ПРЕДИ: {item_before.product.code} количество: {item_before.current_qty}")  # ← quantity → current_qty
+            except InventoryItem.DoesNotExist:  # ← StockLevel → InventoryItem
+                print(f"❌ Няма InventoryItem за {combo['product'].code}")
 
         # Изтрий движенията
         print("🗑️ Изтривам движения...")
         movements.delete()
 
-        # Обнови StockLevels
-        print("🔄 Обновявам StockLevels...")
+        # Обнови InventoryItems и InventoryBatches
+        print("🔄 Обновявам InventoryItems...")
         for combo in combinations_to_refresh:
-            print(f"   Обновявам: {combo['product'].code} @ {combo['warehouse'].code}")
+            print(f"   Обновявам: {combo['product'].code} @ {combo['location'].code}")  # ← warehouse → location
 
-            StockLevel.refresh_for_combination(
-                warehouse=combo['warehouse'],
-                product=combo['product'],
-                batch_number=combo['batch_number'],
-                expiry_date=combo['expiry_date']
+            # Обнови InventoryItem
+            InventoryItem.refresh_for_combination(  # ← StockLevel → InventoryItem
+                location=combo['location'],  # ← warehouse → location
+                product=combo['product']
             )
 
-            # Провери СЛЕД обновяване
-            try:
-                stock_after = StockLevel.objects.get(
-                    warehouse=combo['warehouse'],
+            # Обнови InventoryBatch ако има batch
+            if combo['batch_number']:
+                InventoryBatch.refresh_for_combination(
+                    location=combo['location'],
                     product=combo['product'],
                     batch_number=combo['batch_number'],
                     expiry_date=combo['expiry_date']
                 )
-                print(f"📦 СЛЕД: {stock_after.product.code} количество: {stock_after.quantity}")
-            except StockLevel.DoesNotExist:
-                print(f"✅ StockLevel за {combo['product'].code} е изтрит (quantity = 0)")
+
+            # Провери СЛЕД обновяване
+            try:
+                item_after = InventoryItem.objects.get(  # ← StockLevel → InventoryItem
+                    location=combo['location'],  # ← warehouse → location
+                    product=combo['product']
+                )
+                print(
+                    f"📦 СЛЕД: {item_after.product.code} количество: {item_after.current_qty}")  # ← quantity → current_qty
+            except InventoryItem.DoesNotExist:  # ← StockLevel → InventoryItem
+                print(f"✅ InventoryItem за {combo['product'].code} е изтрит (quantity = 0)")
 
         print("✅ Готово!")
-
 
 
 
@@ -504,21 +512,26 @@ class PurchaseDocumentLine(models.Model):
     )
 
     def update_warehouse_price(self):
-        """Обновява цената в склада с новата цена"""
+        """Обновява цената в локацията с новата цена"""
         try:
-            from warehouse.models import WarehouseProductPrice
+            from pricing.models import ProductPrice
 
             # Използвай новата цена вместо suggested
             if self.new_sale_price:
-                price_record, created = WarehouseProductPrice.objects.get_or_create(
-                    warehouse=self.document.warehouse,
+                price_record, created = ProductPrice.objects.get_or_create(
+                    location=self.document.location,  # ← warehouse → location
                     product=self.product,
-                    defaults={'base_price': self.new_sale_price}
+                    defaults={
+                        'pricing_method': 'FIXED',  # ← Ново поле
+                        'base_price': self.new_sale_price,
+                        'effective_price': self.new_sale_price  # ← Ново поле
+                    }
                 )
 
                 # Винаги обновявай с новата цена при приемане
                 if self.document.status == PurchaseDocument.RECEIVED:
                     price_record.base_price = self.new_sale_price
+                    price_record.effective_price = self.new_sale_price  # ← Обнови и effective_price
                     price_record.save()
 
         except Exception as e:
@@ -625,19 +638,20 @@ class PurchaseDocumentLine(models.Model):
     def analyze_sale_prices(self):
         """Анализира продажните цени и предлага нови"""
         try:
-            from warehouse.models import PricingService
+            from pricing.services import PricingService
 
             # Текуща продажна цена
             current_price = PricingService.get_sale_price(
-                self.document.warehouse,
+                self.document.location,  # ← warehouse → location
                 self.product
             )
             self.old_sale_price = current_price
 
-            # Автоматично предложение с markup на склада (използвай базовата цена)
-            warehouse_markup = self.document.warehouse.default_markup_percentage
+            # Автоматично предложение с markup на локацията (използвай базовата цена)
+            location_markup = getattr(self.document.location, 'default_markup_percentage',
+                                      30)  # ← warehouse → location с fallback
             final_unit_price_base = self.unit_price_base * (1 - self.discount_percent / 100)
-            self.suggested_sale_price = final_unit_price_base * (1 + warehouse_markup / 100)
+            self.suggested_sale_price = final_unit_price_base * (1 + location_markup / 100)
 
             # Ако няма зададена нова цена, използвай предложената
             if not self.new_sale_price:

@@ -57,14 +57,13 @@ class Customer(PartnerBase):
     )
 
     # Ценообразуване
-    # price_group = models.ForeignKey(
-    #     'warehouse.PriceGroup',
-    #     on_delete=models.SET_NULL,
-    #     null=True,
-    #     blank=True,
-    #     verbose_name=_('Price Group'),
-    #     help_text=_('Special pricing group for this customer')
-    # )
+    price_group = models.ForeignKey(
+        'pricing.PriceGroup',  # ← Вместо warehouse.PriceGroup
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_('Price Group')
+    )
     discount_percent = models.DecimalField(
         _('Default Discount %'),
         max_digits=5,

@@ -205,11 +205,11 @@ class POSLocation(models.Model):
     )
 
     # Връзка със склад
-    warehouse = models.ForeignKey(
-        'warehouse.Warehouse',
+    location = models.ForeignKey(
+        'inventory.InventoryLocation',
         on_delete=models.PROTECT,
         related_name='pos_locations',
-        verbose_name=_('Warehouse')
+        verbose_name=_('Location')
     )
 
     # Адрес (ако е различен от склада)

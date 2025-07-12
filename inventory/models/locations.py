@@ -52,6 +52,14 @@ class InventoryLocation(models.Model):
         default=WAREHOUSE
     )
 
+    default_markup_percentage = models.DecimalField(
+        _('Default Markup Percentage'),
+        max_digits=5,
+        decimal_places=2,
+        default=30,
+        help_text=_('Default markup when no specific price is set')
+    )
+
     # Address and contact
     address = models.TextField(_('Address'), blank=True)
     phone = models.CharField(_('Phone'), max_length=20, blank=True)
