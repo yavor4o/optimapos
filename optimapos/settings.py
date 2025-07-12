@@ -50,7 +50,8 @@ INSTALLED_APPS = [
 
     'mptt',
     'warehouse.apps.WarehouseConfig',
-    'purchases.apps.PurchasesConfig'
+    'purchases.apps.PurchasesConfig',
+    'inventory.apps.InventoryConfig'
 ]
 
 MIDDLEWARE = [
