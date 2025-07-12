@@ -233,6 +233,8 @@ class POSLocationForm(forms.ModelForm):
         return serial
 
 
+# nomenclatures/admin/operational.py
+
 @admin.register(POSLocation)
 class POSLocationAdmin(admin.ModelAdmin):
     form = POSLocationForm
@@ -240,19 +242,23 @@ class POSLocationAdmin(admin.ModelAdmin):
     list_display = [
         'code',
         'name',
-        'warehouse_link',
+        'inventory_location_link',  # ПРОМЕНЕНО от warehouse_link
         'fiscal_info',
         'working_hours',
         'status_badge',
         'session_info'
     ]
-    list_filter = [ 'warehouse','is_active', 'allow_negative_stock']
+    list_filter = [
+        'inventory_location',  # ПРОМЕНЕНО от 'warehouse'
+        'is_active',
+        'allow_negative_stock'
+    ]
     search_fields = ['code', 'name', 'fiscal_device_serial']
     readonly_fields = ['created_at', 'updated_at', 'current_status_info']
 
     fieldsets = (
         (None, {
-            'fields': ('code', 'name','warehouse',)
+            'fields': ('code', 'name', 'inventory_location',)  # ПРОМЕНЕНО от 'warehouse'
         }),
         (_('Location'), {
             'fields': ('address',),
@@ -271,138 +277,23 @@ class POSLocationAdmin(admin.ModelAdmin):
         }),
         (_('Working Hours'), {
             'fields': ('opens_at', 'closes_at'),
-        }),
-        (_('Status'), {
-            'fields': ('is_active', 'current_status_info'),
+            'classes': ('collapse',)
         }),
         (_('System Info'), {
-            'fields': ('created_at', 'updated_at'),
+            'fields': ('is_active', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
 
-    def warehouse_link(self, obj):
-        """Линк към склада"""
-        if obj.warehouse:
-            url = reverse('admin:warehouse_warehouse_change', args=[obj.warehouse.pk])
+    def inventory_location_link(self, obj):
+        """Показва линк към inventory location"""
+        if obj.inventory_location:
             return format_html(
                 '<a href="{}">{}</a>',
-                url,
-                obj.warehouse.code
+                reverse('admin:inventory_inventorylocation_change', args=[obj.inventory_location.pk]),
+                obj.inventory_location.name
             )
         return '-'
 
-    warehouse_link.short_description = _('Warehouse')
-    warehouse_link.admin_order_field = 'warehouse'
-
-    def fiscal_info(self, obj):
-        """Фискална информация"""
-        if obj.fiscal_device_serial:
-            return format_html(
-                '<small>SN: {}<br>№: {}</small>',
-                obj.fiscal_device_serial,
-                obj.fiscal_device_number or '-'
-            )
-        return format_html('<span style="color: red;">No fiscal device</span>')
-
-    fiscal_info.short_description = _('Fiscal Device')
-
-    def working_hours(self, obj):
-        """Работно време"""
-        if obj.opens_at and obj.closes_at:
-            # Проверяваме дали работи сега
-            is_open = obj.is_open_now()
-            color = 'green' if is_open else 'red'
-            status = 'OPEN' if is_open else 'CLOSED'
-
-            return format_html(
-                '{} - {}<br><small style="color: {};">{}</small>',
-                obj.opens_at.strftime('%H:%M'),
-                obj.closes_at.strftime('%H:%M'),
-                color,
-                status
-            )
-        return format_html('<small style="color: gray;">24/7</small>')
-
-    working_hours.short_description = _('Hours')
-
-    def status_badge(self, obj):
-        """Статус badge"""
-        if obj.is_active:
-            color = 'green'
-            text = 'ACTIVE'
-        else:
-            color = 'red'
-            text = 'INACTIVE'
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px;">{}</span>',
-            color,
-            text
-        )
-
-    status_badge.short_description = _('Status')
-
-    def session_info(self, obj):
-        """Информация за активна сесия"""
-        # TODO: Когато имаме sales module
-        # session = obj.get_active_session()
-        # if session:
-        #     return format_html(
-        #         '<small>Open by:<br>{}</small>',
-        #         session.cashier.get_full_name()
-        #     )
-        return format_html('<small style="color: gray;">No session</small>')
-
-    session_info.short_description = _('Session')
-
-    def current_status_info(self, obj):
-        """Детайлна информация за статуса"""
-        if not obj.pk:
-            return '-'
-
-        info_parts = []
-
-        # Работи ли сега
-        if obj.is_open_now():
-            info_parts.append('<span style="color: green;">✓ Currently open</span>')
-        else:
-            info_parts.append('<span style="color: red;">✗ Currently closed</span>')
-
-        # Активна сесия
-        # session = obj.get_active_session()
-        # if session:
-        #     info_parts.append(f'Session: {session}')
-
-        # Настройки
-        if obj.allow_negative_stock:
-            info_parts.append('⚠️ Allows negative stock')
-
-        if obj.require_customer:
-            info_parts.append('👤 Requires customer')
-
-        return format_html('<br>'.join(info_parts))
-
-    current_status_info.short_description = _('Current Status')
-
-    def get_readonly_fields(self, request, obj=None):
-        readonly = list(self.readonly_fields)
-        if obj:  # Editing
-            readonly.append('code')
-        return readonly
-
-    # Actions
-    actions = ['activate_locations', 'deactivate_locations']
-
-    def activate_locations(self, request, queryset):
-        updated = queryset.update(is_active=True)
-        self.message_user(request, f'{updated} locations activated.')
-
-    activate_locations.short_description = _('Activate selected locations')
-
-    def deactivate_locations(self, request, queryset):
-        updated = queryset.update(is_active=False)
-        self.message_user(request, f'{updated} locations deactivated.')
-
-    deactivate_locations.short_description = _('Deactivate selected locations')
+    inventory_location_link.short_description = _('Inventory Location')
+    inventory_location_link.admin_order_field = 'inventory_location__name'

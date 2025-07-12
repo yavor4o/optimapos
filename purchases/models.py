@@ -514,28 +514,45 @@ class PurchaseDocumentLine(models.Model):
     def update_warehouse_price(self):
         """Обновява цената в локацията с новата цена"""
         try:
+            # НОВО - използвай pricing service вместо директен достъп
+            from pricing.services import PricingService
             from pricing.models import ProductPrice
 
-            # Използвай новата цена вместо suggested
-            if self.new_sale_price:
-                price_record, created = ProductPrice.objects.get_or_create(
-                    location=self.document.location,  # ← warehouse → location
-                    product=self.product,
-                    defaults={
-                        'pricing_method': 'FIXED',  # ← Ново поле
-                        'base_price': self.new_sale_price,
-                        'effective_price': self.new_sale_price  # ← Ново поле
-                    }
-                )
+            if not self.new_sale_price:
+                print("❌ Няма нова цена за задаване")
+                return False
 
-                # Винаги обновявай с новата цена при приемане
-                if self.document.status == PurchaseDocument.RECEIVED:
-                    price_record.base_price = self.new_sale_price
-                    price_record.effective_price = self.new_sale_price  # ← Обнови и effective_price
-                    price_record.save()
+            # Обнови цената чрез ProductPrice модела
+            price_obj, created = ProductPrice.objects.update_or_create(
+                location=self.document.location,  # ← ПРОМЕНЕНО: location вместо warehouse
+                product=self.product,
+                defaults={
+                    'effective_price': self.new_sale_price,
+                    'pricing_method': 'FIXED',
+                    'is_active': True
+                }
+            )
+
+            action = "създадена" if created else "обновена"
+            print(f"✅ Цената е {action}: {self.product.code} @ {self.document.location.code} = {self.new_sale_price}")
+
+            # Обнови и в inventory ако е нужно
+            try:
+                from inventory.models import InventoryItem
+                inventory_item = InventoryItem.objects.get(
+                    location=self.document.location,
+                    product=self.product
+                )
+                # Тук можеш да обновиш avg_cost ако е нужно
+                print(f"✅ Намерен inventory item: {inventory_item}")
+            except InventoryItem.DoesNotExist:
+                print(f"ℹ️ Няма inventory item за {self.product.code}")
+
+            return True
 
         except Exception as e:
-            pass
+            print(f"❌ Грешка при обновяване на цената: {e}")
+            return False
 
     class Meta:
         verbose_name = _('Purchase Document Line')

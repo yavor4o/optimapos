@@ -1,3 +1,5 @@
+# purchases/signals.py - ОБНОВЕНА ВЕРСИЯ
+
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 
@@ -40,7 +42,11 @@ def update_document_totals_on_delete(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender=PurchaseDocumentLine)
-def update_warehouse_pricing(sender, instance, **kwargs):
+def update_pricing_on_receipt(sender, instance, **kwargs):
+    """
+    ПРЕИМЕНУВАНО ОТ update_warehouse_pricing
+    Обновява цената в pricing системата при получаване на стока
+    """
     print(f"🔍 Сигнал се изпълнява за: {instance.product.code}")
     print(f"🔍 Статус документ: {instance.document.status}")
     print(f"🔍 Нова цена: {instance.new_sale_price}")
@@ -48,8 +54,13 @@ def update_warehouse_pricing(sender, instance, **kwargs):
     if (instance.document.status == PurchaseDocument.RECEIVED and
             instance.new_sale_price):
         print("✅ Условията са изпълнени, извиквам update_warehouse_price()")
-        instance.update_warehouse_price()
+        success = instance.update_warehouse_price()
+        if success:
+            print("✅ Цената е обновена успешно")
+        else:
+            print("❌ Грешка при обновяване на цената")
     else:
         print("❌ Условията НЕ са изпълнени")
+
 
 print("🔧 Регистрирах всички сигнали!")

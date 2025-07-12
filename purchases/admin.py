@@ -1,9 +1,10 @@
 from django.contrib import admin
+from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.db import models
 from .models import DocumentType, PurchaseDocument, PurchaseDocumentLine
-
+from django.utils.translation import gettext_lazy as _
 
 # === INLINE ADMINS ===
 
@@ -82,15 +83,15 @@ class DocumentTypeAdmin(admin.ModelAdmin):
 class PurchaseDocumentAdmin(admin.ModelAdmin):
     list_display = [
         'document_number', 'document_date', 'supplier_display',
-        'warehouse', 'document_type', 'status_display', 'grand_total_display',
+        'location_display', 'document_type', 'status_display', 'grand_total_display',
         'is_paid_display', 'created_by', 'is_paid'
     ]
     list_filter = [
-        'status', 'document_type', 'warehouse', 'is_paid',
+        'status', 'document_type', 'location', 'is_paid',
         'document_date', 'prices_include_vat'
     ]
     search_fields = [
-        'document_number', 'supplier__name', 'notes'
+        'document_number', 'supplier__name', 'notes','location__name', 'location__code'
     ]
 
     readonly_fields = [
@@ -186,6 +187,19 @@ class PurchaseDocumentAdmin(admin.ModelAdmin):
             'supplier', 'warehouse', 'document_type', 'payment_method', 'created_by'
         )
 
+    def location_display(self, obj):
+        """Показва location вместо warehouse"""
+        if obj.location:
+            return format_html(
+                '<a href="{}">{}</a>',
+                reverse('admin:inventory_inventorylocation_change', args=[obj.location.pk]),
+                obj.location.name
+            )
+        return '-'
+
+    location_display.short_description = _('Location')
+    location_display.admin_order_field = 'location__name'
+
 
 @admin.register(PurchaseDocumentLine)
 class PurchaseDocumentLineAdmin(admin.ModelAdmin):
@@ -195,7 +209,9 @@ class PurchaseDocumentLineAdmin(admin.ModelAdmin):
         'line_total', 'price_analysis'
     ]
     list_filter = [
-        'document__status', 'document__warehouse', 'unit'
+        'document__status',
+        'document__location',  # ПРОМЕНЕНО от 'document__warehouse'
+        'unit'
     ]
     search_fields = [
         'document__document_number', 'product__code', 'product__name',

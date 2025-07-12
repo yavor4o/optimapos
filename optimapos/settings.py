@@ -49,7 +49,7 @@ INSTALLED_APPS = [
     'products.apps.ProductsConfig',
 
     'mptt',
-    'warehouse.apps.WarehouseConfig',
+    'pricing.apps.PricingConfig',
     'purchases.apps.PurchasesConfig',
     'inventory.apps.InventoryConfig'
 ]
