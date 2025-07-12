@@ -9,6 +9,7 @@ Pricing models package
 - group_prices.py: ProductPriceByGroup
 - step_prices.py: ProductStepPrice
 - promotions.py: PromotionalPrice
+- packaging_prices.py: PackagingPrice
 """
 
 # Price Groups
@@ -41,6 +42,12 @@ from .promotions import (
     PromotionalPriceManager
 )
 
+# Packaging Prices
+from .packaging_prices import (
+    PackagingPrice,
+    PackagingPriceManager
+)
+
 # Export all
 __all__ = [
     # Groups
@@ -62,7 +69,11 @@ __all__ = [
     # Promotions
     'PromotionalPrice',
     'PromotionalPriceManager',
+
+    # Packaging Prices
+    'PackagingPrice',
+    'PackagingPriceManager',
 ]
 
 # Version info
-__version__ = '1.0.0'
+__version__ = '1.1.0'

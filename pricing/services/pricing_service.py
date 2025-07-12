@@ -7,7 +7,7 @@ from typing import Optional, Dict, List
 
 from ..models import (
     ProductPrice, PriceGroup, ProductPriceByGroup,
-    ProductStepPrice, PromotionalPrice
+    ProductStepPrice, PromotionalPrice, PackagingPrice
 )
 
 
@@ -307,3 +307,209 @@ class PricingService:
             errors.append('Minimum quantity must be positive')
 
         return len(errors) == 0, errors
+
+    # === PACKAGING PRICE METHODS ===
+
+    @staticmethod
+    def get_price_by_barcode(location, barcode, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
+        """
+        Get price by scanning barcode (handles packaging-specific pricing)
+        Returns detailed pricing information including packaging data
+        """
+        try:
+            from products.models import ProductBarcode
+            barcode_obj = ProductBarcode.objects.select_related(
+                'product', 'packaging', 'packaging__unit'
+            ).get(barcode=barcode, is_active=True)
+
+            product = barcode_obj.product
+
+            # If barcode is linked to specific packaging
+            if barcode_obj.packaging:
+                packaging_price = PricingService.get_packaging_price(
+                    location, barcode_obj.packaging, customer, quantity
+                )
+
+                if packaging_price:
+                    return {
+                        'success': True,
+                        'product': product,
+                        'packaging': barcode_obj.packaging,
+                        'price': packaging_price,
+                        'unit_price': packaging_price / barcode_obj.packaging.conversion_factor,
+                        'quantity_represented': barcode_obj.packaging.conversion_factor,
+                        'pricing_type': 'PACKAGING',
+                        'barcode': barcode
+                    }
+
+            # Fallback to regular product pricing
+            product_price = PricingService.get_sale_price(
+                location, product, customer, quantity
+            )
+
+            return {
+                'success': True,
+                'product': product,
+                'packaging': None,
+                'price': product_price,
+                'unit_price': product_price,
+                'quantity_represented': Decimal('1'),
+                'pricing_type': 'PRODUCT',
+                'barcode': barcode
+            }
+
+        except ProductBarcode.DoesNotExist:
+            return {
+                'success': False,
+                'error': 'Barcode not found',
+                'barcode': barcode
+            }
+
+    @staticmethod
+    def get_packaging_price(location, packaging, customer=None, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
+        """
+        Get price for specific packaging
+        """
+        try:
+            packaging_price = PackagingPrice.objects.get(
+                location=location,
+                packaging=packaging,
+                is_active=True
+            )
+            return packaging_price.price
+
+        except PackagingPrice.DoesNotExist:
+            # Fallback: calculate from base product price
+            base_unit_price = PricingService.get_sale_price(
+                location, packaging.product, customer,
+                quantity * packaging.conversion_factor
+            )
+
+            if base_unit_price > 0:
+                return base_unit_price * packaging.conversion_factor
+
+            return None
+
+    @staticmethod
+    def get_price_by_plu(location, plu_code, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
+        """
+        Get price by PLU code (for weight-based products)
+        """
+        try:
+            from products.models import ProductPLU
+            plu_obj = ProductPLU.objects.select_related('product').get(
+                plu_code=plu_code, is_active=True
+            )
+
+            product = plu_obj.product
+            product_price = PricingService.get_sale_price(
+                location, product, customer, quantity
+            )
+
+            return {
+                'success': True,
+                'product': product,
+                'price': product_price,
+                'unit_price': product_price,
+                'pricing_type': 'PLU',
+                'plu_code': plu_code
+            }
+
+        except ProductPLU.DoesNotExist:
+            return {
+                'success': False,
+                'error': 'PLU code not found',
+                'plu_code': plu_code
+            }
+
+    @staticmethod
+    def get_all_packaging_prices(location, product) -> List[Dict]:
+        """
+        Get all packaging prices for a product at location
+        """
+        result = []
+
+        # Get all packagings for this product
+        from products.models import ProductPackaging
+        packagings = ProductPackaging.objects.filter(
+            product=product,
+            is_active=True
+        ).select_related('unit').order_by('conversion_factor')
+
+        for packaging in packagings:
+            packaging_price = PricingService.get_packaging_price(location, packaging)
+
+            if packaging_price:
+                unit_price = packaging_price / packaging.conversion_factor
+
+                result.append({
+                    'packaging': packaging,
+                    'packaging_price': packaging_price,
+                    'unit_price': unit_price,
+                    'conversion_factor': packaging.conversion_factor,
+                    'unit_name': packaging.unit.name,
+                    'is_default_sale': packaging.is_default_sale_unit,
+                    'is_default_purchase': packaging.is_default_purchase_unit
+                })
+
+        return result
+
+    @staticmethod
+    def compare_packaging_prices(location, product, customer=None) -> Dict:
+        """
+        Compare all packaging options and find the best deal
+        """
+        packaging_prices = PricingService.get_all_packaging_prices(location, product)
+
+        if not packaging_prices:
+            return {'error': 'No packaging prices available'}
+
+        # Sort by unit price (ascending)
+        packaging_prices.sort(key=lambda x: x['unit_price'])
+
+        best_deal = packaging_prices[0]
+        worst_deal = packaging_prices[-1]
+
+        savings = worst_deal['unit_price'] - best_deal['unit_price']
+        savings_percentage = (savings / worst_deal['unit_price']) * 100 if worst_deal['unit_price'] > 0 else 0
+
+        return {
+            'product': product,
+            'location': location,
+            'packaging_options': packaging_prices,
+            'best_deal': best_deal,
+            'worst_deal': worst_deal,
+            'max_savings': {
+                'amount': savings,
+                'percentage': savings_percentage
+            },
+            'recommendation': f"Buy {best_deal['packaging'].unit.name} for best unit price"
+        }
+
+    @staticmethod
+    def bulk_update_packaging_prices(location, markup_change_percentage: Decimal):
+        """
+        Bulk update packaging prices by percentage
+        """
+        updated_count = 0
+
+        # Update non-fixed packaging prices
+        for packaging_price in PackagingPrice.objects.filter(
+            location=location,
+            pricing_method__in=['MARKUP', 'AUTO'],
+            is_active=True
+        ):
+            packaging_price.calculate_effective_price()
+            packaging_price.save(update_fields=['price'])
+            updated_count += 1
+
+        # Update fixed prices by percentage
+        PackagingPrice.objects.filter(
+            location=location,
+            pricing_method='FIXED',
+            is_active=True
+        ).update(
+            price=models.F('price') * (1 + markup_change_percentage / 100)
+        )
+
+        return updated_count
