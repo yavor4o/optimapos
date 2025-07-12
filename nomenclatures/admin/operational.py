@@ -1,3 +1,5 @@
+# nomenclatures/admin/operational.py
+
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
@@ -22,12 +24,10 @@ class UnitOfMeasureAdmin(admin.ModelAdmin):
     list_filter = ['unit_type', 'allow_decimals', 'is_active']
     search_fields = ['code', 'name', 'symbol']
 
-
     fieldsets = (
         (None, {
             'fields': ('code', 'name', 'symbol', 'unit_type')
         }),
-
         (_('Decimal Settings'), {
             'fields': ('allow_decimals', 'decimal_places'),
         }),
@@ -213,7 +213,7 @@ class PaymentTypeAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         readonly = list(self.readonly_fields or [])
         if obj:  # Editing
-            readonly.extend(['code',])
+            readonly.extend(['code', ])
         return readonly
 
 
@@ -233,8 +233,6 @@ class POSLocationForm(forms.ModelForm):
         return serial
 
 
-# nomenclatures/admin/operational.py
-
 @admin.register(POSLocation)
 class POSLocationAdmin(admin.ModelAdmin):
     form = POSLocationForm
@@ -242,14 +240,14 @@ class POSLocationAdmin(admin.ModelAdmin):
     list_display = [
         'code',
         'name',
-        'inventory_location_link',  # ПРОМЕНЕНО от warehouse_link
+        'location_link',  # ПРОМЕНЕНО от inventory_location_link
         'fiscal_info',
         'working_hours',
         'status_badge',
         'session_info'
     ]
     list_filter = [
-        'inventory_location',  # ПРОМЕНЕНО от 'warehouse'
+        'location',  # ПРОМЕНЕНО от inventory_location
         'is_active',
         'allow_negative_stock'
     ]
@@ -258,7 +256,7 @@ class POSLocationAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {
-            'fields': ('code', 'name', 'inventory_location',)  # ПРОМЕНЕНО от 'warehouse'
+            'fields': ('code', 'name', 'location',)  # ПРОМЕНЕНО от inventory_location
         }),
         (_('Location'), {
             'fields': ('address',),
@@ -280,20 +278,111 @@ class POSLocationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         (_('System Info'), {
-            'fields': ('is_active', 'created_at', 'updated_at'),
+            'fields': ('is_active', 'created_at', 'updated_at', 'current_status_info'),
             'classes': ('collapse',)
         }),
     )
 
-    def inventory_location_link(self, obj):
+    # ДОБАВЕНИ МЕТОДИ - тези липсваха и затова имаше грешка
+    def location_link(self, obj):
         """Показва линк към inventory location"""
-        if obj.inventory_location:
+        if obj.location:
             return format_html(
                 '<a href="{}">{}</a>',
-                reverse('admin:inventory_inventorylocation_change', args=[obj.inventory_location.pk]),
-                obj.inventory_location.name
+                reverse('admin:inventory_inventorylocation_change', args=[obj.location.pk]),
+                obj.location.name
             )
         return '-'
 
-    inventory_location_link.short_description = _('Inventory Location')
-    inventory_location_link.admin_order_field = 'inventory_location__name'
+    location_link.short_description = _('Location')
+    location_link.admin_order_field = 'location__name'
+
+    def fiscal_info(self, obj):
+        """Информация за фискалното устройство"""
+        if obj.fiscal_device_serial:
+            return format_html(
+                '<small>{}<br/>{}</small>',
+                obj.fiscal_device_serial,
+                obj.fiscal_device_number or '-'
+            )
+        return format_html('<small style="color: #999;">No fiscal device</small>')
+
+    fiscal_info.short_description = _('Fiscal Device')
+
+    def working_hours(self, obj):
+        """Работно време"""
+        if obj.opens_at and obj.closes_at:
+            return format_html(
+                '<small>{} - {}</small>',
+                obj.opens_at.strftime('%H:%M'),
+                obj.closes_at.strftime('%H:%M')
+            )
+        return format_html('<small style="color: #999;">24/7</small>')
+
+    working_hours.short_description = _('Hours')
+
+    def status_badge(self, obj):
+        """Статус badge"""
+        if obj.is_active:
+            if obj.is_open_now():
+                return format_html(
+                    '<span style="background-color: #4CAF50; color: white; '
+                    'padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPEN</span>'
+                )
+            else:
+                return format_html(
+                    '<span style="background-color: #FF9800; color: white; '
+                    'padding: 2px 6px; border-radius: 3px; font-size: 11px;">CLOSED</span>'
+                )
+        return format_html(
+            '<span style="background-color: #F44336; color: white; '
+            'padding: 2px 6px; border-radius: 3px; font-size: 11px;">INACTIVE</span>'
+        )
+
+    status_badge.short_description = _('Status')
+
+    def session_info(self, obj):
+        """Информация за сесията"""
+        # Това ще се имплементира когато имаме sales модул
+        active_session = obj.get_active_session()
+        if active_session:
+            return format_html('<small style="color: green;">Active session</small>')
+        return format_html('<small style="color: #999;">No session</small>')
+
+    session_info.short_description = _('Session')
+
+    def current_status_info(self, obj):
+        """Детайлна информация за текущия статус"""
+        if not obj.pk:
+            return '-'
+
+        parts = []
+
+        # Статус
+        if obj.is_active:
+            parts.append('✅ Active')
+        else:
+            parts.append('❌ Inactive')
+
+        # Работно време
+        if obj.is_open_now():
+            parts.append('🕐 Open now')
+        else:
+            parts.append('🕐 Closed now')
+
+        # Сесия
+        active_session = obj.get_active_session()
+        if active_session:
+            parts.append('💼 Session active')
+        else:
+            parts.append('💼 No session')
+
+        return format_html('<br/>'.join(parts))
+
+    current_status_info.short_description = _('Current Status')
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(self.readonly_fields or [])
+        if obj:  # Editing
+            readonly.append('code')
+        return readonly
