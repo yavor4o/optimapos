@@ -339,11 +339,7 @@ class BaseDocument(models.Model):
     def can_be_cancelled(self):
         return self.status in [self.DRAFT, self.CONFIRMED]
 
-    def recalculate_totals(self):
-        lines = self.lines.all()
-        self.subtotal = sum(line.line_total for line in lines)
-        self.vat_amount = sum(line.vat_amount for line in lines)
-        self.grand_total = self.subtotal + self.vat_amount - self.discount_amount
+
 
     def get_status_display_badge(self):
         colors = {

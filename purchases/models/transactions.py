@@ -120,21 +120,11 @@ class PurchaseDocumentLine(BaseDocumentLine):
                 })
 
     def save(self, *args, **kwargs):
-        """Логика при записване на реда"""
-        # Ако няма received_quantity, приемаме че е равна на ordered
-        if self.received_quantity == 0:
+        """Базова логика при записване - само data integrity"""
+
+        if self.received_quantity == 0 and self.quantity > 0:
             self.received_quantity = self.quantity
-
-        # Извикваме базовия save който изчислява цените
         super().save(*args, **kwargs)
-
-        # Изчисляваме предложени продажни цени
-        self.calculate_pricing_suggestions()
-
-        # След записване на реда, обновяваме общите суми на документа
-        if self.document_id:
-            self.document.recalculate_totals()
-            self.document.save(update_fields=['subtotal', 'vat_amount', 'grand_total'])
 
     def calculate_pricing_suggestions(self):
         """Изчислява предложения за продажни цени"""
@@ -175,26 +165,31 @@ class PurchaseDocumentLine(BaseDocumentLine):
             raise ValidationError("No suggested price available")
 
         try:
-            from pricing.services import PricingService
-
-            # Създаваме или обновяваме base price за продукта в location-а
             from pricing.models import ProductPrice
 
+            # Създаваме или обновяваме ProductPrice за продукта в location-а
             price_record, created = ProductPrice.objects.get_or_create(
                 location=self.document.location,
                 product=self.product,
                 defaults={
+                    'base_price': self.new_sale_price,
                     'effective_price': self.new_sale_price,
                     'pricing_method': 'MARKUP',
-                    'markup_percentage': self.markup_percentage or 30,
+                    'markup_percentage': self.markup_percentage or Decimal('30'),
                     'is_active': True
                 }
             )
 
             if not created:
+                # Обновяваме съществуващия price record
+                price_record.base_price = self.new_sale_price
                 price_record.effective_price = self.new_sale_price
-                price_record.markup_percentage = self.markup_percentage or 30
+                price_record.markup_percentage = self.markup_percentage or Decimal('30')
+                price_record.pricing_method = 'MARKUP'
+                price_record.last_cost_update = timezone.now()
                 price_record.save()
+
+            return True
 
         except Exception as e:
             raise ValidationError(f"Error updating price: {str(e)}")

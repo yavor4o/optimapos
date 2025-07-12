@@ -5,8 +5,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from datetime import timedelta
 
+from . import LineService
 from ..models import PurchaseDocument, PurchaseDocumentLine, DocumentType
 
 
@@ -326,3 +326,123 @@ class DocumentService:
             new_number = 1
 
         return f"{prefix}{year}{new_number:04d}"
+
+    @staticmethod
+    def recalculate_document_totals(document: PurchaseDocument) -> PurchaseDocument:
+        """Explicit recalculation на document totals"""
+        document.recalculate_totals()
+        document.save(update_fields=[
+            'subtotal', 'discount_amount', 'vat_amount', 'grand_total', 'updated_at'
+        ])
+        return document
+
+    @staticmethod
+    @transaction.atomic
+    def process_line_changes(document: PurchaseDocument, line_changes: List[Dict]) -> Dict:
+        """Професионален batch update на lines с recalculation"""
+
+        if not document.can_be_modified():
+            raise ValidationError("Document cannot be modified in current status")
+
+        results = {
+            'updated_lines': 0,
+            'errors': [],
+            'document_totals_recalculated': False
+        }
+
+        lines_modified = False
+
+        for change in line_changes:
+            try:
+                line_id = change['line_id']
+                line = document.lines.get(id=line_id)
+
+                # Update fields
+                for field, value in change.get('updates', {}).items():
+                    if hasattr(line, field):
+                        setattr(line, field, value)
+
+                line.save()
+                results['updated_lines'] += 1
+                lines_modified = True
+
+            except Exception as e:
+                results['errors'].append(f"Line {line_id}: {str(e)}")
+
+        # Explicit recalculation само ако има промени
+        if lines_modified:
+            DocumentService.recalculate_document_totals(document)
+            results['document_totals_recalculated'] = True
+
+        return results
+
+    @staticmethod
+    @transaction.atomic
+    def complete_document_workflow(
+            document: PurchaseDocument,
+            final_status: str,
+            user=None,
+            create_stock_movements: bool = True,
+            update_pricing: bool = True
+    ) -> Dict:
+        """Комплетен професионален workflow"""
+
+        result = {'success': False, 'operations': [], 'errors': []}
+
+        try:
+            # 1. Валидации
+            if document.status == final_status:
+                result['errors'].append(f"Document already in status: {final_status}")
+                return result
+
+            # 2. Status workflow
+            workflow_result = DocumentService.process_document_workflow(
+                document,
+                action=DocumentService._status_to_action(final_status),
+                user=user
+            )
+
+            if not workflow_result['success']:
+                result['errors'].append(workflow_result['message'])
+                return result
+
+            result['operations'].append(f"Status changed to {final_status}")
+
+            # 3. Stock movements (ако е received)
+            if final_status == 'received' and create_stock_movements:
+                try:
+                    document.create_stock_movements()
+                    result['operations'].append("Stock movements created")
+                except Exception as e:
+                    result['errors'].append(f"Stock movements failed: {str(e)}")
+
+            # 4. Pricing updates (ако е received)
+            if final_status == 'received' and update_pricing:
+                try:
+                    pricing_results = LineService.bulk_update_pricing_from_document(document)
+                    result['operations'].append(f"Updated pricing for {pricing_results['updated_count']} products")
+                except Exception as e:
+                    result['errors'].append(f"Pricing update failed: {str(e)}")
+
+            # 5. Final recalculation
+            DocumentService.recalculate_document_totals(document)
+            result['operations'].append("Document totals recalculated")
+
+            result['success'] = True
+            result['document'] = document
+
+        except Exception as e:
+            result['errors'].append(f"Workflow failed: {str(e)}")
+
+        return result
+
+    @staticmethod
+    def _status_to_action(status: str) -> str:
+        """Mapping от status към action"""
+        mapping = {
+            'confirmed': 'confirm',
+            'received': 'receive',
+            'cancelled': 'cancel',
+            'paid': 'mark_paid'
+        }
+        return mapping.get(status, 'unknown')

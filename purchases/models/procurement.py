@@ -217,29 +217,29 @@ class PurchaseDocument(BaseDocument):
             })
 
     def save(self, *args, **kwargs):
-        """Логика при записване"""
+        """Базова логика при записване на документ"""
         is_new = self.pk is None
 
-        # Генериране на document number ако е нов
+        # Запазваме оригиналния статус за change tracking
+        if not is_new:
+            try:
+                original = PurchaseDocument.objects.get(pk=self.pk)
+                self._original_status = original.status
+            except PurchaseDocument.DoesNotExist:
+                self._original_status = None
+
+        # Генериране на номер ако е нов
         if is_new and not self.document_number:
             self.document_number = self.generate_document_number()
 
-        # Auto operations based on document type
+        # Auto-operations само от document type settings
         if is_new and self.document_type:
             if self.document_type.auto_confirm:
                 self.status = self.CONFIRMED
             if self.document_type.auto_receive:
                 self.status = self.RECEIVED
 
-        # Изчисляваме общите суми
-        if not is_new:
-            self.recalculate_totals()
-
         super().save(*args, **kwargs)
-
-        # След записване - ако документът е received, създаваме stock movements
-        if self.status == self.RECEIVED and hasattr(self, '_status_changed_to_received'):
-            self.create_stock_movements()
 
     def generate_document_number(self):
         """Генерира уникален номер на документа"""
@@ -263,6 +263,15 @@ class PurchaseDocument(BaseDocument):
             new_number = 1
 
         return f"{prefix}{year}{new_number:04d}"
+
+    def recalculate_totals(self):
+        """Преизчислява общите суми на базата на редовете"""
+        lines = self.lines.all()
+        self.subtotal = sum(line.line_total for line in lines)
+        self.vat_amount = sum(line.vat_amount for line in lines)
+        self.grand_total = self.subtotal + self.vat_amount - self.discount_amount
+
+
 
     def confirm(self, user=None):
         """Потвърждава документа"""
@@ -294,6 +303,8 @@ class PurchaseDocument(BaseDocument):
         if user:
             self.updated_by = user
         self.save()
+
+
 
     def create_stock_movements(self):
         """Създава stock movements за всички редове"""

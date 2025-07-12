@@ -399,3 +399,24 @@ class LineService:
             })
 
         return duplicates
+
+    @staticmethod
+    @transaction.atomic
+    def bulk_update_pricing_from_document(document: PurchaseDocument) -> Dict:
+        """Bulk обновяване на цени от всички редове в документ"""
+
+        results = {
+            'updated_count': 0,
+            'skipped_count': 0,
+            'errors': []
+        }
+
+        for line in document.lines.filter(new_sale_price__isnull=False, new_sale_price__gt=0):
+            try:
+                line.apply_suggested_price()
+                results['updated_count'] += 1
+            except Exception as e:
+                results['errors'].append(f"Product {line.product.code}: {str(e)}")
+                results['skipped_count'] += 1
+
+        return results
