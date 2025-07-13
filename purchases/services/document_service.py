@@ -1,4 +1,4 @@
-# purchases/services/document_service.py
+# purchases/services/document_service.py - ENHANCED VERSION
 
 from typing import Dict, List, Optional
 from decimal import Decimal
@@ -6,12 +6,11 @@ from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from . import LineService
 from ..models import PurchaseDocument, PurchaseDocumentLine, DocumentType
 
 
 class DocumentService:
-    """Сервис за работа с документи и техните workflow-и"""
+    """Enhanced сервис за работа с документи и техните workflow-и"""
 
     @staticmethod
     @transaction.atomic
@@ -25,22 +24,7 @@ class DocumentService:
             lines_data: List[Dict] = None,
             **kwargs
     ) -> PurchaseDocument:
-        """
-        Създава нов purchase document с редове
-
-        Args:
-            supplier: Supplier instance
-            location: InventoryLocation instance
-            document_type_code: Код на DocumentType (INV, DEL, etc.)
-            document_date: Дата на документ (default: днес)
-            delivery_date: Дата на доставка (default: днес)
-            created_by: User instance
-            lines_data: List с данни за редовете
-            **kwargs: Допълнителни полета за документа
-
-        Returns:
-            PurchaseDocument instance
-        """
+        """Създава нов purchase document с редове"""
 
         # Вземаме document type
         try:
@@ -79,12 +63,10 @@ class DocumentService:
     @transaction.atomic
     def add_lines_to_document(document: PurchaseDocument, lines_data: List[Dict]) -> List[PurchaseDocumentLine]:
         """Добавя редове към документ"""
-
         if not document.can_be_modified():
             raise ValidationError("Cannot modify document in current status")
 
         created_lines = []
-
         for i, line_data in enumerate(lines_data, 1):
             line = PurchaseDocumentLine(
                 document=document,
@@ -93,98 +75,126 @@ class DocumentService:
                 quantity=line_data['quantity'],
                 unit=line_data.get('unit', line_data['product'].base_unit),
                 unit_price=line_data['unit_price'],
-                discount_percent=line_data.get('discount_percent', 0),
+                discount_percent=line_data.get('discount_percent', Decimal('0')),
                 batch_number=line_data.get('batch_number', ''),
                 expiry_date=line_data.get('expiry_date'),
             )
-
             line.full_clean()
             line.save()
             created_lines.append(line)
 
-        # Преизчисляваме общите суми
+        # Recalculate totals
         document.recalculate_totals()
         document.save()
-
         return created_lines
 
-    @staticmethod
-    def get_document_status_info(document: PurchaseDocument) -> Dict:
-        """Връща детайлна информация за статуса на документа"""
-
-        status_info = {
-            'current_status': document.status,
-            'status_display': document.get_status_display(),
-            'can_modify': document.can_be_modified(),
-            'can_receive': document.can_be_received(),
-            'can_cancel': document.can_be_cancelled(),
-            'is_paid': document.is_paid,
-            'payment_overdue': document.is_overdue_payment() if hasattr(document, 'is_overdue_payment') else False,
-            'days_until_payment': document.get_days_until_payment() if hasattr(document,
-                                                                               'get_days_until_payment') else None
-        }
-
-        # Workflow възможности
-        next_actions = []
-
-        if document.status == document.DRAFT:
-            next_actions.extend(['confirm', 'cancel', 'edit'])
-        elif document.status == document.CONFIRMED:
-            next_actions.extend(['receive', 'cancel'])
-        elif document.status == document.RECEIVED:
-            if not document.is_paid:
-                next_actions.append('mark_paid')
-
-        status_info['available_actions'] = next_actions
-
-        return status_info
+    # =====================
+    # AUTO INVOICE CREATION (НОВО!)
+    # =====================
 
     @staticmethod
-    def get_document_financial_summary(document: PurchaseDocument) -> Dict:
-        """Финансово резюме на документа"""
+    @transaction.atomic
+    def create_invoice_from_grn(grn_document: PurchaseDocument) -> Optional[PurchaseDocument]:
+        """Създава INV документ автоматично от GRN документ"""
 
-        lines = document.lines.all()
+        if grn_document.document_type.code != 'GRN':
+            return None
 
-        summary = {
-            'lines_count': lines.count(),
-            'total_products': lines.values('product').distinct().count(),
-            'subtotal': document.subtotal,
-            'discount_amount': document.discount_amount,
-            'vat_amount': document.vat_amount,
-            'grand_total': document.grand_total,
+        if not grn_document.supplier_document_number:
+            return None
+
+        # Проверяваме дали вече съществува INV с този номер
+        existing_invoice = PurchaseDocument.objects.filter(
+            document_type__code='INV',
+            supplier_document_number=grn_document.supplier_document_number,
+            supplier=grn_document.supplier
+        ).first()
+
+        if existing_invoice:
+            return existing_invoice  # Не създаваме дублиран
+
+        # Копираме данните от GRN-а за INV
+        lines_data = []
+        for line in grn_document.lines.all():
+            lines_data.append({
+                'product': line.product,
+                'quantity': line.received_quantity or line.quantity,
+                'unit': line.unit,
+                'unit_price': line.unit_price,
+                'discount_percent': line.discount_percent,
+            })
+
+        # Създаваме INV документ
+        invoice = DocumentService.create_purchase_document(
+            supplier=grn_document.supplier,
+            location=grn_document.location,
+            document_type_code='INV',
+            document_date=grn_document.document_date,
+            delivery_date=grn_document.delivery_date,
+            supplier_document_number=grn_document.supplier_document_number,
+            external_reference=f"GRN: {grn_document.document_number}",
+            notes=f"Auto-created from {grn_document.document_number}",
+            is_paid=grn_document.is_paid,
+            created_by=grn_document.created_by,
+            lines_data=lines_data
+        )
+
+        return invoice
+
+    # =====================
+    # STOCK MOVEMENTS (ПРЕМЕСТЕНО ОТ МОДЕЛА!)
+    # =====================
+
+    @staticmethod
+    @transaction.atomic
+    def create_stock_movements(document: PurchaseDocument) -> Dict:
+        """Създава stock movements за всички редове - ПРЕМЕСТЕНО ОТ МОДЕЛА"""
+
+        result = {
+            'success': True,
+            'movements_created': 0,
+            'errors': []
         }
 
-        # Анализ на редовете
-        if lines.exists():
-            from django.db import models
-            line_analysis = lines.aggregate(
-                total_quantity=models.Sum('quantity'),
-                avg_unit_price=models.Avg('unit_price'),
-                max_line_total=models.Max('line_total'),
-                lines_with_discount=models.Count('id', filter=models.Q(discount_percent__gt=0))
-            )
-            summary.update(line_analysis)
+        try:
+            from inventory.services import MovementService
 
-        return summary
+            for line in document.lines.all():
+                try:
+                    MovementService.create_incoming_movement(
+                        location=document.location,
+                        product=line.product,
+                        quantity=line.quantity_base_unit,
+                        cost_price=line.unit_price_base,
+                        source_document_type='PURCHASE',
+                        source_document_number=document.document_number,
+                        movement_date=document.delivery_date,
+                        batch_number=line.batch_number,
+                        expiry_date=line.expiry_date,
+                        reason=f"Purchase from {document.supplier.name}",
+                        created_by=document.created_by
+                    )
+                    result['movements_created'] += 1
+
+                except Exception as e:
+                    result['errors'].append(f"Line {line.line_number}: {str(e)}")
+
+        except Exception as e:
+            result['success'] = False
+            result['errors'].append(f"Movement service error: {str(e)}")
+
+        return result
+
+    # =====================
+    # DUPLICATE FUNCTIONALITY (ПРЕМЕСТЕНО ОТ МОДЕЛА!)
+    # =====================
 
     @staticmethod
     @transaction.atomic
     def duplicate_document(document: PurchaseDocument, new_date=None, user=None) -> PurchaseDocument:
-        """Създава копие на документ"""
+        """Създава копие на документ - ПРЕМЕСТЕНО ОТ МОДЕЛА"""
 
-        new_doc = DocumentService.create_purchase_document(
-            supplier=document.supplier,
-            location=document.location,
-            document_type_code=document.document_type.code,
-            document_date=new_date or timezone.now().date(),
-            delivery_date=new_date or timezone.now().date(),
-            created_by=user,
-            notes=f"Copy of {document.document_number}\n{document.notes}",
-            supplier_document_number=document.supplier_document_number,
-            external_reference=document.external_reference,
-        )
-
-        # Копираме всички редове
+        # Копираме данните за новия документ
         lines_data = []
         for line in document.lines.all():
             lines_data.append({
@@ -197,39 +207,25 @@ class DocumentService:
                 'expiry_date': line.expiry_date,
             })
 
-        if lines_data:
-            DocumentService.add_lines_to_document(new_doc, lines_data)
+        # Създаваме новия документ
+        new_doc = DocumentService.create_purchase_document(
+            supplier=document.supplier,
+            location=document.location,
+            document_type_code=document.document_type.code,
+            document_date=new_date or timezone.now().date(),
+            delivery_date=new_date or timezone.now().date(),
+            created_by=user or document.created_by,
+            notes=f"Copy of {document.document_number}\n{document.notes}",
+            supplier_document_number=document.supplier_document_number,
+            external_reference=document.external_reference,
+            lines_data=lines_data
+        )
 
         return new_doc
 
-    @staticmethod
-    def validate_document_for_confirmation(document: PurchaseDocument) -> List[str]:
-        """Валидира документ преди потвърждаване"""
-        errors = []
-
-        # Проверяваме дали има редове
-        if not document.lines.exists():
-            errors.append("Document has no lines")
-
-        # Валидираме всеки ред
-        for line in document.lines.all():
-            # Проверяваме дали продуктът е активен
-            if not line.product.is_active:
-                errors.append(f"Line {line.line_number}: Product {line.product.code} is not active")
-
-            # Проверяваме batch ако е задължителен
-            if document.document_type.requires_batch and not line.batch_number:
-                errors.append(f"Line {line.line_number}: Batch number is required")
-
-            # Проверяваме expiry date ако е задължителна
-            if document.document_type.requires_expiry and not line.expiry_date:
-                errors.append(f"Line {line.line_number}: Expiry date is required")
-
-            # Проверяваме дали expiry date не е в миналото
-            if line.expiry_date and line.expiry_date < timezone.now().date():
-                errors.append(f"Line {line.line_number}: Expiry date cannot be in the past")
-
-        return errors
+    # =====================
+    # WORKFLOW OPERATIONS
+    # =====================
 
     @staticmethod
     @transaction.atomic
@@ -252,8 +248,20 @@ class DocumentService:
 
             elif action == 'receive':
                 document.receive(user=user)
+
+                # Създаваме stock movements ако е нужно
+                if kwargs.get('create_stock_movements', False):
+                    movements_result = DocumentService.create_stock_movements(document)
+                    if not movements_result['success']:
+                        result[
+                            'message'] = f"Received but stock movements failed: {'; '.join(movements_result['errors'])}"
+                    else:
+                        result[
+                            'message'] = f"Document received and {movements_result['movements_created']} stock movements created"
+                else:
+                    result['message'] = 'Document received successfully'
+
                 result['success'] = True
-                result['message'] = 'Document received successfully'
 
             elif action == 'cancel':
                 document.cancel(user=user)
@@ -279,170 +287,57 @@ class DocumentService:
         return result
 
     @staticmethod
-    def get_documents_requiring_attention() -> Dict:
-        """Документи които изискват внимание"""
+    def validate_document_for_confirmation(document: PurchaseDocument) -> List[str]:
+        """Валидира документ преди потвърждаване"""
+        errors = []
 
-        today = timezone.now().date()
+        # Проверяваме дали има редове
+        if not document.lines.exists():
+            errors.append("Document has no lines")
 
-        return {
-            'overdue_deliveries': PurchaseDocument.objects.filter(
-                status='confirmed',
-                delivery_date__lt=today
-            ).count(),
+        # Валидираме всеки ред
+        for line in document.lines.all():
+            if not line.product.is_active:
+                errors.append(f"Line {line.line_number}: Product {line.product.code} is not active")
 
-            'overdue_payments': PurchaseDocument.objects.overdue_payment().count(),
+            # Проверяваме batch ако е задължителен
+            if document.document_type.requires_batch and not line.batch_number:
+                errors.append(f"Line {line.line_number}: Batch number is required")
 
-            'due_today': PurchaseDocument.objects.filter(
-                delivery_date=today,
-                status__in=['confirmed', 'received']
-            ).count(),
+            # Проверяваме expiry date ако е задължителна
+            if document.document_type.requires_expiry and not line.expiry_date:
+                errors.append(f"Line {line.line_number}: Expiry date is required")
 
-            'quality_issues': PurchaseDocument.objects.with_quality_issues().count(),
+        return errors
 
-            'expiring_products': PurchaseDocument.objects.expiring_soon(days=7).count(),
-        }
-
-    @staticmethod
-    def generate_document_number(document_type: DocumentType) -> str:
-        """Генерира следващия номер за документ"""
-
-        prefix = document_type.code
-        year = timezone.now().year
-
-        # Намираме последния номер за тази година и тип
-        last_doc = PurchaseDocument.objects.filter(
-            document_number__startswith=f"{prefix}{year}",
-            document_type=document_type
-        ).order_by('-document_number').first()
-
-        if last_doc:
-            try:
-                # Извличаме номера от последния документ
-                last_number = int(last_doc.document_number[-4:])
-                new_number = last_number + 1
-            except (ValueError, IndexError):
-                new_number = 1
-        else:
-            new_number = 1
-
-        return f"{prefix}{year}{new_number:04d}"
+    # =====================
+    # UTILITY METHODS
+    # =====================
 
     @staticmethod
-    def recalculate_document_totals(document: PurchaseDocument) -> PurchaseDocument:
+    def recalculate_document_totals(document: PurchaseDocument) -> None:
         """Explicit recalculation на document totals"""
         document.recalculate_totals()
         document.save(update_fields=[
             'subtotal', 'discount_amount', 'vat_amount', 'grand_total', 'updated_at'
         ])
-        return document
 
     @staticmethod
-    @transaction.atomic
-    def process_line_changes(document: PurchaseDocument, line_changes: List[Dict]) -> Dict:
-        """Професионален batch update на lines с recalculation"""
+    def get_document_summary(document: PurchaseDocument) -> Dict:
+        """Връща обобщена информация за документ"""
+        lines = document.lines.all()
 
-        if not document.can_be_modified():
-            raise ValidationError("Document cannot be modified in current status")
-
-        results = {
-            'updated_lines': 0,
-            'errors': [],
-            'document_totals_recalculated': False
+        summary = {
+            'document_number': document.document_number,
+            'status': document.status,
+            'supplier': document.supplier.name,
+            'location': document.location.name,
+            'lines_count': lines.count(),
+            'subtotal': document.subtotal,
+            'discount_amount': document.discount_amount,
+            'total_amount': document.total_amount,
+            'grand_total': document.grand_total,
+            'related_invoice': document.get_related_invoice(),
         }
 
-        lines_modified = False
-
-        for change in line_changes:
-            try:
-                line_id = change['line_id']
-                line = document.lines.get(id=line_id)
-
-                # Update fields
-                for field, value in change.get('updates', {}).items():
-                    if hasattr(line, field):
-                        setattr(line, field, value)
-
-                line.save()
-                results['updated_lines'] += 1
-                lines_modified = True
-
-            except Exception as e:
-                results['errors'].append(f"Line {line_id}: {str(e)}")
-
-        # Explicit recalculation само ако има промени
-        if lines_modified:
-            DocumentService.recalculate_document_totals(document)
-            results['document_totals_recalculated'] = True
-
-        return results
-
-    @staticmethod
-    @transaction.atomic
-    def complete_document_workflow(
-            document: PurchaseDocument,
-            final_status: str,
-            user=None,
-            create_stock_movements: bool = True,
-            update_pricing: bool = True
-    ) -> Dict:
-        """Комплетен професионален workflow"""
-
-        result = {'success': False, 'operations': [], 'errors': []}
-
-        try:
-            # 1. Валидации
-            if document.status == final_status:
-                result['errors'].append(f"Document already in status: {final_status}")
-                return result
-
-            # 2. Status workflow
-            workflow_result = DocumentService.process_document_workflow(
-                document,
-                action=DocumentService._status_to_action(final_status),
-                user=user
-            )
-
-            if not workflow_result['success']:
-                result['errors'].append(workflow_result['message'])
-                return result
-
-            result['operations'].append(f"Status changed to {final_status}")
-
-            # 3. Stock movements (ако е received)
-            if final_status == 'received' and create_stock_movements:
-                try:
-                    document.create_stock_movements()
-                    result['operations'].append("Stock movements created")
-                except Exception as e:
-                    result['errors'].append(f"Stock movements failed: {str(e)}")
-
-            # 4. Pricing updates (ако е received)
-            if final_status == 'received' and update_pricing:
-                try:
-                    pricing_results = LineService.bulk_update_pricing_from_document(document)
-                    result['operations'].append(f"Updated pricing for {pricing_results['updated_count']} products")
-                except Exception as e:
-                    result['errors'].append(f"Pricing update failed: {str(e)}")
-
-            # 5. Final recalculation
-            DocumentService.recalculate_document_totals(document)
-            result['operations'].append("Document totals recalculated")
-
-            result['success'] = True
-            result['document'] = document
-
-        except Exception as e:
-            result['errors'].append(f"Workflow failed: {str(e)}")
-
-        return result
-
-    @staticmethod
-    def _status_to_action(status: str) -> str:
-        """Mapping от status към action"""
-        mapping = {
-            'confirmed': 'confirm',
-            'received': 'receive',
-            'cancelled': 'cancel',
-            'paid': 'mark_paid'
-        }
-        return mapping.get(status, 'unknown')
+        return summary

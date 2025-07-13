@@ -130,7 +130,7 @@ class DocumentType(models.Model):
 
 
 class PurchaseDocument(BaseDocument):
-    """Основен документ за закупки/доставки"""
+    """Основен документ за закупки/доставки - CLEAN MODEL"""
 
     # Специфична информация за purchase
     delivery_date = models.DateField(
@@ -171,6 +171,13 @@ class PurchaseDocument(BaseDocument):
         help_text=_('PO number, contract reference, etc.')
     )
 
+    # НОВО ПОЛЕ за auto invoice creation
+    auto_create_invoice = models.BooleanField(
+        _('Auto Create Invoice'),
+        default=False,
+        help_text=_('Automatically create invoice document when saving')
+    )
+
     # Допълнителна информация
     notes = models.TextField(
         _('Notes'),
@@ -188,6 +195,7 @@ class PurchaseDocument(BaseDocument):
             models.Index(fields=['supplier', 'delivery_date']),
             models.Index(fields=['location', 'document_date']),
             models.Index(fields=['status', 'delivery_date']),
+            models.Index(fields=['supplier_document_number']),
         ]
 
     def __str__(self):
@@ -217,8 +225,16 @@ class PurchaseDocument(BaseDocument):
             })
 
     def save(self, *args, **kwargs):
-        """Базова логика при записване на документ"""
+        """Enhanced save с auto invoice creation"""
         is_new = self.pk is None
+
+        # Flag за auto invoice creation
+        should_create_invoice = (
+                is_new and
+                self.auto_create_invoice and
+                self.document_type.code == 'GRN' and
+                self.supplier_document_number
+        )
 
         # Запазваме оригиналния статус за change tracking
         if not is_new:
@@ -241,6 +257,20 @@ class PurchaseDocument(BaseDocument):
 
         super().save(*args, **kwargs)
 
+        # Auto-create invoice СЛЕД save
+        if should_create_invoice:
+            self._trigger_auto_invoice_creation()
+
+    def _trigger_auto_invoice_creation(self):
+        """Trigger auto invoice creation via service"""
+        try:
+            from ..services import DocumentService
+            DocumentService.create_invoice_from_grn(self)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Auto invoice creation failed for {self.document_number}: {e}")
+
     def generate_document_number(self):
         """Генерира уникален номер на документа"""
         prefix = self.document_type.code if self.document_type else 'PUR'
@@ -253,7 +283,6 @@ class PurchaseDocument(BaseDocument):
         ).order_by('-document_number').first()
 
         if last_doc:
-            # Извличаме номера от последния документ
             try:
                 last_number = int(last_doc.document_number[-4:])
                 new_number = last_number + 1
@@ -271,7 +300,9 @@ class PurchaseDocument(BaseDocument):
         self.vat_amount = sum(line.vat_amount for line in lines)
         self.grand_total = self.subtotal + self.vat_amount - self.discount_amount
 
-
+    # =====================
+    # CORE BUSINESS LOGIC (остава в модела)
+    # =====================
 
     def confirm(self, user=None):
         """Потвърждава документа"""
@@ -284,7 +315,7 @@ class PurchaseDocument(BaseDocument):
         self.save()
 
     def receive(self, user=None):
-        """Получава документа и създава stock movements"""
+        """Получава документа"""
         if self.status != self.CONFIRMED:
             raise ValidationError("Can only receive confirmed documents")
 
@@ -304,26 +335,44 @@ class PurchaseDocument(BaseDocument):
             self.updated_by = user
         self.save()
 
+    # =====================
+    # BUSINESS RULES & PROPERTIES (остава в модела)
+    # =====================
 
+    def can_be_modified(self):
+        """Проверява дали документът може да се модифицира"""
+        return self.status in [self.DRAFT]
 
-    def create_stock_movements(self):
-        """Създава stock movements за всички редове"""
-        from inventory.services import MovementService
+    def can_be_received(self):
+        """Проверява дали документът може да се получи"""
+        return self.status == self.CONFIRMED
 
-        for line in self.lines.all():
-            MovementService.create_incoming_movement(
-                location=self.location,
-                product=line.product,
-                quantity=line.quantity_base_unit,
-                cost_price=line.unit_price_base,
-                source_document_type='PURCHASE',
-                source_document_number=self.document_number,
-                movement_date=self.delivery_date,
-                batch_number=line.batch_number,
-                expiry_date=line.expiry_date,
-                reason=f"Purchase from {self.supplier.name}",
-                created_by=self.created_by
-            )
+    def can_be_cancelled(self):
+        """Проверява дали документът може да се отмени"""
+        return self.status in [self.DRAFT, self.CONFIRMED]
+
+    def is_overdue_payment(self):
+        """Проверява дали плащането е просрочено"""
+        if self.is_paid:
+            return False
+
+        from datetime import timedelta
+        due_date = self.delivery_date + timedelta(days=self.supplier.payment_days)
+        return timezone.now().date() > due_date
+
+    def get_days_until_payment(self):
+        """Връща дни до падеж на плащането"""
+        if self.is_paid:
+            return 0
+
+        from datetime import timedelta
+        due_date = self.delivery_date + timedelta(days=self.supplier.payment_days)
+        days_diff = (due_date - timezone.now().date()).days
+        return days_diff
+
+    # =====================
+    # SIMPLE COMPUTED PROPERTIES (остава в модела)
+    # =====================
 
     def get_total_weight(self):
         """Изчислява общото тегло на документа"""
@@ -341,53 +390,13 @@ class PurchaseDocument(BaseDocument):
         """Връща броя уникални продукти"""
         return self.lines.values('product').distinct().count()
 
-    def is_overdue_payment(self):
-        """Проверява дали плащането е просрочено"""
-        if self.is_paid:
-            return False
+    def get_related_invoice(self):
+        """Връща свързания INV документ ако съществува"""
+        if not self.supplier_document_number:
+            return None
 
-        from datetime import timedelta
-
-        due_date = self.delivery_date + timedelta(days=self.supplier.payment_days)
-        return timezone.now().date() > due_date
-
-    def get_days_until_payment(self):
-        """Връща дни до падеж на плащането"""
-        if self.is_paid:
-            return 0
-
-        from datetime import timedelta
-
-        due_date = self.delivery_date + timedelta(days=self.supplier.payment_days)
-        days_diff = (due_date - timezone.now().date()).days
-        return days_diff
-
-    def duplicate(self, new_date=None, user=None):
-        """Създава копие на документа"""
-        new_doc = PurchaseDocument.objects.create(
-            document_date=new_date or timezone.now().date(),
-            delivery_date=new_date or timezone.now().date(),
-            supplier=self.supplier,
-            location=self.location,
-            document_type=self.document_type,
-            notes=f"Copy of {self.document_number}\n{self.notes}",
-            created_by=user or self.created_by
-        )
-
-        # Копираме всички редове
-        for line in self.lines.all():
-            new_doc.lines.create(
-                line_number=line.line_number,
-                product=line.product,
-                quantity=line.quantity,
-                unit=line.unit,
-                unit_price=line.unit_price,
-                discount_percent=line.discount_percent,
-                batch_number=line.batch_number,
-                expiry_date=line.expiry_date
-            )
-
-        new_doc.recalculate_totals()
-        new_doc.save()
-
-        return new_doc
+        return PurchaseDocument.objects.filter(
+            document_type__code='INV',
+            supplier_document_number=self.supplier_document_number,
+            supplier=self.supplier
+        ).exclude(pk=self.pk).first()

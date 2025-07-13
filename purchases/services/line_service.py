@@ -5,7 +5,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from typing import Dict, Any
+from django.db import models
+
 from ..models import PurchaseDocument, PurchaseDocumentLine
 
 
@@ -37,7 +38,6 @@ class LineService:
 
         # Auto line number ако не е подаден
         if line_number is None:
-            from django.db import models
             max_line = document.lines.aggregate(
                 max_line=models.Max('line_number')
             )['max_line'] or 0
@@ -72,351 +72,283 @@ class LineService:
         line.full_clean()
         line.save()
 
-        # Преизчисляваме общите суми на документа
-        document.recalculate_totals()
-        document.save()
+        # Recalculate document totals - import тук за да избегнем circular import
+        from .document_service import DocumentService
+        DocumentService.recalculate_document_totals(document)
 
         return line
 
     @staticmethod
     @transaction.atomic
-    def update_line(line: PurchaseDocumentLine, **update_data) -> PurchaseDocumentLine:
+    def update_line(
+            line: PurchaseDocumentLine,
+            quantity: Optional[Decimal] = None,
+            unit_price: Optional[Decimal] = None,
+            discount_percent: Optional[Decimal] = None,
+            batch_number: Optional[str] = None,
+            expiry_date=None,
+            **kwargs
+    ) -> PurchaseDocumentLine:
         """Обновява съществуващ ред"""
 
         if not line.document.can_be_modified():
-            raise ValidationError("Cannot modify line - document is not in editable status")
+            raise ValidationError("Cannot modify document in current status")
 
         # Обновяваме полетата
-        for field, value in update_data.items():
-            if hasattr(line, field):
-                setattr(line, field, value)
+        if quantity is not None:
+            line.quantity = quantity
+        if unit_price is not None:
+            line.unit_price = unit_price
+        if discount_percent is not None:
+            line.discount_percent = discount_percent
+        if batch_number is not None:
+            line.batch_number = batch_number
+        if expiry_date is not None:
+            line.expiry_date = expiry_date
+
+        # Обновяваме допълнителните полета
+        for key, value in kwargs.items():
+            if hasattr(line, key):
+                setattr(line, key, value)
 
         line.full_clean()
         line.save()
 
-        # Преизчисляваме общите суми на документа
-        line.document.recalculate_totals()
-        line.document.save()
+        # Recalculate document totals
+        from .document_service import DocumentService
+        DocumentService.recalculate_document_totals(line.document)
 
         return line
 
     @staticmethod
     @transaction.atomic
-    def delete_line(line: PurchaseDocumentLine) -> bool:
+    def delete_line(line: PurchaseDocumentLine) -> None:
         """Изтрива ред от документ"""
 
         if not line.document.can_be_modified():
-            raise ValidationError("Cannot delete line - document is not in editable status")
+            raise ValidationError("Cannot modify document in current status")
 
         document = line.document
         line.delete()
 
-        # Преизчисляваме общите суми на документа
-        document.recalculate_totals()
-        document.save()
-
-        return True
+        # Recalculate document totals
+        from .document_service import DocumentService
+        DocumentService.recalculate_document_totals(document)
 
     @staticmethod
-    def calculate_line_pricing(line: PurchaseDocumentLine) -> Dict:
-        """Изчислява pricing информация за ред"""
-
-        # Базови изчисления
-        line_subtotal = line.quantity * line.unit_price
-        discount_amount = line_subtotal * (line.discount_percent / 100)
-        line_total_after_discount = line_subtotal - discount_amount
-
-        # VAT изчисления (ако продуктът има tax group)
-        vat_amount = Decimal('0')
-        if hasattr(line.product, 'tax_group') and line.product.tax_group:
-            vat_amount = line_total_after_discount * (line.product.tax_group.rate / 100)
-
-        line_total_with_vat = line_total_after_discount + vat_amount
-
-        # Cost per base unit
-        conversion_factor = line.get_conversion_factor()
-        cost_per_base_unit = line.unit_price / conversion_factor
-
-        return {
-            'line_subtotal': line_subtotal,
-            'discount_amount': discount_amount,
-            'line_total_after_discount': line_total_after_discount,
-            'vat_amount': vat_amount,
-            'line_total_with_vat': line_total_with_vat,
-            'cost_per_base_unit': cost_per_base_unit,
-            'total_cost_base_units': line.quantity * conversion_factor * cost_per_base_unit,
-        }
-
-    @staticmethod
-    def analyze_receiving_variance(line: PurchaseDocumentLine) -> Dict:
-        """Анализира разликите при получаване на ред"""
-
-        variance_qty = line.received_quantity - line.quantity
-        variance_percentage = (variance_qty / line.quantity * 100) if line.quantity > 0 else 0
-        variance_amount = variance_qty * line.unit_price
-
-        # Статус на варианса
-        if variance_qty == 0:
-            status = 'exact'
-        elif variance_qty > 0:
-            status = 'over_received'
-        else:
-            status = 'under_received'
-
-        return {
-            'variance_quantity': variance_qty,
-            'variance_percentage': round(variance_percentage, 2),
-            'variance_amount': variance_amount,
-            'status': status,
-            'ordered_quantity': line.quantity,
-            'received_quantity': line.received_quantity,
-            'is_significant': abs(variance_percentage) > 5,  # Над 5% е значителна разлика
-        }
-
-    @staticmethod
-    def calculate_pricing_suggestions(line: PurchaseDocumentLine, location=None) -> Dict:
-        """Изчислява предложения за продажни цени"""
-
-        if not location:
-            location = line.document.location
-
-        suggestions = {
-            'current_cost': line.unit_price,
-            'suggested_prices': [],
-            'markup_analysis': []
-        }
-
-        # Различни markup проценти за анализ
-        markup_options = [20, 30, 40, 50, 60]
-
-        for markup in markup_options:
-            markup_decimal = Decimal(str(markup))
-            suggested_price = line.unit_price * (Decimal('1') + markup_decimal / Decimal('100'))
-            margin = markup_decimal / (Decimal('100') + markup_decimal) * Decimal('100')
-
-            suggestions['suggested_prices'].append({
-                'markup_percent': markup,
-                'margin_percent': round(float(margin), 1),
-                'suggested_price': suggested_price,
-                'profit_per_unit': suggested_price - line.unit_price
-            })
-
-        # Текуща продажна цена (ако има)
-        try:
-            current_sale_price = None
-            # TODO: Интеграция с pricing service
-
-            if current_sale_price is not None and Decimal(str(current_sale_price)) > Decimal('0'):
-                current_sale_price_decimal = Decimal(str(current_sale_price))  # Конвертираме в Decimal
-                current_markup = ((current_sale_price_decimal - line.unit_price) / line.unit_price) * Decimal('100')
-                suggestions['current_sale_price'] = current_sale_price_decimal
-                suggestions['current_markup'] = Decimal(str(round(float(current_markup), 1)))
-
-        except Exception:
-            pass
-
-        return suggestions
-
-    @staticmethod
-    @transaction.atomic
-    def bulk_update_received_quantities(line_updates: List[Dict]) -> Dict:
-        """Bulk обновяване на получени количества
-
-        Args:
-            line_updates: List of {'line_id': int, 'received_quantity': Decimal}
-        """
-
-        success_count = 0
+    def validate_document_lines(document: PurchaseDocument) -> List[str]:
+        """Валидира всички редове в документ"""
         errors = []
-        updated_documents = set()
 
-        for update in line_updates:
-            try:
-                line = PurchaseDocumentLine.objects.get(id=update['line_id'])
+        if not document.lines.exists():
+            errors.append("Document must have at least one line")
+            return errors
 
-                if not line.document.can_be_modified():
-                    errors.append(f"Line {line.line_number}: Document cannot be modified")
-                    continue
+        for line in document.lines.all():
+            line_errors = LineService.validate_line(line)
+            if line_errors:
+                errors.extend([f"Line {line.line_number}: {error}" for error in line_errors])
 
-                line.received_quantity = update['received_quantity']
-                line.save()
-
-                updated_documents.add(line.document.id)
-                success_count += 1
-
-            except PurchaseDocumentLine.DoesNotExist:
-                errors.append(f"Line with ID {update['line_id']} not found")
-            except Exception as e:
-                errors.append(f"Line {update.get('line_id', 'unknown')}: {str(e)}")
-
-        # Преизчисляваме суми за всички засегнати документи
-        for doc_id in updated_documents:
-            try:
-                document = PurchaseDocument.objects.get(id=doc_id)
-                document.recalculate_totals()
-                document.save()
-            except Exception as e:
-                errors.append(f"Error recalculating document {doc_id}: {str(e)}")
-
-        return {
-            'success_count': success_count,
-            'total_attempted': len(line_updates),
-            'failed_count': len(errors),
-            'errors': errors,
-            'updated_documents': len(updated_documents)
-        }
-
+        return errors
 
     @staticmethod
-    def get_line_quality_info(line: PurchaseDocumentLine) -> Dict[str, Any]:
-        """Информация за качеството на ред"""
+    def validate_line(line: PurchaseDocumentLine) -> List[str]:
+        """Валидира отделен ред"""
+        errors = []
 
-        quality_info = {
-            'is_approved': line.quality_approved,
-            'has_notes': bool(line.quality_notes),
-            'quality_notes': line.quality_notes,
-        }
+        # Основни валидации
+        if line.quantity <= 0:
+            errors.append("Quantity must be greater than 0")
 
-        # Проверка на срок на годност
-        if line.expiry_date:
-            today = timezone.now().date()
-            days_to_expiry = (line.expiry_date - today).days
+        if line.unit_price < 0:
+            errors.append("Unit price cannot be negative")
 
-            if days_to_expiry < 0:
-                quality_info['expiry_status'] = 'expired'
-                quality_info['expiry_alert'] = 'EXPIRED'
-            elif days_to_expiry <= 7:
-                quality_info['expiry_status'] = 'expires_soon'
-                quality_info['expiry_alert'] = f'Expires in {days_to_expiry} days'
-            elif days_to_expiry <= 30:
-                quality_info['expiry_status'] = 'expires_this_month'
-                quality_info['expiry_alert'] = f'Expires in {days_to_expiry} days'
-            else:
-                quality_info['expiry_status'] = 'good'
-                quality_info['expiry_alert'] = None
+        if line.discount_percent < 0 or line.discount_percent > 100:
+            errors.append("Discount percent must be between 0 and 100")
 
-            quality_info['days_to_expiry'] = days_to_expiry
-        else:
-            quality_info['expiry_status'] = 'no_expiry'
-            quality_info['expiry_alert'] = None
+        # Product валидации
+        if not line.product.is_active:
+            errors.append(f"Product {line.product.code} is inactive")
 
-        return quality_info
+        # Unit валидации
+        valid_units = [line.product.base_unit]
+        if hasattr(line.product, 'packagings'):
+            valid_units.extend([p.unit for p in line.product.packagings.all()])
+
+        if line.unit not in valid_units:
+            errors.append(f"Unit {line.unit.code} is not valid for product {line.product.code}")
+
+        return errors
 
     @staticmethod
     @transaction.atomic
-    def create_quality_issue(line: PurchaseDocumentLine, issue_description: str, severity: str = 'MEDIUM') -> bool:
-        """Създава качествен проблем за ред"""
-
-        line.quality_approved = False
-
-        # Добавяме issue към notes
-        timestamp = timezone.now().strftime('%Y-%m-%d %H:%M')
-        issue_note = f"[{timestamp}] {severity}: {issue_description}"
-
-        if line.quality_notes:
-            line.quality_notes = f"{issue_note}\n{line.quality_notes}"
-        else:
-            line.quality_notes = issue_note
-
-        line.save(update_fields=['quality_approved', 'quality_notes'])
-
-        return True
-
-    @staticmethod
-    def get_lines_summary_for_document(document: PurchaseDocument) -> Dict:
-        """Резюме на редовете за документ"""
-
-        # Използваме manager-а вместо .all()
-        lines = PurchaseDocumentLine.objects.filter(document=document)
-
-        if not lines.exists():
-            return {'total_lines': 0}
-
-        from django.db import models
-
-        summary = lines.aggregate(
-            total_lines=models.Count('id'),
-            total_quantity=models.Sum('quantity'),
-            total_received=models.Sum('received_quantity'),
-            avg_unit_price=models.Avg('unit_price'),
-            lines_with_discount=models.Count('id', filter=models.Q(discount_percent__gt=0)),
-            lines_with_quality_issues=models.Count('id', filter=models.Q(quality_approved=False)),
-            lines_with_batch=models.Count('id', filter=models.Q(batch_number__isnull=False, batch_number__gt='')),
-            lines_with_expiry=models.Count('id', filter=models.Q(expiry_date__isnull=False)),
-        )
-
-        # Анализ на варианси - сега ще работят custom методите
-        variance_lines = lines.with_variance()
-        summary['lines_with_variance'] = variance_lines.count()
-        summary['over_received_lines'] = lines.over_received().count()
-        summary['under_received_lines'] = lines.under_received().count()
-
-        # Изчисляваме проценти
-        total = summary['total_lines']
-        if total > 0:
-            summary['discount_rate'] = round((summary['lines_with_discount'] / total) * 100, 1)
-            summary['quality_issue_rate'] = round((summary['lines_with_quality_issues'] / total) * 100, 1)
-            summary['variance_rate'] = round((summary['lines_with_variance'] / total) * 100, 1)
-
-        return summary
-
-    @staticmethod
-    def find_duplicate_lines(document: PurchaseDocument) -> List[Dict]:
-        """Намира дублирани редове в документ (същ продукт, unit, цена)"""
-
-        from django.db import models
-
-        # Намираме групи с повече от 1 ред
-        duplicate_groups = PurchaseDocumentLine.objects.filter(
-            document=document
-        ).values(
-            'product_id', 'unit_id', 'unit_price'
-        ).annotate(
-            count=models.Count('id'),
-            total_quantity=models.Sum('quantity')
-        ).filter(count__gt=1)
-
-        duplicates = []
-        for group in duplicate_groups:
-            # За всяка група намираме конкретните line_ids
-            line_ids = list(
-                PurchaseDocumentLine.objects.filter(
-                    document=document,
-                    product_id=group['product_id'],
-                    unit_id=group['unit_id'],
-                    unit_price=group['unit_price']
-                ).values_list('id', flat=True)
-            )
-
-            duplicates.append({
-                'product_id': group['product_id'],
-                'unit_id': group['unit_id'],
-                'unit_price': group['unit_price'],
-                'duplicate_count': group['count'],
-                'line_ids': line_ids,
-                'total_quantity': group['total_quantity'],
-                'suggestion': 'Consider merging these lines'
-            })
-
-        return duplicates
-
-    @staticmethod
-    @transaction.atomic
-    def bulk_update_pricing_from_document(document: PurchaseDocument) -> Dict:
-        """Bulk обновяване на цени от всички редове в документ"""
-
-        results = {
+    def bulk_update_lines(
+            lines: List[PurchaseDocumentLine],
+            updates: Dict,
+            validate_each: bool = True
+    ) -> Dict:
+        """Bulk обновяване на редове"""
+        result = {
+            'success': True,
             'updated_count': 0,
-            'skipped_count': 0,
             'errors': []
         }
 
-        for line in document.lines.filter(new_sale_price__isnull=False, new_sale_price__gt=0):
-            try:
-                line.apply_suggested_price()
-                results['updated_count'] += 1
-            except Exception as e:
-                results['errors'].append(f"Product {line.product.code}: {str(e)}")
-                results['skipped_count'] += 1
+        try:
+            documents_to_recalculate = set()
 
-        return results
+            for line in lines:
+                try:
+                    if not line.document.can_be_modified():
+                        result['errors'].append(f"Line {line.line_number}: Document cannot be modified")
+                        continue
+
+                    # Прилагаме обновяванията
+                    for field, value in updates.items():
+                        if hasattr(line, field):
+                            setattr(line, field, value)
+
+                    if validate_each:
+                        line.full_clean()
+
+                    line.save()
+                    documents_to_recalculate.add(line.document)
+                    result['updated_count'] += 1
+
+                except Exception as e:
+                    result['errors'].append(f"Line {line.line_number}: {str(e)}")
+
+            # Recalculate всички засегнати документи
+            from .document_service import DocumentService
+            for document in documents_to_recalculate:
+                DocumentService.recalculate_document_totals(document)
+
+        except Exception as e:
+            result['success'] = False
+            result['errors'].append(f"Bulk update failed: {str(e)}")
+
+        return result
+
+    @staticmethod
+    def get_line_analytics(document: PurchaseDocument) -> Dict:
+        """Връща аналитика за редовете в документ"""
+        lines = document.lines.all()
+
+        if not lines.exists():
+            return {
+                'total_lines': 0,
+                'total_quantity': Decimal('0'),
+                'total_amount': Decimal('0'),
+                'avg_unit_price': Decimal('0'),
+                'lines_with_discount': 0
+            }
+
+        analytics = lines.aggregate(
+            total_lines=models.Count('id'),
+            total_quantity=models.Sum('quantity'),
+            total_amount=models.Sum('line_total'),
+            avg_unit_price=models.Avg('unit_price'),
+            lines_with_discount=models.Count('id', filter=models.Q(discount_percent__gt=0)),
+            max_line_total=models.Max('line_total'),
+            min_line_total=models.Min('line_total')
+        )
+
+        return analytics
+
+    @staticmethod
+    def bulk_update_pricing_from_document(document: PurchaseDocument) -> Dict:
+        """Обновява цените на продуктите въз основа на документа"""
+        result = {
+            'updated_count': 0,
+            'errors': []
+        }
+
+        try:
+            # Това е placeholder - трябва да се имплементира според нуждите
+            # Може да обновява supplier prices, cost prices, etc.
+
+            for line in document.lines.all():
+                try:
+                    # Пример за обновяване на supplier price
+                    # supplier_price, created = SupplierPrice.objects.get_or_create(
+                    #     supplier=document.supplier,
+                    #     product=line.product,
+                    #     defaults={'price': line.unit_price}
+                    # )
+                    # if not created:
+                    #     supplier_price.price = line.unit_price
+                    #     supplier_price.save()
+
+                    result['updated_count'] += 1
+
+                except Exception as e:
+                    result['errors'].append(f"Product {line.product.code}: {str(e)}")
+
+        except Exception as e:
+            result['errors'].append(f"Pricing update failed: {str(e)}")
+
+        return result
+
+    @staticmethod
+    @transaction.atomic
+    def reorder_lines(document: PurchaseDocument, line_order: List[int]) -> None:
+        """Пренарежда редовете в документ"""
+
+        if not document.can_be_modified():
+            raise ValidationError("Cannot modify document in current status")
+
+        lines = list(document.lines.all())
+
+        if len(line_order) != len(lines):
+            raise ValidationError("Line order must contain all line IDs")
+
+        # Обновяваме line_number според новия ред
+        for new_position, line_id in enumerate(line_order, 1):
+            try:
+                line = next(l for l in lines if l.id == line_id)
+                line.line_number = new_position
+                line.save(update_fields=['line_number'])
+            except StopIteration:
+                raise ValidationError(f"Line with ID {line_id} not found")
+
+    @staticmethod
+    def get_line_by_product(document: PurchaseDocument, product) -> Optional[PurchaseDocumentLine]:
+        """Намира ред по продукт"""
+        try:
+            return document.lines.get(product=product)
+        except PurchaseDocumentLine.DoesNotExist:
+            return None
+        except PurchaseDocumentLine.MultipleObjectsReturned:
+            # Връща първия намерен ред
+            return document.lines.filter(product=product).first()
+
+    @staticmethod
+    def merge_duplicate_lines(document: PurchaseDocument) -> int:
+        """Сливане на дублирани редове със същия продукт"""
+
+        if not document.can_be_modified():
+            raise ValidationError("Cannot modify document in current status")
+
+        lines_by_product = {}
+        merged_count = 0
+
+        for line in document.lines.all():
+            key = (line.product.id, line.unit.id, line.unit_price, line.discount_percent)
+
+            if key in lines_by_product:
+                # Merge в първия намерен ред
+                original_line = lines_by_product[key]
+                original_line.quantity += line.quantity
+                original_line.save()
+
+                # Изтриваме дублирания ред
+                line.delete()
+                merged_count += 1
+            else:
+                lines_by_product[key] = line
+
+        # Recalculate totals
+        from .document_service import DocumentService
+        DocumentService.recalculate_document_totals(document)
+
+        return merged_count
