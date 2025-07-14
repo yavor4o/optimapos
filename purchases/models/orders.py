@@ -608,7 +608,7 @@ class PurchaseOrderLine(BaseDocumentLine):
         ordering = ['document', 'line_number']
         indexes = [
             models.Index(fields=['document', 'line_number']),
-            models.Index(fields=['product', 'delivery_status']),
+            models.Index(fields=['product']),
             models.Index(fields=['source_request_line']),
         ]
 

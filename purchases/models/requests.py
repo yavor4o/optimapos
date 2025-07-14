@@ -521,7 +521,7 @@ class PurchaseRequestLine(BaseDocumentLine):
         ordering = ['document', 'line_number']
         indexes = [
             models.Index(fields=['document', 'line_number']),
-            models.Index(fields=['product', 'document__status']),
+            models.Index(fields=['product']),
         ]
 
     def __str__(self):

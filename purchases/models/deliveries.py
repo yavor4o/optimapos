@@ -688,10 +688,10 @@ class DeliveryLine(BaseDocumentLine):
         ordering = ['document', 'line_number']
         indexes = [
             models.Index(fields=['document', 'line_number']),
-            models.Index(fields=['product', 'quality_approved']),
+            models.Index(fields=['product']),
             models.Index(fields=['source_order_line']),
             models.Index(fields=['quality_approved', 'batch_number']),
-            models.Index(fields=['expiry_date', 'quality_approved']),
+            models.Index(fields=['expiry_date']),
         ]
 
     def __str__(self):
