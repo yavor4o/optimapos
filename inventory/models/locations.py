@@ -130,3 +130,153 @@ class InventoryLocation(models.Model):
             return item.available_qty >= quantity or self.allow_negative_stock
         except InventoryItem.DoesNotExist:
             return self.allow_negative_stock
+
+
+class POSLocation(models.Model):
+    """POS локации/каси"""
+    code = models.CharField(
+        _('POS Code'),
+        max_length=10,
+        unique=True,
+        help_text=_('Unique code like POS01, CASH1')
+    )
+    name = models.CharField(
+        _('POS Location Name'),
+        max_length=100
+    )
+
+    # Връзка със склад
+    location = models.ForeignKey(
+        'inventory.InventoryLocation',
+        on_delete=models.PROTECT,
+        related_name='pos_locations',
+        verbose_name=_('Location')
+    )
+
+    # Адрес (ако е различен от склада)
+    address = models.TextField(
+        _('Address'),
+        blank=True
+    )
+
+    # Фискално устройство
+    fiscal_device_serial = models.CharField(
+        _('Fiscal Device Serial'),
+        max_length=50,
+        blank=True,
+        unique=True,
+        null=True
+    )
+    fiscal_device_number = models.CharField(
+        _('Fiscal Device Number'),
+        max_length=20,
+        blank=True,
+        help_text=_('Official registration number')
+    )
+
+    # Настройки
+    allow_negative_stock = models.BooleanField(
+        _('Allow Negative Stock Sales'),
+        default=False,
+        help_text=_('Whether to allow sales when stock is insufficient')
+    )
+
+    require_customer = models.BooleanField(
+        _('Require Customer'),
+        default=False,
+        help_text=_('Whether customer selection is mandatory')
+    )
+
+    default_customer = models.ForeignKey(
+        'partners.Customer',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text=_('Default customer for anonymous sales')
+    )
+
+    # Принтери
+    receipt_printer = models.CharField(
+        _('Receipt Printer'),
+        max_length=100,
+        blank=True,
+        help_text=_('Receipt printer name/address')
+    )
+
+    # Работно време
+    opens_at = models.TimeField(
+        _('Opens At'),
+        null=True,
+        blank=True
+    )
+    closes_at = models.TimeField(
+        _('Closes At'),
+        null=True,
+        blank=True
+    )
+
+    # Статус
+    is_active = models.BooleanField(
+        _('Is Active'),
+        default=True
+    )
+
+    # Одит
+    created_at = models.DateTimeField(
+        _('Created At'),
+        auto_now_add=True
+    )
+    updated_at = models.DateTimeField(
+        _('Last Updated At'),
+        auto_now=True
+    )
+
+    class Meta:
+        verbose_name = _('POS Location')
+        verbose_name_plural = _('POS Locations')
+        # ordering = ['warehouse', 'code']
+
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.warehouse.code})"
+
+    def clean(self):
+        # Проверка на работното време
+        if self.opens_at and self.closes_at:
+            if self.opens_at >= self.closes_at:
+                raise ValidationError({
+                    'closes_at': _('Closing time must be after opening time')
+                })
+
+    def is_open_now(self):
+        """Проверява дали касата работи в момента"""
+        if not self.opens_at or not self.closes_at:
+            return True  # Ако няма работно време - винаги отворена
+
+        from django.utils import timezone
+        now = timezone.now().time()
+
+        if self.opens_at < self.closes_at:
+            # Нормално работно време (09:00 - 18:00)
+            return self.opens_at <= now <= self.closes_at
+        else:
+            # През полунощ (22:00 - 02:00)
+            return now >= self.opens_at or now <= self.closes_at
+
+    def get_active_session(self):
+        """Връща активната касова сесия ако има такава"""
+        # Това ще се имплементира в sales модула
+        return None
+
+    def can_open_session(self, user):
+        """Проверява дали потребител може да отвори сесия"""
+        if not self.is_active:
+            return False, "POS location is not active"
+
+        if not self.is_open_now():
+            return False, "POS location is closed"
+
+        active_session = self.get_active_session()
+        if active_session:
+            return False, f"Session already open by {active_session.cashier}"
+
+        return True, None

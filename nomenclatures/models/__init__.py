@@ -29,7 +29,7 @@ from .financial import (
 from .operational import (
     UnitOfMeasure,
     PaymentType,
-    POSLocation
+
 )
 
 # Експортираме всичко за лесен достъп
