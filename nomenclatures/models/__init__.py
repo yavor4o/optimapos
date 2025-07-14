@@ -32,7 +32,6 @@ from .operational import (
 
 )
 
-# Експортираме всичко за лесен достъп
 __all__ = [
     # Base
     'BaseNomenclature',
@@ -51,7 +50,7 @@ __all__ = [
     # Operational
     'UnitOfMeasure',
     'PaymentType',
-    'POSLocation',
+
 ]
 
 # Version info
