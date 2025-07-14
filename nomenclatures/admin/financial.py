@@ -217,7 +217,7 @@ class TaxGroupAdmin(admin.ModelAdmin):
     ]
     list_filter = ['tax_type', 'is_default', 'is_reverse_charge', 'is_active']
     search_fields = ['code', 'name']
-    prepopulated_fields = {'code': ('name',)}
+
 
     fieldsets = (
         (None, {
