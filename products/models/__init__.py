@@ -1,10 +1,12 @@
 # products/models/__init__.py
 """
 Products models package
-"""
 
-# Base classification
-from .base import ProductType, ProductGroup, Brand
+Архитектура:
+- Използва nomenclatures за класификация (Brand, ProductGroup, ProductType)
+- products.py: Основен Product модел + ProductPLU
+- packaging.py: ProductPackaging + ProductBarcode
+"""
 
 # Core product models
 from .products import Product, ProductPLU
@@ -12,17 +14,20 @@ from .products import Product, ProductPLU
 # Packaging & Barcodes
 from .packaging import ProductPackaging, ProductBarcode
 
+# Export всичко за лесен достъп
 __all__ = [
-    # Base
-    'ProductType',
-    'ProductGroup',
-    'Brand',
-
-    # Core
+    # Основни модели
     'Product',
     'ProductPLU',
 
-    # Packaging
+    # Опаковки и баркодове
     'ProductPackaging',
     'ProductBarcode',
 ]
+
+# Версия и мета информация
+__version__ = '2.0.0'
+__author__ = 'Your Company'
+
+# App configuration
+default_app_config = 'products.apps.ProductsConfig'
