@@ -147,12 +147,12 @@ class InventoryMovement(models.Model):
     movement_date = models.DateField(_('Movement Date'))
 
     # Reference to source documents (when available)
-    purchase_document = models.ForeignKey(
-        'purchases.PurchaseDocument',
+    delivery_receipt = models.ForeignKey(
+        'purchases.DeliveryReceipt',
         on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        verbose_name=_('Purchase Document')
+        null=True, blank=True,
+        related_name='inventory_movements',
+        verbose_name=_('Delivery Receipt')
     )
     # Future: sale_document, transfer_document, etc.
 

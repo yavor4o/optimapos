@@ -165,7 +165,7 @@ class PurchaseRequest(BaseDocument):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='source_request',
+        related_name='originating_request',  # ← НОВО ИМЕ
         verbose_name=_('Converted to Order'),
         help_text=_('Order created from this request')
     )
@@ -504,7 +504,7 @@ class PurchaseRequestLine(BaseDocumentLine):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='source_request_line',
+        related_name='originating_request_line',
         verbose_name=_('Converted to Order Line'),
         help_text=_('Order line created from this request line')
     )
