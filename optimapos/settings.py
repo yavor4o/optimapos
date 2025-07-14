@@ -51,7 +51,8 @@ INSTALLED_APPS = [
     'mptt',
     'pricing.apps.PricingConfig',
     'purchases.apps.PurchasesConfig',
-    'inventory.apps.InventoryConfig'
+    'inventory.apps.InventoryConfig',
+    'core.apps.CoreConfig'
 ]
 
 MIDDLEWARE = [

@@ -1,4 +1,4 @@
-# purchases/admin/audit.py
+# purchases/admin/audit.py - FIXED VERSION
 
 from django.contrib import admin
 from django.utils.html import format_html
@@ -10,11 +10,11 @@ from ..models import PurchaseAuditLog
 
 @admin.register(PurchaseAuditLog)
 class PurchaseAuditLogAdmin(admin.ModelAdmin):
-    """Admin за PurchaseAuditLog - само за четене"""
+    """Admin for PurchaseAuditLog - read only"""
 
     list_display = [
         'timestamp', 'document_link', 'action_badge', 'user_display',
-        'field_name', 'change_summary'
+        'change_summary'
     ]
 
     list_filter = [
@@ -23,32 +23,33 @@ class PurchaseAuditLogAdmin(admin.ModelAdmin):
 
     search_fields = [
         'document__document_number', 'user__username', 'user__first_name',
-        'user__last_name', 'field_name', 'notes'
+        'user__last_name', 'notes'
     ]
 
     date_hierarchy = 'timestamp'
 
     ordering = ['-timestamp']
 
-    # Само за четене
+    # FIXED: Use only fields that exist in the new model
     readonly_fields = [
-        'document', 'action', 'timestamp', 'user', 'field_name',
-        'old_value', 'new_value', 'notes'
+        'document', 'action', 'timestamp', 'user',
+        'old_status', 'new_status', 'old_workflow_status', 'new_workflow_status',
+        'notes', 'ip_address', 'additional_data'
     ]
 
     fieldsets = (
         (_('Audit Information'), {
             'fields': ('document', 'action', 'timestamp', 'user')
         }),
-        (_('Change Details'), {
-            'fields': ('field_name', 'old_value', 'new_value')
+        (_('Status Changes'), {
+            'fields': ('old_status', 'new_status', 'old_workflow_status', 'new_workflow_status')
         }),
-        (_('Additional Notes'), {
-            'fields': ('notes',)
+        (_('Additional Information'), {
+            'fields': ('notes', 'ip_address', 'additional_data')
         })
     )
 
-    # Забраняваме всякакви промени
+    # Disable all modifications
     def has_add_permission(self, request):
         return False
 
@@ -60,7 +61,7 @@ class PurchaseAuditLogAdmin(admin.ModelAdmin):
 
     # Custom display methods
     def document_link(self, obj):
-        """Линк към документа"""
+        """Link to document"""
         if obj.document:
             url = f"/admin/purchases/purchasedocument/{obj.document.id}/change/"
             return format_html(
@@ -73,14 +74,20 @@ class PurchaseAuditLogAdmin(admin.ModelAdmin):
     document_link.admin_order_field = 'document__document_number'
 
     def action_badge(self, obj):
-        """Цветен badge за action"""
+        """Colored badge for action"""
         colors = {
-            'create': '#28A745',
-            'update': '#17A2B8',
-            'confirm': '#0D6EFD',
-            'receive': '#198754',
-            'cancel': '#DC3545',
-            'price_update': '#FFC107',
+            'created': '#28A745',
+            'submitted': '#17A2B8',
+            'approved': '#0D6EFD',
+            'rejected': '#DC3545',
+            'converted': '#FFC107',
+            'sent': '#6F42C1',
+            'confirmed': '#198754',
+            'received': '#20C997',
+            'cancelled': '#DC3545',
+            'modified': '#6C757D',
+            'status_changed': '#FD7E14',
+            'payment_updated': '#E83E8C',
         }
 
         color = colors.get(obj.action, '#6C757D')
@@ -95,7 +102,7 @@ class PurchaseAuditLogAdmin(admin.ModelAdmin):
     action_badge.short_description = _('Action')
 
     def user_display(self, obj):
-        """Потребител с допълнителна информация"""
+        """User with additional information"""
         if obj.user:
             full_name = obj.user.get_full_name()
             if full_name:
@@ -110,20 +117,28 @@ class PurchaseAuditLogAdmin(admin.ModelAdmin):
     user_display.short_description = _('User')
 
     def change_summary(self, obj):
-        """Резюме на промяната"""
-        if obj.field_name and obj.old_value and obj.new_value:
-            return format_html(
-                '<strong>{}:</strong><br>'
-                '<small style="color: #DC3545;">From:</small> {}<br>'
-                '<small style="color: #198754;">To:</small> {}',
-                obj.field_name,
-                obj.old_value[:50] + ('...' if len(obj.old_value) > 50 else ''),
-                obj.new_value[:50] + ('...' if len(obj.new_value) > 50 else '')
-            )
-        elif obj.notes:
-            return obj.notes[:100] + ('...' if len(obj.notes) > 100 else '')
-        else:
-            return "-"
+        """Summary of changes"""
+        summary_parts = []
+
+        # Status changes
+        if obj.old_status and obj.new_status and obj.old_status != obj.new_status:
+            summary_parts.append(f"Status: {obj.old_status} → {obj.new_status}")
+
+        # Workflow status changes
+        if (obj.old_workflow_status and obj.new_workflow_status and
+                obj.old_workflow_status != obj.new_workflow_status):
+            summary_parts.append(f"Workflow: {obj.old_workflow_status} → {obj.new_workflow_status}")
+
+        # Notes
+        if obj.notes:
+            notes_preview = obj.notes[:100] + ('...' if len(obj.notes) > 100 else '')
+            summary_parts.append(f"Notes: {notes_preview}")
+
+        # Additional data preview
+        if obj.additional_data:
+            summary_parts.append("Additional data available")
+
+        return format_html('<br>'.join(summary_parts)) if summary_parts else "-"
 
     change_summary.short_description = _('Change Summary')
 
