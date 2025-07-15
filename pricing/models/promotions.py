@@ -118,7 +118,7 @@ class PromotionalPrice(models.Model):
 
     # Customer restrictions
     customer_groups = models.ManyToManyField(
-        'pricing.PriceGroup',
+        'nomenclatures.PriceGroup',
         blank=True,
         related_name='promotions',
         verbose_name=_('Customer Groups'),

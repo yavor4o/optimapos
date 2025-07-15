@@ -38,7 +38,7 @@ class ProductPriceByGroup(models.Model):
         verbose_name=_('Product')
     )
     price_group = models.ForeignKey(
-        'pricing.PriceGroup',
+        'nomenclatures.PriceGroup',
         on_delete=models.CASCADE,
         related_name='product_group_prices',
         verbose_name=_('Price Group')
