@@ -174,7 +174,7 @@ class PurchaseRequest(BaseDocument):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='source_request',
+        related_name='converted_from_request',
         verbose_name=_('Converted to Order')
     )
 
