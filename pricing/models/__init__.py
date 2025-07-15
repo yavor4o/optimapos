@@ -12,11 +12,6 @@ Pricing models package
 - packaging_prices.py: PackagingPrice
 """
 
-# Price Groups
-from .groups import (
-    PriceGroup,
-    PriceGroupManager
-)
 
 # Base Prices
 from .base_prices import (
@@ -50,9 +45,6 @@ from .packaging_prices import (
 
 # Export all
 __all__ = [
-    # Groups
-    'PriceGroup',
-    'PriceGroupManager',
 
     # Base Prices
     'ProductPrice',

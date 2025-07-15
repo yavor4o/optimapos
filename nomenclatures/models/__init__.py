@@ -22,7 +22,9 @@ from .product import (
 from .financial import (
     Currency,
     ExchangeRate,
-    TaxGroup
+    TaxGroup,
+    PriceGroup,
+    PriceGroupManager,
 )
 
 # Operational related

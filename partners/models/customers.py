@@ -58,7 +58,7 @@ class Customer(PartnerBase):
 
    # Ценообразуване
     price_group = models.ForeignKey(
-        'pricing.PriceGroup',
+        'nomenclatures.PriceGroup',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
