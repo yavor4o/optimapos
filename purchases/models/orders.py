@@ -1,12 +1,12 @@
-# purchases/models/orders.py
+# purchases/models/orders.py - FIXED WITH NEW ARCHITECTURE
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
-from .base import BaseDocument, BaseDocumentLine
-from .document_types import DocumentType
+
+from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, FinancialLineMixin
 
 
 class PurchaseOrderManager(models.Manager):
@@ -30,15 +30,8 @@ class PurchaseOrderManager(models.Manager):
             status='confirmed',
             supplier_confirmed=True
         ).exclude(
-            # Exclude fully delivered orders (all lines delivered)
-            id__in=self._get_fully_delivered_order_ids()
+            delivery_status='completed'
         )
-
-    def _get_fully_delivered_order_ids(self):
-        """Helper to get IDs of orders that are fully delivered"""
-        # This will be implemented when we have DeliveryLine model
-        # For now return empty list
-        return []
 
     def by_supplier(self, supplier):
         """Orders for specific supplier"""
@@ -65,38 +58,59 @@ class PurchaseOrderManager(models.Manager):
         return self.filter(source_request__isnull=True)
 
 
-class PurchaseOrder(BaseDocument):
+class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     """
-    Purchase Order - Поръчки към доставчици
+    Purchase Order - Поръчка към доставчици
 
-    Workflow: draft → sent → confirmed → (in_delivery) → completed
-
-    Can be created from:
-    1. PurchaseRequest (approved request conversion)
-    2. Direct creation (verbal orders, phone orders, urgent purchases)
-
-    Can be used for:
-    1. Single delivery (1 order = 1 delivery)
-    2. Multiple deliveries (partial deliveries)
-    3. Multi-order delivery (multiple orders = 1 delivery)
+    Логика: Използва FinancialMixin и PaymentMixin защото има финансови данни.
+    НЕ използва DeliveryMixin защото има expected_delivery_date, не delivery_date.
     """
 
     # =====================
-    # SOURCE TRACKING
+    # STATUS CHOICES - специфични за поръчки
     # =====================
-    source_request = models.ForeignKey(
-        'purchases.PurchaseRequest',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='orders',
-        verbose_name=_('Source Request'),
-        help_text=_('Request this order was created from (if any)')
+    DRAFT = 'draft'
+    SENT = 'sent'
+    CONFIRMED = 'confirmed'
+    IN_DELIVERY = 'in_delivery'
+    RECEIVED = 'received'
+    CANCELLED = 'cancelled'
+    CLOSED = 'closed'
+
+    STATUS_CHOICES = [
+        (DRAFT, _('Draft')),
+        (SENT, _('Sent to Supplier')),
+        (CONFIRMED, _('Confirmed by Supplier')),
+        (IN_DELIVERY, _('In Delivery')),
+        (RECEIVED, _('Received')),
+        (CANCELLED, _('Cancelled')),
+        (CLOSED, _('Closed')),
+    ]
+
+    # =====================
+    # ПОРЪЧКА-СПЕЦИФИЧНИ ПОЛЕТА
+    # =====================
+    status = models.CharField(
+        _('Status'),
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=DRAFT
     )
 
-    # =====================
-    # ORDER CLASSIFICATION
-    # =====================
+    # DELIVERY DATE - expected, не actual!
+    expected_delivery_date = models.DateField(
+        _('Expected Delivery Date'),
+        help_text=_('When we expect to receive this order')
+    )
+
+    requested_delivery_date = models.DateField(
+        _('Requested Delivery Date'),
+        null=True,
+        blank=True,
+        help_text=_('When we requested delivery from supplier')
+    )
+
+    # ORDER SPECIFIC
     is_urgent = models.BooleanField(
         _('Urgent Order'),
         default=False,
@@ -110,16 +124,29 @@ class PurchaseOrder(BaseDocument):
         help_text=_('How this order was placed (phone, email, system, etc.)')
     )
 
-    # =====================
-    # SUPPLIER INTERACTION
-    # =====================
-    order_reference = models.CharField(
-        _('Order Reference'),
+    # DELIVERY TERMS
+    delivery_terms = models.CharField(
+        _('Delivery Terms'),
         max_length=100,
         blank=True,
-        help_text=_('Internal reference number for this order')
+        help_text=_('Delivery terms (FOB, CIF, etc.)')
     )
 
+    special_conditions = models.TextField(
+        _('Special Conditions'),
+        blank=True,
+        help_text=_('Any special conditions or requirements')
+    )
+
+    # PAYMENT TERMS
+    payment_terms = models.CharField(
+        _('Payment Terms'),
+        max_length=100,
+        blank=True,
+        help_text=_('Payment terms for this order')
+    )
+
+    # SUPPLIER COMMUNICATION
     supplier_confirmed = models.BooleanField(
         _('Supplier Confirmed'),
         default=False,
@@ -137,33 +164,10 @@ class PurchaseOrder(BaseDocument):
         _('Supplier Order Reference'),
         max_length=100,
         blank=True,
-        help_text=_('Supplier\'s reference number for this order')
+        help_text=_("Supplier's reference number for this order")
     )
 
-    # =====================
-    # DELIVERY PLANNING
-    # =====================
-    expected_delivery_date = models.DateField(
-        _('Expected Delivery Date'),
-        help_text=_('When we expect to receive this order')
-    )
-
-    requested_delivery_date = models.DateField(
-        _('Requested Delivery Date'),
-        null=True,
-        blank=True,
-        help_text=_('When we requested delivery from supplier')
-    )
-
-    delivery_instructions = models.TextField(
-        _('Delivery Instructions'),
-        blank=True,
-        help_text=_('Special instructions for delivery')
-    )
-
-    # =====================
-    # CONTACT INFORMATION
-    # =====================
+    # CONTACT INFO
     supplier_contact_person = models.CharField(
         _('Supplier Contact Person'),
         max_length=100,
@@ -184,32 +188,7 @@ class PurchaseOrder(BaseDocument):
         help_text=_('Email for order-related contact')
     )
 
-    # =====================
-    # TERMS AND CONDITIONS
-    # =====================
-    payment_terms = models.CharField(
-        _('Payment Terms'),
-        max_length=100,
-        blank=True,
-        help_text=_('Payment terms for this order')
-    )
-
-    delivery_terms = models.CharField(
-        _('Delivery Terms'),
-        max_length=100,
-        blank=True,
-        help_text=_('Delivery terms (FOB, CIF, etc.)')
-    )
-
-    special_conditions = models.TextField(
-        _('Special Conditions'),
-        blank=True,
-        help_text=_('Any special conditions or requirements')
-    )
-
-    # =====================
     # ORDER TRACKING
-    # =====================
     sent_to_supplier_at = models.DateTimeField(
         _('Sent to Supplier At'),
         null=True,
@@ -227,20 +206,31 @@ class PurchaseOrder(BaseDocument):
         help_text=_('User who sent the order to supplier')
     )
 
-    # =====================
     # DELIVERY STATUS TRACKING
-    # =====================
+    DELIVERY_STATUS_CHOICES = [
+        ('pending', _('Pending')),
+        ('partial', _('Partially Delivered')),
+        ('completed', _('Fully Delivered')),
+        ('cancelled', _('Cancelled')),
+    ]
+
     delivery_status = models.CharField(
         _('Delivery Status'),
         max_length=20,
-        choices=[
-            ('pending', _('Pending')),
-            ('partial', _('Partially Delivered')),
-            ('completed', _('Fully Delivered')),
-            ('cancelled', _('Cancelled')),
-        ],
+        choices=DELIVERY_STATUS_CHOICES,
         default='pending',
         help_text=_('Current delivery status of this order')
+    )
+
+    # SOURCE TRACKING
+    source_request = models.ForeignKey(
+        'purchases.PurchaseRequest',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='generated_orders',  # ФИКСИРАНО: различно име
+        verbose_name=_('Source Request'),
+        help_text=_('Request this order was created from (if any)')
     )
 
     # =====================
@@ -263,41 +253,40 @@ class PurchaseOrder(BaseDocument):
     def __str__(self):
         return f"ORD {self.document_number} - {self.supplier.name}"
 
-    # =====================
-    # DOCUMENT TYPE SETUP
-    # =====================
-    def save(self, *args, **kwargs):
-        # Auto-set document type to ORD if not set
-        if not hasattr(self, 'document_type') or not self.document_type:
-            self.document_type = DocumentType.get_by_code('ORD')
-
-        super().save(*args, **kwargs)
-
     def get_document_prefix(self):
         """Override to return ORD prefix"""
         return "ORD"
 
     # =====================
-    # VALIDATION
+    # ПОРЪЧКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Enhanced validation for orders"""
+        """Order-specific validation"""
         super().clean()
+
+        # Expected delivery date validation - може да е в бъдещето
+        if self.expected_delivery_date:
+            today = timezone.now().date()
+            days_in_past = (today - self.expected_delivery_date).days
+
+            # За съществуващи поръчки позволяваме до 30 дни в миналото
+            if self.pk and days_in_past > 30:
+                raise ValidationError({
+                    'expected_delivery_date': _(
+                        'Expected delivery date cannot be more than 30 days in the past'
+                    )
+                })
+            # За нови поръчки позволяваме до 7 дни назад
+            elif not self.pk and days_in_past > 7:
+                raise ValidationError({
+                    'expected_delivery_date': _(
+                        'Expected delivery date for new orders cannot be more than 7 days in the past'
+                    )
+                })
 
         # Supplier confirmation validation
         if self.supplier_confirmed and not self.supplier_confirmed_date:
             self.supplier_confirmed_date = timezone.now().date()
-
-        # Expected delivery date should be today or future
-        if self.expected_delivery_date < timezone.now().date():
-            raise ValidationError({
-                'expected_delivery_date': _('Expected delivery date cannot be in the past')
-            })
-
-        # Order type validation
-        if self.source_request and not self.is_from_request:
-            # This is automatically handled - no validation needed
-            pass
 
     # =====================
     # WORKFLOW METHODS
@@ -310,7 +299,7 @@ class PurchaseOrder(BaseDocument):
         if not self.lines.exists():
             raise ValidationError("Cannot send order without lines")
 
-        self.status = 'sent'
+        self.status = self.SENT
         self.sent_to_supplier_at = timezone.now()
         self.sent_by = user
         self.updated_by = user
@@ -320,10 +309,10 @@ class PurchaseOrder(BaseDocument):
 
     def confirm_by_supplier(self, user=None, supplier_reference=''):
         """Mark order as confirmed by supplier"""
-        if self.status not in ['sent', self.DRAFT]:
+        if self.status not in [self.SENT, self.DRAFT]:
             raise ValidationError("Can only confirm sent or draft orders")
 
-        self.status = 'confirmed'
+        self.status = self.CONFIRMED
         self.supplier_confirmed = True
         self.supplier_confirmed_date = timezone.now().date()
         if supplier_reference:
@@ -336,7 +325,7 @@ class PurchaseOrder(BaseDocument):
     def mark_as_delivered(self, user=None):
         """Mark order as fully delivered"""
         self.delivery_status = 'completed'
-        self.status = 'received'  # Final status
+        self.status = self.RECEIVED
         self.updated_by = user
         self.save()
 
@@ -350,9 +339,35 @@ class PurchaseOrder(BaseDocument):
 
         return True
 
+    def update_delivery_status(self):
+        """Update delivery status based on line delivery progress"""
+        if not hasattr(self, 'lines'):
+            return
+
+        lines = self.lines.all()
+        if not lines:
+            return
+
+        total_ordered = sum(line.ordered_quantity for line in lines)
+        total_delivered = sum(getattr(line, 'delivered_quantity', 0) for line in lines)
+
+        if total_delivered == 0:
+            self.delivery_status = 'pending'
+        elif total_delivered >= total_ordered:
+            self.delivery_status = 'completed'
+            self.status = self.RECEIVED
+        else:
+            self.delivery_status = 'partial'
+
+        self.save(update_fields=['delivery_status', 'status'])
+
     # =====================
     # BUSINESS LOGIC CHECKS
     # =====================
+    def can_be_edited(self):
+        """Override with order-specific logic"""
+        return self.status in [self.DRAFT]
+
     def can_be_sent(self):
         """Check if order can be sent to supplier"""
         return (
@@ -362,46 +377,19 @@ class PurchaseOrder(BaseDocument):
 
     def can_be_confirmed(self):
         """Check if order can be confirmed"""
-        return self.status in ['sent', self.DRAFT]
+        return self.status in [self.SENT, self.DRAFT]
 
     def can_be_used_for_delivery(self):
         """Check if order can be used for delivery creation"""
         return (
-                self.status == 'confirmed' and
+                self.status == self.CONFIRMED and
                 self.supplier_confirmed and
                 self.delivery_status in ['pending', 'partial']
         )
 
-    def can_be_edited(self):
-        """Override parent method"""
-        return self.status in [self.DRAFT]
-
     def can_be_cancelled(self):
-        """Override parent method"""
-        return self.status in [self.DRAFT, 'sent']
-
-    # =====================
-    # DELIVERY TRACKING
-    # =====================
-    def get_delivery_summary(self):
-        """Get summary of deliveries for this order"""
-        # This will be implemented when we have DeliveryLine model
-        # For now return basic info
-        return {
-            'total_lines': self.lines.count(),
-            'delivered_lines': 0,  # TODO: Calculate from deliveries
-            'pending_lines': self.lines.count(),
-            'delivery_percentage': 0,
-        }
-
-    def update_delivery_status(self):
-        """Update delivery status based on actual deliveries"""
-        # TODO: Implement when we have DeliveryLine model
-        # This will calculate:
-        # - pending: No lines delivered
-        # - partial: Some lines delivered
-        # - completed: All lines delivered
-        pass
+        """Override with order-specific logic"""
+        return self.status not in [self.RECEIVED, self.CANCELLED, self.CLOSED]
 
     # =====================
     # PROPERTIES
@@ -415,22 +403,22 @@ class PurchaseOrder(BaseDocument):
         return self.source_request is None
 
     @property
-    def is_confirmed_by_supplier(self):
-        return self.supplier_confirmed
-
-    @property
-    def is_overdue_delivery(self):
-        """Check if delivery is overdue"""
-        return (
-                self.expected_delivery_date < timezone.now().date() and
-                self.delivery_status != 'completed'
-        )
-
-    @property
     def days_until_delivery(self):
         """Days until expected delivery"""
+        if not self.expected_delivery_date:
+            return None
         delta = self.expected_delivery_date - timezone.now().date()
         return delta.days
+
+    @property
+    def is_overdue(self):
+        """Is delivery overdue?"""
+        if not self.expected_delivery_date:
+            return False
+        return (
+                self.expected_delivery_date < timezone.now().date() and
+                self.status == self.CONFIRMED
+        )
 
     @property
     def is_fully_delivered(self):
@@ -473,11 +461,11 @@ class PurchaseOrderLineManager(models.Manager):
         )
 
 
-class PurchaseOrderLine(BaseDocumentLine):
+class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Purchase Order Line - Редове на поръчка
+    Purchase Order Line - Ред на поръчка
 
-    Contains ordered products with confirmed quantities and prices
+    Логика: Използва FinancialLineMixin защото има финансови данни.
     """
 
     # =====================
@@ -522,61 +510,13 @@ class PurchaseOrderLine(BaseDocumentLine):
         help_text=_('Quantity confirmed by supplier (if different from ordered)')
     )
 
-    confirmed_price = models.DecimalField(
-        _('Confirmed Price'),
-        max_digits=10,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text=_('Price confirmed by supplier (if different from quoted)')
-    )
-
-    confirmed_delivery_date = models.DateField(
-        _('Confirmed Delivery Date'),
-        null=True,
-        blank=True,
-        help_text=_('Delivery date confirmed by supplier')
-    )
-
-    # =====================
-    # SUPPLIER INFORMATION
-    # =====================
-    supplier_product_code = models.CharField(
-        _('Supplier Product Code'),
-        max_length=50,
-        blank=True,
-        help_text=_('Supplier\'s code for this product')
-    )
-
-    supplier_product_name = models.CharField(
-        _('Supplier Product Name'),
-        max_length=200,
-        blank=True,
-        help_text=_('Supplier\'s name for this product')
-    )
-
-    # =====================
     # DELIVERY TRACKING
-    # =====================
-    delivery_status = models.CharField(
-        _('Line Delivery Status'),
-        max_length=20,
-        choices=[
-            ('pending', _('Pending')),
-            ('partial', _('Partially Delivered')),
-            ('completed', _('Fully Delivered')),
-            ('cancelled', _('Cancelled')),
-        ],
-        default='pending',
-        help_text=_('Delivery status of this specific line')
-    )
-
     delivered_quantity = models.DecimalField(
         _('Delivered Quantity'),
         max_digits=10,
         decimal_places=3,
         default=Decimal('0.000'),
-        help_text=_('Total quantity delivered so far')
+        help_text=_('Total quantity already delivered')
     )
 
     remaining_quantity = models.DecimalField(
@@ -584,16 +524,22 @@ class PurchaseOrderLine(BaseDocumentLine):
         max_digits=10,
         decimal_places=3,
         default=Decimal('0.000'),
-        help_text=_('Quantity still pending delivery')
+        help_text=_('Quantity still to be delivered')
     )
 
-    # =====================
-    # SPECIAL REQUIREMENTS
-    # =====================
-    special_instructions = models.TextField(
-        _('Special Instructions'),
-        blank=True,
-        help_text=_('Special handling or delivery instructions for this line')
+    DELIVERY_STATUS_CHOICES = [
+        ('pending', _('Pending')),
+        ('partial', _('Partially Delivered')),
+        ('completed', _('Fully Delivered')),
+        ('cancelled', _('Cancelled')),
+    ]
+
+    delivery_status = models.CharField(
+        _('Delivery Status'),
+        max_length=20,
+        choices=DELIVERY_STATUS_CHOICES,
+        default='pending',
+        help_text=_('Delivery status for this line')
     )
 
     # =====================
@@ -610,39 +556,59 @@ class PurchaseOrderLine(BaseDocumentLine):
             models.Index(fields=['document', 'line_number']),
             models.Index(fields=['product']),
             models.Index(fields=['source_request_line']),
+            models.Index(fields=['delivery_status']),
         ]
 
     def __str__(self):
         return f"{self.document.document_number} - Line {self.line_number}: {self.product.code}"
 
     # =====================
-    # VALIDATION
+    # ORDER LINE ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Enhanced validation for order lines"""
+        """Order line specific validation"""
         super().clean()
 
-        # Set ordered_quantity from quantity if not set
-        if not self.ordered_quantity and self.quantity:
-            self.ordered_quantity = self.quantity
-
-        # Ensure ordered_quantity is set
-        if not self.ordered_quantity and self.quantity:
-            self.ordered_quantity = self.quantity
-
-        # Set quantity from ordered_quantity if not set
-        if not self.quantity and self.ordered_quantity:
+        # Set quantity from ordered_quantity for base validation
+        if self.ordered_quantity and not self.quantity:
             self.quantity = self.ordered_quantity
+
+        # Ordered quantity must be positive
+        if self.ordered_quantity <= 0:
+            raise ValidationError({
+                'ordered_quantity': _('Ordered quantity must be greater than zero')
+            })
+
+        # Confirmed quantity validation
+        if self.confirmed_quantity is not None and self.confirmed_quantity < 0:
+            raise ValidationError({
+                'confirmed_quantity': _('Confirmed quantity cannot be negative')
+            })
+
+        # Delivered quantity validation
+        if self.delivered_quantity < 0:
+            raise ValidationError({
+                'delivered_quantity': _('Delivered quantity cannot be negative')
+            })
+
+        if self.delivered_quantity > self.ordered_quantity:
+            raise ValidationError({
+                'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
+            })
 
     def save(self, *args, **kwargs):
         """Enhanced save with delivery calculations"""
+        # Sync quantity with ordered_quantity
+        if self.ordered_quantity:
+            self.quantity = self.ordered_quantity
+
         # Calculate remaining quantity
         if self.ordered_quantity and self.delivered_quantity:
             self.remaining_quantity = self.ordered_quantity - self.delivered_quantity
         else:
             self.remaining_quantity = self.ordered_quantity or Decimal('0.000')
 
-        # Update delivery status based on quantities
+        # Update delivery status
         self._update_delivery_status()
 
         super().save(*args, **kwargs)
@@ -668,71 +634,39 @@ class PurchaseOrderLine(BaseDocumentLine):
             raise ValidationError("Delivery quantity must be positive")
 
         if self.delivered_quantity + quantity > self.ordered_quantity:
-            raise ValidationError("Cannot deliver more than ordered quantity")
+            raise ValidationError("Total delivered cannot exceed ordered quantity")
 
         self.delivered_quantity += quantity
         self.save()
 
+        # Update parent order delivery status
+        self.document.update_delivery_status()
+
         return True
-
-    def get_deliverable_quantity(self):
-        """Get quantity that can still be delivered"""
-        return self.remaining_quantity
-
-    def is_fully_delivered(self):
-        """Check if this line is fully delivered"""
-        return self.delivery_status == 'completed'
-
-    def is_partially_delivered(self):
-        """Check if this line is partially delivered"""
-        return self.delivery_status == 'partial'
-
-    def can_be_delivered(self):
-        """Check if this line can still receive deliveries"""
-        return self.remaining_quantity > 0
 
     # =====================
     # PROPERTIES
     # =====================
     @property
-    def delivery_percentage(self):
-        """Calculate delivery completion percentage"""
-        if not self.ordered_quantity or self.ordered_quantity == 0:
-            return 0
-
-        return (self.delivered_quantity / self.ordered_quantity) * 100
+    def is_from_request(self):
+        return self.source_request_line is not None
 
     @property
-    def is_overdue(self):
-        """Check if delivery is overdue"""
-        if not self.confirmed_delivery_date:
-            return self.document.is_overdue_delivery
+    def delivery_progress_percent(self):
+        """Delivery progress as percentage"""
+        if not self.ordered_quantity:
+            return 0
+        return min(100, (self.delivered_quantity / self.ordered_quantity) * 100)
 
-        return (
-                self.confirmed_delivery_date < timezone.now().date() and
-                not self.is_fully_delivered()
-        )
+    @property
+    def is_fully_delivered(self):
+        return self.delivery_status == 'completed'
+
+    @property
+    def is_partially_delivered(self):
+        return self.delivery_status == 'partial'
 
     @property
     def effective_quantity(self):
-        """Get the effective quantity (confirmed or ordered)"""
+        """Use confirmed quantity if available, otherwise ordered quantity"""
         return self.confirmed_quantity or self.ordered_quantity
-
-    @property
-    def effective_price(self):
-        """Get the effective price (confirmed or original)"""
-        return self.confirmed_price or self.unit_price
-
-    @property
-    def variance_quantity(self):
-        """Calculate quantity variance (confirmed vs ordered)"""
-        if self.confirmed_quantity and self.ordered_quantity:
-            return self.confirmed_quantity - self.ordered_quantity
-        return Decimal('0.000')
-
-    @property
-    def variance_price(self):
-        """Calculate price variance (confirmed vs original)"""
-        if self.confirmed_price and self.unit_price:
-            return self.confirmed_price - self.unit_price
-        return Decimal('0.0000')

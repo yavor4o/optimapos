@@ -1,12 +1,12 @@
-# purchases/models/deliveries.py
+# purchases/models/deliveries.py - FIXED WITH NEW ARCHITECTURE
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
-from .base import BaseDocument, BaseDocumentLine
-from .document_types import DocumentType
+
+from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, DeliveryMixin, FinancialLineMixin
 
 
 class DeliveryReceiptManager(models.Manager):
@@ -50,66 +50,65 @@ class DeliveryReceiptManager(models.Manager):
         )
 
 
-class DeliveryReceipt(BaseDocument):
+class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin):
     """
     Delivery Receipt - Доставки и получаване на стоки
 
-    Workflow: draft → delivered → received → completed
-
-    Can be created from:
-    1. Purchase Orders (single or multiple)
-    2. Direct delivery (no orders - if allowed in settings)
-
-    Handles:
-    - Multi-order consolidation (one delivery from multiple orders)
-    - Direct deliveries (supplier brings goods without prior order)
-    - Quality control and inspection
-    - Batch tracking and expiry dates
-    - Variance reporting (ordered vs received)
+    Логика: Използва всички mixin-и защото има:
+    - Финансови данни (FinancialMixin)
+    - Плащания (PaymentMixin)
+    - Delivery информация (DeliveryMixin)
     """
 
     # =====================
-    # SOURCE TRACKING
+    # STATUS CHOICES - специфични за доставки
     # =====================
-    source_orders = models.ManyToManyField(
-        'purchases.PurchaseOrder',
-        blank=True,
-        related_name='deliveries',
-        verbose_name=_('Source Orders'),
-        help_text=_('Orders this delivery is based on (if any)')
-    )
+    DRAFT = 'draft'
+    DELIVERED = 'delivered'
+    RECEIVED = 'received'
+    PROCESSED = 'processed'
+    COMPLETED = 'completed'
+    CANCELLED = 'cancelled'
+
+    STATUS_CHOICES = [
+        (DRAFT, _('Draft')),
+        (DELIVERED, _('Delivered (Arrived)')),
+        (RECEIVED, _('Received (Checked)')),
+        (PROCESSED, _('Processed (Inventory Updated)')),
+        (COMPLETED, _('Completed')),
+        (CANCELLED, _('Cancelled')),
+    ]
 
     # =====================
-    # DELIVERY CLASSIFICATION
+    # ДОСТАВКА-СПЕЦИФИЧНИ ПОЛЕТА
     # =====================
+    status = models.CharField(
+        _('Status'),
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=DRAFT
+    )
+
+    # CREATION TYPE
     CREATION_TYPE_CHOICES = [
-        ('from_orders', _('From Orders')),  # Created from one or more orders
-        ('direct', _('Direct Delivery')),  # Direct delivery without orders
-        ('mixed', _('Mixed')),  # Orders + additional items
+        ('from_orders', _('From Purchase Orders')),
+        ('direct', _('Direct Delivery')),
     ]
 
     creation_type = models.CharField(
         _('Creation Type'),
         max_length=20,
         choices=CREATION_TYPE_CHOICES,
+        default='from_orders',
         help_text=_('How this delivery was created')
     )
 
-    # =====================
-    # DELIVERY INFORMATION
-    # =====================
+    # DELIVERY SPECIFIC INFO
     delivery_note_number = models.CharField(
         _('Delivery Note Number'),
-        max_length=100,
+        max_length=50,
         blank=True,
-        help_text=_('Supplier\'s delivery note/dispatch number')
-    )
-
-    vehicle_info = models.CharField(
-        _('Vehicle Information'),
-        max_length=100,
-        blank=True,
-        help_text=_('Delivery vehicle details (license plate, etc.)')
+        help_text=_('Supplier\'s delivery note number')
     )
 
     driver_name = models.CharField(
@@ -126,50 +125,53 @@ class DeliveryReceipt(BaseDocument):
         help_text=_('Driver contact number')
     )
 
-    # =====================
+    vehicle_info = models.CharField(
+        _('Vehicle Info'),
+        max_length=100,
+        blank=True,
+        help_text=_('Vehicle license plate, type, etc.')
+    )
+
     # RECEIVING PROCESS
-    # =====================
     received_by = models.ForeignKey(
         'accounts.User',
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='received_deliveries',
         verbose_name=_('Received By'),
-        help_text=_('User who received and processed this delivery')
+        help_text=_('Who received this delivery')
     )
 
     received_at = models.DateTimeField(
         _('Received At'),
         null=True,
         blank=True,
-        help_text=_('When the delivery was physically received')
+        help_text=_('When delivery was received and checked')
     )
 
     processed_at = models.DateTimeField(
         _('Processed At'),
         null=True,
         blank=True,
-        help_text=_('When the delivery was fully processed in system')
+        help_text=_('When delivery was fully processed')
     )
 
-    # =====================
+    processed_by = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='processed_deliveries',
+        verbose_name=_('Processed By'),
+        help_text=_('Who processed this delivery')
+    )
+
     # QUALITY CONTROL
-    # =====================
     quality_checked = models.BooleanField(
         _('Quality Checked'),
         default=False,
-        help_text=_('Whether quality control has been performed')
-    )
-
-    quality_approved = models.BooleanField(
-        _('Quality Approved'),
-        default=True,
-        help_text=_('Overall quality approval status')
-    )
-
-    has_quality_issues = models.BooleanField(
-        _('Has Quality Issues'),
-        default=False,
-        help_text=_('Whether any items failed quality control')
+        help_text=_('Whether quality control was performed')
     )
 
     quality_inspector = models.ForeignKey(
@@ -177,9 +179,21 @@ class DeliveryReceipt(BaseDocument):
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='inspected_deliveries',
+        related_name='quality_inspected_deliveries',
         verbose_name=_('Quality Inspector'),
-        help_text=_('User who performed quality inspection')
+        help_text=_('Who performed quality inspection')
+    )
+
+    quality_approved = models.BooleanField(
+        _('Quality Approved'),
+        default=True,
+        help_text=_('Whether delivery passed quality control')
+    )
+
+    has_quality_issues = models.BooleanField(
+        _('Has Quality Issues'),
+        default=False,
+        help_text=_('Whether there are quality problems with this delivery')
     )
 
     quality_notes = models.TextField(
@@ -188,56 +202,33 @@ class DeliveryReceipt(BaseDocument):
         help_text=_('Quality control notes and observations')
     )
 
-    # =====================
-    # VARIANCE TRACKING
-    # =====================
+    # VARIANCES
     has_variances = models.BooleanField(
         _('Has Variances'),
         default=False,
-        help_text=_('Whether there are differences between ordered and received')
+        help_text=_('Whether there are quantity/price variances')
     )
 
     variance_notes = models.TextField(
         _('Variance Notes'),
         blank=True,
-        help_text=_('Explanation of variances between ordered and received')
+        help_text=_('Notes about variances found')
     )
 
-    # =====================
-    # FINANCIAL TRACKING
-    # =====================
-    supplier_invoice_reference = models.CharField(
-        _('Supplier Invoice Reference'),
-        max_length=100,
-        blank=True,
-        help_text=_('Reference to supplier invoice (for finance app integration)')
-    )
-
-    has_supplier_invoice = models.BooleanField(
-        _('Has Supplier Invoice'),
-        default=False,
-        help_text=_('Whether this delivery came with supplier invoice')
-    )
-
-    # =====================
     # SPECIAL HANDLING
-    # =====================
-    requires_cold_storage = models.BooleanField(
-        _('Requires Cold Storage'),
-        default=False,
-        help_text=_('Whether items require refrigerated storage')
-    )
-
-    is_urgent_delivery = models.BooleanField(
-        _('Urgent Delivery'),
-        default=False,
-        help_text=_('Whether this is an urgent/priority delivery')
-    )
-
     special_handling_notes = models.TextField(
         _('Special Handling Notes'),
         blank=True,
-        help_text=_('Special handling requirements or notes')
+        help_text=_('Special handling requirements or observations')
+    )
+
+    # SOURCE TRACKING
+    source_orders = models.ManyToManyField(
+        'purchases.PurchaseOrder',
+        blank=True,
+        related_name='deliveries',
+        verbose_name=_('Source Orders'),
+        help_text=_('Purchase orders fulfilled by this delivery')
     )
 
     # =====================
@@ -248,7 +239,7 @@ class DeliveryReceipt(BaseDocument):
     class Meta:
         verbose_name = _('Delivery Receipt')
         verbose_name_plural = _('Delivery Receipts')
-        ordering = ['-created_at']
+        ordering = ['-delivery_date', '-created_at']
         indexes = [
             models.Index(fields=['status', 'delivery_date']),
             models.Index(fields=['supplier', 'delivery_date']),
@@ -261,42 +252,23 @@ class DeliveryReceipt(BaseDocument):
     def __str__(self):
         return f"DEL {self.document_number} - {self.supplier.name}"
 
-    # =====================
-    # DOCUMENT TYPE SETUP
-    # =====================
-    def save(self, *args, **kwargs):
-        # Auto-set document type to DEL if not set
-        if not hasattr(self, 'document_type') or not self.document_type:
-            self.document_type = DocumentType.get_by_code('DEL')
-
-        # Auto-determine creation type if not set
-        if not self.pk and not self.creation_type:
-            self.creation_type = 'direct'  # Default for new deliveries
-
-        super().save(*args, **kwargs)
-
     def get_document_prefix(self):
         """Override to return DEL prefix"""
         return "DEL"
 
     # =====================
-    # VALIDATION
+    # ДОСТАВКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Enhanced validation for deliveries"""
+        """Delivery-specific validation"""
         super().clean()
 
-        # Creation type validation based on source orders
+        # Creation type validation
         if self.creation_type == 'from_orders':
             if not self.source_orders.exists():
                 raise ValidationError({
                     'source_orders': _('Source orders are required for deliveries created from orders')
                 })
-
-        elif self.creation_type == 'direct':
-            # Check if direct deliveries are allowed (this will integrate with core settings)
-            # For now, we'll allow them
-            pass
 
         # Quality control validation
         if self.quality_checked and not self.quality_inspector:
@@ -313,6 +285,15 @@ class DeliveryReceipt(BaseDocument):
                     'received_by': _('Received by is required when status is received')
                 })
 
+        # Processed validation
+        if self.status in ['processed', 'completed']:
+            if not self.processed_at:
+                self.processed_at = timezone.now()
+            if not self.processed_by:
+                raise ValidationError({
+                    'processed_by': _('Processed by is required when status is processed/completed')
+                })
+
     # =====================
     # WORKFLOW METHODS
     # =====================
@@ -321,8 +302,9 @@ class DeliveryReceipt(BaseDocument):
         if self.status not in [self.DRAFT]:
             raise ValidationError("Can only mark draft deliveries as delivered")
 
-        self.status = 'delivered'
-        self.delivery_date = timezone.now().date()
+        self.status = self.DELIVERED
+        if not self.delivery_date:
+            self.delivery_date = timezone.now().date()
         self.updated_by = user
         self.save()
 
@@ -330,13 +312,13 @@ class DeliveryReceipt(BaseDocument):
 
     def receive_delivery(self, user, quality_check=True):
         """Receive and process the delivery"""
-        if self.status != 'delivered':
+        if self.status != self.DELIVERED:
             raise ValidationError("Can only receive delivered items")
 
         if not self.lines.exists():
             raise ValidationError("Cannot receive delivery without lines")
 
-        self.status = 'received'
+        self.status = self.RECEIVED
         self.received_by = user
         self.received_at = timezone.now()
 
@@ -348,157 +330,66 @@ class DeliveryReceipt(BaseDocument):
             self.quality_approved = not self.has_quality_issues
 
         # Check for variances
-        self.has_variances = self.lines.filter(
-            models.Q(variance_quantity__gt=0) | models.Q(variance_quantity__lt=0)
-        ).exists()
+        self.has_variances = self.lines.exclude(variance_quantity=0).exists()
 
         self.updated_by = user
         self.save()
 
-        # Update stock levels and product costs
-        self._update_inventory()
-        self._update_product_costs()
-
-        # Update source order delivery status
+        # Update source orders
         self._update_source_orders()
 
         return True
 
     def complete_processing(self, user=None):
-        """Complete the delivery processing"""
-        if self.status != 'received':
-            raise ValidationError("Can only complete received deliveries")
+        """Complete delivery processing"""
+        if self.status not in [self.RECEIVED, self.PROCESSED]:
+            raise ValidationError("Can only complete received or processed deliveries")
 
-        self.status = 'completed'
+        self.status = self.COMPLETED
+        self.processed_by = user or self.updated_by
         self.processed_at = timezone.now()
         self.updated_by = user
         self.save()
 
         return True
 
+    def _update_source_orders(self):
+        """Update delivery quantities on source orders"""
+        if not self.source_orders.exists():
+            return
+
+        # Update each source order with delivered quantities
+        for order in self.source_orders.all():
+            for order_line in order.lines.all():
+                delivery_lines = self.lines.filter(source_order_line=order_line)
+                total_delivered = sum(dl.received_quantity for dl in delivery_lines)
+                if total_delivered > 0:
+                    order_line.add_delivery(total_delivered)
+
+            # Update order delivery status
+            order.update_delivery_status()
+
     # =====================
     # BUSINESS LOGIC CHECKS
     # =====================
+    def can_be_edited(self):
+        """Override with delivery-specific logic"""
+        return self.status in [self.DRAFT, self.DELIVERED]
+
     def can_be_received(self):
         """Check if delivery can be received"""
         return (
-                self.status == 'delivered' and
+                self.status == self.DELIVERED and
                 self.lines.exists()
         )
 
     def can_be_completed(self):
-        """Check if delivery processing can be completed"""
-        return self.status == 'received'
-
-    def can_be_edited(self):
-        """Override parent method"""
-        return self.status in [self.DRAFT, 'delivered']
+        """Check if delivery can be completed"""
+        return self.status in [self.RECEIVED, self.PROCESSED]
 
     def can_be_cancelled(self):
-        """Override parent method"""
-        return self.status in [self.DRAFT, 'delivered']
-
-    # =====================
-    # SOURCE ORDER MANAGEMENT
-    # =====================
-    def add_source_orders(self, orders):
-        """Add orders as sources for this delivery"""
-        if not isinstance(orders, list):
-            orders = [orders]
-
-        for order in orders:
-            if not order.can_be_used_for_delivery():
-                raise ValidationError(f"Order {order.document_number} cannot be used for delivery")
-
-        self.source_orders.add(*orders)
-
-        # Update creation type
-        if self.source_orders.exists() and self.creation_type == 'direct':
-            self.creation_type = 'from_orders'
-            self.save()
-
-    def copy_lines_from_orders(self):
-        """Copy lines from source orders to this delivery"""
-        if not self.source_orders.exists():
-            return
-
-        line_number = 1
-        for order in self.source_orders.all():
-            for order_line in order.lines.all():
-                if order_line.can_be_delivered():
-                    DeliveryLine.objects.create(
-                        document=self,
-                        line_number=line_number,
-                        source_order_line=order_line,
-                        product=order_line.product,
-                        quantity=order_line.get_deliverable_quantity(),
-                        ordered_quantity=order_line.effective_quantity,
-                        unit=order_line.unit,
-                        unit_price=order_line.effective_price,
-                        discount_percent=order_line.discount_percent,
-                        # Copy other relevant fields
-                    )
-                    line_number += 1
-
-        # Recalculate totals
-        self.recalculate_totals()
-
-    # =====================
-    # VARIANCE ANALYSIS
-    # =====================
-    def get_variance_summary(self):
-        """Get summary of variances in this delivery"""
-        if not self.lines.exists():
-            return None
-
-        lines_with_variances = self.lines.exclude(variance_quantity=0)
-
-        return {
-            'total_lines': self.lines.count(),
-            'lines_with_variances': lines_with_variances.count(),
-            'variance_percentage': (lines_with_variances.count() / self.lines.count()) * 100,
-            'total_variance_value': sum(
-                line.variance_quantity * line.unit_price
-                for line in lines_with_variances
-            ),
-            'positive_variances': lines_with_variances.filter(variance_quantity__gt=0).count(),
-            'negative_variances': lines_with_variances.filter(variance_quantity__lt=0).count(),
-        }
-
-    # =====================
-    # INTEGRATION METHODS
-    # =====================
-    def _update_inventory(self):
-        """Update inventory levels based on received quantities"""
-        # This will integrate with inventory app
-        # For now, placeholder
-        for line in self.lines.filter(quality_approved=True):
-            # Create inventory movement
-            # Update product stock levels
-            pass
-
-    def _update_product_costs(self):
-        """Update product costs based on received prices"""
-        # This will update product.last_purchase_cost and current_avg_cost
-        for line in self.lines.filter(quality_approved=True):
-            product = line.product
-            if line.unit_price > 0:
-                product.last_purchase_cost = line.unit_price
-                # Update average cost calculation
-                # product.update_average_cost(line.unit_price, line.quantity)
-                product.save()
-
-    def _update_source_orders(self):
-        """Update delivery status of source orders"""
-        for order in self.source_orders.all():
-            # Update order line delivery quantities
-            for order_line in order.lines.all():
-                delivery_lines = self.lines.filter(source_order_line=order_line)
-                total_delivered = sum(dl.quantity for dl in delivery_lines)
-                order_line.add_delivery(total_delivered)
-
-            # Update order delivery status
-            order.update_delivery_status()
+        """Override with delivery-specific logic"""
+        return self.status not in [self.COMPLETED, self.CANCELLED]
 
     # =====================
     # PROPERTIES
@@ -518,7 +409,7 @@ class DeliveryReceipt(BaseDocument):
     @property
     def has_received_all_lines(self):
         """Check if all lines have been received"""
-        return not self.lines.filter(quantity=0).exists()
+        return not self.lines.filter(received_quantity=0).exists()
 
     @property
     def quality_issues_count(self):
@@ -529,6 +420,27 @@ class DeliveryReceipt(BaseDocument):
     def variance_lines_count(self):
         """Count of lines with variances"""
         return self.lines.exclude(variance_quantity=0).count()
+
+    def get_variance_summary(self):
+        """Get summary of variances"""
+        variance_lines = self.lines.exclude(variance_quantity=0)
+
+        positive_variances = variance_lines.filter(variance_quantity__gt=0)
+        negative_variances = variance_lines.filter(variance_quantity__lt=0)
+
+        return {
+            'total_variance_lines': variance_lines.count(),
+            'positive_variances': positive_variances.count(),
+            'negative_variances': negative_variances.count(),
+            'total_positive_value': sum(
+                line.variance_quantity * line.unit_price
+                for line in positive_variances
+            ),
+            'total_negative_value': sum(
+                line.variance_quantity * line.unit_price
+                for line in negative_variances
+            ),
+        }
 
 
 class DeliveryLineManager(models.Manager):
@@ -559,11 +471,11 @@ class DeliveryLineManager(models.Manager):
         )
 
 
-class DeliveryLine(BaseDocumentLine):
+class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Delivery Line - Редове на доставка
+    Delivery Line - Ред на доставка
 
-    Contains received products with actual quantities, quality status, and variance tracking
+    Логика: Използва FinancialLineMixin защото има финансови данни.
     """
 
     # =====================
@@ -586,11 +498,11 @@ class DeliveryLine(BaseDocumentLine):
         blank=True,
         related_name='delivery_lines',
         verbose_name=_('Source Order Line'),
-        help_text=_('Order line this delivery line was created from (if any)')
+        help_text=_('Order line this delivery line fulfills (if any)')
     )
 
     # =====================
-    # QUANTITY TRACKING
+    # DELIVERY-SPECIFIC FIELDS
     # =====================
     ordered_quantity = models.DecimalField(
         _('Ordered Quantity'),
@@ -598,14 +510,14 @@ class DeliveryLine(BaseDocumentLine):
         decimal_places=3,
         null=True,
         blank=True,
-        help_text=_('Original ordered quantity (if from order)')
+        help_text=_('Quantity that was originally ordered')
     )
 
     received_quantity = models.DecimalField(
         _('Received Quantity'),
         max_digits=10,
         decimal_places=3,
-        help_text=_('Actually received quantity')
+        help_text=_('Quantity actually received')
     )
 
     variance_quantity = models.DecimalField(
@@ -616,51 +528,60 @@ class DeliveryLine(BaseDocumentLine):
         help_text=_('Difference between ordered and received (received - ordered)')
     )
 
-    # =====================
     # QUALITY CONTROL
-    # =====================
-    quality_checked_by = models.ForeignKey(
-        'accounts.User',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name='quality_checked_lines',
-        verbose_name=_('Quality Checked By'),
-        help_text=_('User who performed quality check on this line')
+    quality_approved = models.BooleanField(
+        _('Quality Approved'),
+        default=True,
+        help_text=_('Whether this item passed quality control')
     )
+
+    QUALITY_ISSUE_CHOICES = [
+        ('damaged', _('Damaged')),
+        ('expired', _('Expired')),
+        ('wrong_product', _('Wrong Product')),
+        ('poor_quality', _('Poor Quality')),
+        ('contaminated', _('Contaminated')),
+        ('packaging_issue', _('Packaging Issue')),
+        ('other', _('Other')),
+    ]
 
     quality_issue_type = models.CharField(
         _('Quality Issue Type'),
+        max_length=20,
+        choices=QUALITY_ISSUE_CHOICES,
+        blank=True,
+        help_text=_('Type of quality issue (if any)')
+    )
+
+    quality_notes = models.TextField(
+        _('Quality Notes'),
+        blank=True,
+        help_text=_('Quality control notes for this item')
+    )
+
+    # BATCH/LOT TRACKING
+    batch_number = models.CharField(
+        _('Batch Number'),
         max_length=50,
         blank=True,
-        choices=[
-            ('damaged', _('Damaged')),
-            ('expired', _('Expired')),
-            ('wrong_product', _('Wrong Product')),
-            ('poor_quality', _('Poor Quality')),
-            ('packaging_issue', _('Packaging Issue')),
-            ('contaminated', _('Contaminated')),
-            ('other', _('Other')),
-        ],
-        help_text=_('Type of quality issue if any')
+        help_text=_('Batch/lot number from supplier')
     )
 
-    rejection_reason = models.TextField(
-        _('Rejection Reason'),
+    expiry_date = models.DateField(
+        _('Expiry Date'),
+        null=True,
         blank=True,
-        help_text=_('Detailed reason for rejecting this line')
+        help_text=_('Product expiry date')
     )
 
-    # =====================
-    # STORAGE AND HANDLING
-    # =====================
-    storage_location = models.CharField(
-        _('Storage Location'),
-        max_length=100,
+    production_date = models.DateField(
+        _('Production Date'),
+        null=True,
         blank=True,
-        help_text=_('Where this item was stored after receiving')
+        help_text=_('Product production date')
     )
 
+    # SPECIAL HANDLING
     requires_special_handling = models.BooleanField(
         _('Requires Special Handling'),
         default=False,
@@ -692,21 +613,28 @@ class DeliveryLine(BaseDocumentLine):
             models.Index(fields=['source_order_line']),
             models.Index(fields=['quality_approved', 'batch_number']),
             models.Index(fields=['expiry_date']),
+            models.Index(fields=['variance_quantity']),
         ]
 
     def __str__(self):
         return f"{self.document.document_number} - Line {self.line_number}: {self.product.code}"
 
     # =====================
-    # VALIDATION
+    # ДОСТАВКА LINE ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Enhanced validation for delivery lines"""
+        """Delivery line specific validation"""
         super().clean()
 
-        # Set quantity from received_quantity
+        # Set quantity from received_quantity for base validation
         if self.received_quantity and not self.quantity:
             self.quantity = self.received_quantity
+
+        # Received quantity must be positive
+        if self.received_quantity <= 0:
+            raise ValidationError({
+                'received_quantity': _('Received quantity must be greater than zero')
+            })
 
         # Quality issue validation
         if not self.quality_approved and not self.quality_issue_type:
@@ -720,62 +648,22 @@ class DeliveryLine(BaseDocumentLine):
             if abs(self.variance_quantity - calculated_variance) > Decimal('0.001'):
                 self.variance_quantity = calculated_variance
 
+        # Expiry date validation
+        if self.expiry_date and self.expiry_date <= timezone.now().date():
+            # Just warn, don't prevent saving - might be receiving expired goods for disposal
+            pass
+
     def save(self, *args, **kwargs):
         """Enhanced save with variance calculation"""
+        # Sync quantity with received_quantity
+        if self.received_quantity:
+            self.quantity = self.received_quantity
+
         # Calculate variance if we have both quantities
         if self.ordered_quantity and self.received_quantity:
             self.variance_quantity = self.received_quantity - self.ordered_quantity
 
-        # Set quantity to received_quantity for base calculations
-        if self.received_quantity and not self.quantity:
-            self.quantity = self.received_quantity
-
         super().save(*args, **kwargs)
-
-    # =====================
-    # QUALITY CONTROL METHODS
-    # =====================
-    def approve_quality(self, user, notes=''):
-        """Approve quality for this line"""
-        self.quality_approved = True
-        self.quality_checked_by = user
-        if notes:
-            self.quality_notes = notes
-        self.save()
-
-    def reject_quality(self, user, issue_type, reason):
-        """Reject quality for this line"""
-        self.quality_approved = False
-        self.quality_checked_by = user
-        self.quality_issue_type = issue_type
-        self.rejection_reason = reason
-        self.save()
-
-    # =====================
-    # VARIANCE ANALYSIS
-    # =====================
-    def get_variance_percentage(self):
-        """Calculate variance as percentage of ordered quantity"""
-        if not self.ordered_quantity or self.ordered_quantity == 0:
-            return None
-
-        return (self.variance_quantity / self.ordered_quantity) * 100
-
-    def is_over_received(self):
-        """Check if more was received than ordered"""
-        return self.variance_quantity > 0
-
-    def is_under_received(self):
-        """Check if less was received than ordered"""
-        return self.variance_quantity < 0
-
-    def has_significant_variance(self, tolerance_percent=5):
-        """Check if variance exceeds tolerance threshold"""
-        variance_percent = self.get_variance_percentage()
-        if variance_percent is None:
-            return False
-
-        return abs(variance_percent) > tolerance_percent
 
     # =====================
     # PROPERTIES
@@ -793,21 +681,51 @@ class DeliveryLine(BaseDocumentLine):
         return self.variance_quantity != 0
 
     @property
+    def is_positive_variance(self):
+        """More received than ordered"""
+        return self.variance_quantity > 0
+
+    @property
+    def is_negative_variance(self):
+        """Less received than ordered"""
+        return self.variance_quantity < 0
+
+    @property
+    def variance_percentage(self):
+        """Variance as percentage of ordered quantity"""
+        if not self.ordered_quantity:
+            return None
+        return (self.variance_quantity / self.ordered_quantity) * 100
+
+    @property
     def variance_value(self):
-        """Calculate monetary value of variance"""
-        if self.variance_quantity and self.unit_price:
+        """Monetary value of variance"""
+        if self.unit_price:
             return self.variance_quantity * self.unit_price
         return Decimal('0.00')
 
     @property
-    def is_cold_chain_item(self):
-        """Check if this is a cold chain item"""
-        return self.temperature_at_receipt is not None
+    def is_expired(self):
+        """Is the product expired?"""
+        if not self.expiry_date:
+            return False
+        return self.expiry_date <= timezone.now().date()
 
     @property
-    def current_stock_display(self):
-        """Override to show current stock after this delivery"""
-        base_stock = super().current_stock_display
-        if self.quality_approved and self.received_quantity:
-            return base_stock + self.received_quantity
-        return base_stock
+    def expires_soon(self, days=30):
+        """Does the product expire soon?"""
+        if not self.expiry_date:
+            return False
+        cutoff_date = timezone.now().date() + timezone.timedelta(days=days)
+        return self.expiry_date <= cutoff_date
+
+    @property
+    def has_quality_issues(self):
+        return not self.quality_approved
+
+    @property
+    def effective_received_quantity(self):
+        """Received quantity minus any quality issues"""
+        if self.quality_approved:
+            return self.received_quantity
+        return Decimal('0.000')  # If quality not approved, consider as not usable

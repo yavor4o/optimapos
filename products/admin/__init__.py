@@ -1,11 +1,11 @@
-# products/admin/__init__.py - COMPLETE VERSION
+# products/admin/__init__.py - FIXED VERSION
 """
 Products admin package - LIFECYCLE VERSION
 
 Comprehensive admin interface for product lifecycle management
 """
 
-# Main product admin
+# Main product admin - now with inlines
 from .product import (
     ProductAdmin,
     ProductPLUInline,
@@ -16,15 +16,14 @@ from .product import (
     BlockStatusFilter,
     SellabilityFilter,
     StockLevelFilter,
-    CostRangeFilter
 )
 
-# Optional separate admins (uncomment if using separate files)
-# from .packaging import ProductPackagingAdmin, ProductBarcodeAdmin
+# Separate admins (already implemented)
+from .packaging import ProductPackagingAdmin, ProductBarcodeAdmin
 
 # Optional dashboard and actions (uncomment if using)
 # from .dashboard import ProductDashboardMixin
-# from .actions import PRODUCT_ADMIN_ACTIONS
+from .actions import PRODUCT_ADMIN_ACTIONS
 
 # Export all for Django auto-discovery
 __all__ = [
@@ -36,18 +35,18 @@ __all__ = [
     'ProductPackagingInline',
     'ProductBarcodeInline',
 
+    # Separate admin classes
+    'ProductPackagingAdmin',
+    'ProductBarcodeAdmin',
+
     # Custom filters (reusable)
     'LifecycleStatusFilter',
     'BlockStatusFilter',
     'SellabilityFilter',
     'StockLevelFilter',
-    'CostRangeFilter',
 
-    # Optional exports
-    # 'ProductPackagingAdmin',
-    # 'ProductBarcodeAdmin',
-    # 'ProductDashboardMixin',
-    # 'PRODUCT_ADMIN_ACTIONS',
+    # Actions
+    'PRODUCT_ADMIN_ACTIONS',
 ]
 
 # Metadata
