@@ -1,28 +1,62 @@
-# products/models/products.py
+# products/models/products.py - LIFECYCLE VERSION
+
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from decimal import Decimal
 from django.utils import timezone
+from decimal import Decimal
+from typing import Tuple
+
+
+class ProductLifecycleChoices(models.TextChoices):
+    """Product lifecycle status choices"""
+    DRAFT = 'DRAFT', _('Draft - In Development')
+    ACTIVE = 'ACTIVE', _('Active - Normal Sales')
+    PHASE_OUT = 'PHASE_OUT', _('Phase Out - Limited Sales')
+    DISCONTINUED = 'DISCONTINUED', _('Discontinued - No Sales')
 
 
 class ProductManager(models.Manager):
-    """Мениджър за продукти с полезни методи"""
+    """Enhanced manager with lifecycle filtering"""
+
+    def sellable(self):
+        """Products that can be sold"""
+        return self.filter(
+            lifecycle_status__in=[
+                ProductLifecycleChoices.ACTIVE,
+                ProductLifecycleChoices.PHASE_OUT
+            ],
+            sales_blocked=False
+        )
+
+    def purchasable(self):
+        """Products that can be purchased from suppliers"""
+        return self.filter(
+            lifecycle_status__in=[
+                ProductLifecycleChoices.DRAFT,
+                ProductLifecycleChoices.ACTIVE
+            ],
+            purchase_blocked=False
+        )
 
     def active(self):
-        return self.filter(is_active=True)
+        """Only active products"""
+        return self.filter(lifecycle_status=ProductLifecycleChoices.ACTIVE)
 
-    def by_group(self, group):
-        return self.filter(product_group=group, is_active=True)
+    def phase_out(self):
+        """Products being phased out"""
+        return self.filter(lifecycle_status=ProductLifecycleChoices.PHASE_OUT)
 
-    def by_brand(self, brand):
-        return self.filter(brand=brand, is_active=True)
+    def discontinued(self):
+        """Discontinued products"""
+        return self.filter(lifecycle_status=ProductLifecycleChoices.DISCONTINUED)
 
-    def with_stock(self):
-        return self.filter(current_stock_qty__gt=0, is_active=True)
+    def draft(self):
+        """Products in development"""
+        return self.filter(lifecycle_status=ProductLifecycleChoices.DRAFT)
 
     def search(self, query):
-        """Търсене по код, име или баркод"""
+        """Search with lifecycle consideration"""
         if not query:
             return self.none()
 
@@ -34,21 +68,13 @@ class ProductManager(models.Manager):
 
 
 class Product(models.Model):
-    """
-    Основен продуктов модел - сърцето на системата
+    """Enhanced Product model with lifecycle management"""
 
-    Концепция:
-    - Всеки продукт има базова мерна единица (base_unit)
-    - Може да има множество опаковки (ProductPackaging)
-    - Може да има множество баркодове (ProductBarcode)
-    - За везни продукти може да има PLU кодове (ProductPLU)
-    """
-
-    # Типове продукти по начин на продажба
-    PIECE = 'PIECE'  # Брой/парче (хляб, кутии)
-    WEIGHT = 'WEIGHT'  # Тегло (месо, плодове)
-    VOLUME = 'VOLUME'  # Обем (течности)
-    LENGTH = 'LENGTH'  # Дължина (кабели, тръби)
+    # === UNIT TYPES ===
+    PIECE = 'PIECE'
+    WEIGHT = 'WEIGHT'
+    VOLUME = 'VOLUME'
+    LENGTH = 'LENGTH'
 
     UNIT_TYPE_CHOICES = [
         (PIECE, _('Piece/Count')),
@@ -57,25 +83,28 @@ class Product(models.Model):
         (LENGTH, _('Length (m, cm)')),
     ]
 
-    # === ОСНОВНА ИДЕНТИФИКАЦИЯ ===
+    # === CORE IDENTIFICATION ===
     code = models.CharField(
         _('Product Code'),
         max_length=50,
         unique=True,
-        help_text=_('Уникален вътрешен код')
+        db_index=True,
+        help_text=_('Unique internal product code')
     )
+
     name = models.CharField(
         _('Product Name'),
         max_length=255,
         db_index=True
     )
+
     description = models.TextField(
         _('Description'),
         blank=True,
-        help_text=_('Подробно описание на продукта')
+        help_text=_('Detailed product description')
     )
 
-    # === КЛАСИФИКАЦИЯ (връзки към nomenclatures) ===
+    # === CLASSIFICATION ===
     brand = models.ForeignKey(
         'nomenclatures.Brand',
         on_delete=models.SET_NULL,
@@ -83,6 +112,7 @@ class Product(models.Model):
         blank=True,
         verbose_name=_('Brand')
     )
+
     product_group = models.ForeignKey(
         'nomenclatures.ProductGroup',
         on_delete=models.SET_NULL,
@@ -90,6 +120,7 @@ class Product(models.Model):
         blank=True,
         verbose_name=_('Product Group')
     )
+
     product_type = models.ForeignKey(
         'nomenclatures.ProductType',
         on_delete=models.SET_NULL,
@@ -98,82 +129,87 @@ class Product(models.Model):
         verbose_name=_('Product Type')
     )
 
-    # === МЕРНИ ЕДИНИЦИ ===
+    # === UNITS ===
     base_unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
         on_delete=models.PROTECT,
         verbose_name=_('Base Unit'),
-        help_text=_('Основна мерна единица за съхранение')
+        help_text=_('Base unit for storage and calculations')
     )
+
     unit_type = models.CharField(
         _('Unit Type'),
         max_length=10,
         choices=UNIT_TYPE_CHOICES,
         default=PIECE,
-        help_text=_('Как се мери/продава този продукт')
+        help_text=_('How this product is measured/sold')
     )
 
-    # === ДАНЪЧНА ГРУПА ===
+    # === TAX ===
     tax_group = models.ForeignKey(
         'nomenclatures.TaxGroup',
         on_delete=models.PROTECT,
         verbose_name=_('Tax Group')
     )
 
-    # === НАСТРОЙКИ ЗА ПРОСЛЕДЯВАНЕ ===
+    # === TRACKING SETTINGS ===
     track_batches = models.BooleanField(
         _('Track Batches'),
         default=False,
-        help_text=_('Проследяване на партиди/лотове')
+        help_text=_('Enable batch/lot tracking')
     )
+
     track_serial_numbers = models.BooleanField(
         _('Track Serial Numbers'),
         default=False,
-        help_text=_('Проследяване на серийни номера (за скъпи стоки)')
+        help_text=_('Enable serial number tracking')
     )
+
     requires_expiry_date = models.BooleanField(
         _('Requires Expiry Date'),
         default=False,
-        help_text=_('Изисква срок на годност')
+        help_text=_('Product requires expiry date tracking')
     )
 
-    # === MOVING AVERAGE COST (MAC) ===
+    # === COST & STOCK DATA ===
     current_avg_cost = models.DecimalField(
         _('Current Average Cost'),
         max_digits=10,
         decimal_places=4,
         default=Decimal('0.0000'),
-        help_text=_('Среднопретегелна себестойност')
+        help_text=_('Moving average cost')
     )
+
     current_stock_qty = models.DecimalField(
         _('Current Stock Quantity'),
         max_digits=12,
         decimal_places=3,
         default=Decimal('0.000'),
-        help_text=_('Общо количество във всички складове')
+        help_text=_('Total quantity across all locations')
     )
 
-    # === ПОСЛЕДНА ПОКУПКА ===
+    # === TRANSACTION HISTORY ===
     last_purchase_cost = models.DecimalField(
         _('Last Purchase Cost'),
         max_digits=10,
         decimal_places=4,
         null=True,
         blank=True,
-        help_text=_('Цена от последната покупка')
+        help_text=_('Cost from last purchase')
     )
+
     last_purchase_date = models.DateTimeField(
         _('Last Purchase Date'),
         null=True,
         blank=True
     )
 
-    # === ПОСЛЕДНА ПРОДАЖБА ===
     last_sale_date = models.DateTimeField(
         _('Last Sale Date'),
         null=True,
         blank=True
     )
+
     last_sale_price = models.DecimalField(
         _('Last Sale Price'),
         max_digits=10,
@@ -182,20 +218,48 @@ class Product(models.Model):
         blank=True
     )
 
-    # === МЕТА ИНФОРМАЦИЯ ===
-    is_active = models.BooleanField(
-        _('Is Active'),
-        default=True,
-        db_index=True
+    # === NEW LIFECYCLE FIELDS ===
+
+    lifecycle_status = models.CharField(
+        _('Lifecycle Status'),
+        max_length=20,
+        choices=ProductLifecycleChoices.choices,
+        default=ProductLifecycleChoices.ACTIVE,
+        db_index=True,
+        help_text=_('Current product lifecycle stage')
     )
+
+    sales_blocked = models.BooleanField(
+        _('Sales Blocked'),
+        default=False,
+        db_index=True,
+        help_text=_('Block all sales for this product')
+    )
+
+    purchase_blocked = models.BooleanField(
+        _('Purchase Blocked'),
+        default=False,
+        db_index=True,
+        help_text=_('Block all purchases for this product')
+    )
+
+    allow_negative_sales = models.BooleanField(
+        _('Allow Negative Sales'),
+        default=False,
+        help_text=_('Allow sales when insufficient stock (overrides location setting)')
+    )
+
+    # === METADATA ===
     created_at = models.DateTimeField(
         _('Created At'),
         auto_now_add=True
     )
+
     updated_at = models.DateTimeField(
         _('Updated At'),
         auto_now=True
     )
+
     created_by = models.ForeignKey(
         'accounts.User',
         on_delete=models.SET_NULL,
@@ -215,87 +279,199 @@ class Product(models.Model):
         indexes = [
             models.Index(fields=['code']),
             models.Index(fields=['name']),
-            models.Index(fields=['is_active', 'product_group']),
-            models.Index(fields=['unit_type', 'is_active']),
+            models.Index(fields=['lifecycle_status']),
+            models.Index(fields=['sales_blocked', 'purchase_blocked']),
+            models.Index(fields=['lifecycle_status', 'sales_blocked']),
+            models.Index(fields=['unit_type', 'lifecycle_status']),
         ]
 
     def __str__(self):
         return f"{self.code} - {self.name}"
 
     def clean(self):
-        """Валидация на продукта"""
+        """Enhanced validation"""
         super().clean()
 
-        # Почистване на полета
+        # Clean fields
         if self.code:
             self.code = self.code.upper().strip()
         if self.name:
             self.name = self.name.strip()
 
-        # Проверки за серийни номера
+        # Business validation
         if self.track_serial_numbers and self.unit_type != self.PIECE:
             raise ValidationError({
-                'track_serial_numbers': _('Serial numbers can only be tracked for PIECE unit types')
-            })
-
-        # Проверки за последователност на датите
-        if (self.last_purchase_date and self.last_sale_date and
-                self.last_purchase_date > timezone.now()):
-            raise ValidationError({
-                'last_purchase_date': _('Last purchase date cannot be in the future')
+                'track_serial_numbers': _('Serial numbers only for PIECE unit types')
             })
 
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # === СВОЙСТВА ===
+    # === COMPUTED PROPERTIES ===
+
+    @property
+    def is_sellable(self) -> bool:
+        """Can this product be sold?"""
+        return (
+                self.lifecycle_status in [
+            ProductLifecycleChoices.ACTIVE,
+            ProductLifecycleChoices.PHASE_OUT
+        ] and
+                not self.sales_blocked
+        )
+
+    @property
+    def is_purchasable(self) -> bool:
+        """Can this product be purchased from suppliers?"""
+        return (
+                self.lifecycle_status in [
+            ProductLifecycleChoices.DRAFT,
+            ProductLifecycleChoices.ACTIVE
+        ] and
+                not self.purchase_blocked
+        )
+
+    @property
+    def lifecycle_badge_class(self) -> str:
+        """CSS class for status display"""
+        return {
+            ProductLifecycleChoices.DRAFT: 'badge-warning',
+            ProductLifecycleChoices.ACTIVE: 'badge-success',
+            ProductLifecycleChoices.PHASE_OUT: 'badge-info',
+            ProductLifecycleChoices.DISCONTINUED: 'badge-danger'
+        }.get(self.lifecycle_status, 'badge-secondary')
+
+    @property
+    def has_restrictions(self) -> bool:
+        """Does this product have any restrictions?"""
+        return (
+                self.sales_blocked or
+                self.purchase_blocked or
+                self.lifecycle_status != ProductLifecycleChoices.ACTIVE
+        )
+
+    # === EXISTING PROPERTIES (keeping all) ===
 
     @property
     def full_name(self):
-        """Пълно име с бранд"""
+        """Full name with brand"""
         if self.brand:
             return f"{self.brand.name} {self.name}"
         return self.name
 
     @property
     def has_stock(self):
-        """Има ли наличност"""
+        """Has any stock"""
         return self.current_stock_qty > 0
 
     @property
     def stock_value(self):
-        """Стойност на наличността"""
+        """Total stock value"""
         return self.current_stock_qty * self.current_avg_cost
 
     @property
     def primary_barcode(self):
-        """Основен баркод"""
+        """Primary barcode"""
         return self.barcodes.filter(is_primary=True).first()
 
     @property
     def primary_plu(self):
-        """Основен PLU код"""
+        """Primary PLU code"""
         return self.plu_codes.filter(is_primary=True).first()
 
     @property
     def default_sale_packaging(self):
-        """Основна опаковка за продажба"""
+        """Default sale packaging"""
         return self.packagings.filter(is_default_sale_unit=True).first()
 
     @property
     def default_purchase_packaging(self):
-        """Основна опаковка за покупка"""
+        """Default purchase packaging"""
         return self.packagings.filter(is_default_purchase_unit=True).first()
 
-    # === БИЗНЕС МЕТОДИ ===
+    # === BUSINESS METHODS ===
+
+    def validate_sale_quantity(self, quantity: Decimal, location=None) -> Tuple[bool, str]:
+        """Validate quantity for sale"""
+        # Sellability check
+        if not self.is_sellable:
+            return False, f"Product not sellable: {self.get_lifecycle_status_display()}"
+
+        # Basic quantity validation
+        if quantity <= 0:
+            return False, "Quantity must be positive"
+
+        # Unit type validation
+        if self.unit_type == self.PIECE:
+            if quantity != int(quantity):
+                return False, "Piece products must be whole numbers"
+
+        return True, "OK"
+
+    def get_restrictions_summary(self) -> str:
+        """Human-readable restrictions"""
+        restrictions = []
+
+        if not self.is_sellable:
+            if self.sales_blocked:
+                restrictions.append("Sales blocked")
+            else:
+                restrictions.append(f"Not sellable ({self.get_lifecycle_status_display()})")
+
+        if not self.is_purchasable:
+            if self.purchase_blocked:
+                restrictions.append("Purchases blocked")
+            else:
+                restrictions.append("Not purchasable")
+
+        if self.lifecycle_status == ProductLifecycleChoices.PHASE_OUT:
+            restrictions.append("Phase-out: sell existing stock only")
+
+        return "; ".join(restrictions) if restrictions else "No restrictions"
+
+    # === LIFECYCLE MANAGEMENT ===
+
+    def set_lifecycle_status(self, new_status: str, user=None, reason: str = ""):
+        """Change lifecycle status with validation"""
+        if new_status not in ProductLifecycleChoices.values:
+            raise ValueError(f"Invalid lifecycle status: {new_status}")
+
+        old_status = self.lifecycle_status
+        self.lifecycle_status = new_status
+        self.save()
+
+        # TODO: Add audit logging in Phase 2
+        return f"Lifecycle changed: {old_status} → {new_status}"
+
+    def block_sales(self, reason: str = ""):
+        """Block all sales"""
+        self.sales_blocked = True
+        self.save()
+        return f"Sales blocked for {self.code}"
+
+    def unblock_sales(self):
+        """Unblock sales"""
+        self.sales_blocked = False
+        self.save()
+        return f"Sales unblocked for {self.code}"
+
+    def block_purchases(self, reason: str = ""):
+        """Block all purchases"""
+        self.purchase_blocked = True
+        self.save()
+        return f"Purchases blocked for {self.code}"
+
+    def unblock_purchases(self):
+        """Unblock purchases"""
+        self.purchase_blocked = False
+        self.save()
+        return f"Purchases unblocked for {self.code}"
+
+    # === EXISTING BUSINESS METHODS (keeping all) ===
 
     def update_average_cost(self, new_qty, new_cost):
-        """
-        Обновява среднопретеглената цена
-
-        Formula: MAC = (existing_qty * existing_cost + new_qty * new_cost) / total_qty
-        """
+        """Update moving average cost"""
         if new_qty <= 0:
             return
 
@@ -315,7 +491,7 @@ class Product(models.Model):
         ])
 
     def add_stock(self, quantity, cost_per_unit=None):
-        """Добавя складова наличност"""
+        """Add stock quantity"""
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
 
@@ -326,7 +502,7 @@ class Product(models.Model):
             self.save(update_fields=['current_stock_qty'])
 
     def remove_stock(self, quantity):
-        """Премахва складова наличност"""
+        """Remove stock quantity"""
         if quantity <= 0:
             raise ValueError("Quantity must be positive")
 
@@ -338,17 +514,20 @@ class Product(models.Model):
         self.save(update_fields=['current_stock_qty', 'last_sale_date'])
 
     def get_active_barcodes(self):
-        """Всички активни баркодове"""
+        """Get all active barcodes"""
         return self.barcodes.filter(is_active=True)
 
     def get_active_packagings(self):
-        """Всички активни опаковки"""
+        """Get all active packagings"""
         return self.packagings.filter(is_active=True)
 
     def can_be_sold_by_weight(self):
-        """Може ли да се продава на тегло"""
-        return self.unit_type == self.WEIGHT and self.plu_codes.filter(is_active=True).exists()
+        """Can be sold by weight"""
+        return self.unit_type == self.WEIGHT and self.has_plu_codes()
 
+    def has_plu_codes(self):
+        """Has any PLU codes"""
+        return self.plu_codes.filter(is_active=True).exists()
 
 class ProductPLU(models.Model):
     """PLU кодове за продукти (главно за везни)"""
