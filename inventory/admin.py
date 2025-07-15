@@ -325,7 +325,7 @@ class InventoryMovementAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'product', 'location', 'created_by', 'delivery_receipt'
+            'product', 'location', 'created_by',
         )
 
     def product_display(self, obj):
@@ -364,14 +364,10 @@ class InventoryMovementAdmin(admin.ModelAdmin):
     quantity_display.short_description = _('Quantity')
 
     def source_doc(self, obj):
-        """Source document link"""
-        if obj.delivery_receipt:
-            url = reverse('admin:purchases_deliveryreceipt_change',
-                          args=[obj.delivery_receipt.pk])
-            return format_html(
-                '<a href="{}">DEL-{}</a>',
-                url, obj.delivery_receipt.document_number
-            )
+        """Source document link - без delivery_receipt"""
+        if obj.source_document_number and obj.source_document_type == 'PURCHASE':
+            # Показвай само document number, без линк
+            return f"PUR-{obj.source_document_number}"
         elif obj.source_document_number:
             return obj.source_document_number
         return '-'

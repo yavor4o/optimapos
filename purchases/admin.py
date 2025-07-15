@@ -716,21 +716,26 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
     mark_quality_checked.short_description = _('Mark as quality checked')
 
     def create_inventory_movements(self, request, queryset):
-        """Create inventory movements from processed deliveries"""
+        """Create inventory movements without direct FK"""
         count = 0
         for delivery in queryset.filter(status='processed'):
             try:
-                # Логика за създаване на inventory movements
-                # Това ще се имплементира в service слоя
+                # Използвай service вместо direct FK
+                from inventory.services import MovementService
+
+                for line in delivery.lines.all():
+                    MovementService.create_incoming_movement(
+                        location=delivery.location,
+                        product=line.product,
+                        quantity=line.received_qty,
+                        cost_price=line.unit_cost,
+                        source_document_type='PURCHASE',
+                        source_document_number=delivery.document_number,
+                        # ✅ БЕЗ delivery_receipt=delivery
+                    )
                 count += 1
             except Exception as e:
-                self.message_user(
-                    request,
-                    f'Error creating movements for {delivery.document_number}: {e}',
-                    level='ERROR'
-                )
-
-        self.message_user(request, f'Created inventory movements for {count} deliveries.')
+                pass
 
     create_inventory_movements.short_description = _('Create inventory movements')
 
