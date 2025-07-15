@@ -1,4 +1,4 @@
-# products/services/validation_service.py
+# products/services/validation_service.py - NEW FILE
 
 from typing import Tuple, Dict, List
 from decimal import Decimal
@@ -39,14 +39,6 @@ class ProductValidationService:
         can_validate_qty, qty_reason = product.validate_sale_quantity(quantity, location)
         if not can_validate_qty:
             return False, qty_reason, details
-
-        # 3. Location-specific validation (if provided)
-        if location:
-            # Check if location allows this product
-            if hasattr(location, 'allow_negative_stock'):
-                if not product.allow_negative_sales and not location.allow_negative_stock:
-                    # Will be checked by inventory service later
-                    pass
 
         return True, "OK", details
 
@@ -112,11 +104,6 @@ class ProductValidationService:
         if old_status == ProductLifecycleChoices.DISCONTINUED:
             if new_status != ProductLifecycleChoices.DISCONTINUED:
                 return False, "Cannot change status from DISCONTINUED (create new product instead)"
-
-        if new_status == ProductLifecycleChoices.ACTIVE:
-            if old_status == ProductLifecycleChoices.DRAFT:
-                # TODO: Check if product has required data (price, supplier, etc.)
-                pass
 
         return True, "OK"
 

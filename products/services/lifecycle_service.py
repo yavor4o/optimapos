@@ -1,7 +1,7 @@
-# products/services/lifecycle_service.py
+# products/services/lifecycle_service.py - NEW FILE
 
 from typing import List, Dict, Optional
-from django.db import transaction, models
+from django.db import transaction
 from django.utils import timezone
 
 from ..models import Product, ProductLifecycleChoices
@@ -56,12 +56,6 @@ class ProductLifecycleService:
     def _handle_lifecycle_side_effects(product: Product, old_status: str, new_status: str):
         """Handle side effects of lifecycle changes"""
 
-        # DISCONTINUED → Clear active pricing (future Phase 2)
-        if new_status == ProductLifecycleChoices.DISCONTINUED:
-            # TODO: Notify pricing service
-            # TODO: Handle existing orders
-            pass
-
         # PHASE_OUT → Block new purchases
         if new_status == ProductLifecycleChoices.PHASE_OUT:
             product.purchase_blocked = True
@@ -108,55 +102,6 @@ class ProductLifecycleService:
         return results
 
     @staticmethod
-    @transaction.atomic
-    def block_sales(
-            product: Product,
-            user=None,
-            reason: str = ""
-    ) -> Dict:
-        """Block product sales with audit"""
-
-        if product.sales_blocked:
-            return {
-                'success': False,
-                'message': f"Sales already blocked for {product.code}",
-                'product': product
-            }
-
-        product.block_sales(reason)
-
-        return {
-            'success': True,
-            'message': f"Sales blocked for {product.code}",
-            'product': product,
-            'reason': reason
-        }
-
-    @staticmethod
-    @transaction.atomic
-    def unblock_sales(
-            product: Product,
-            user=None,
-            reason: str = ""
-    ) -> Dict:
-        """Unblock product sales"""
-
-        if not product.sales_blocked:
-            return {
-                'success': False,
-                'message': f"Sales not blocked for {product.code}",
-                'product': product
-            }
-
-        product.unblock_sales()
-
-        return {
-            'success': True,
-            'message': f"Sales unblocked for {product.code}",
-            'product': product
-        }
-
-    @staticmethod
     def get_lifecycle_statistics() -> Dict:
         """Get system-wide lifecycle statistics"""
 
@@ -183,28 +128,3 @@ class ProductLifecycleService:
             }
 
         return stats
-
-    @staticmethod
-    def get_products_needing_attention() -> Dict:
-        """Get products that may need manual attention"""
-
-        return {
-            'draft_old_products': Product.objects.filter(
-                lifecycle_status=ProductLifecycleChoices.DRAFT,
-                created_at__lt=timezone.now() - timezone.timedelta(days=30)
-            ).count(),
-
-            'phase_out_with_stock': Product.objects.filter(
-                lifecycle_status=ProductLifecycleChoices.PHASE_OUT,
-                current_stock_qty__gt=0
-            ).count(),
-
-            'blocked_products': Product.objects.filter(
-                models.Q(sales_blocked=True) | models.Q(purchase_blocked=True)
-            ).count(),
-
-            'discontinued_with_stock': Product.objects.filter(
-                lifecycle_status=ProductLifecycleChoices.DISCONTINUED,
-                current_stock_qty__gt=0
-            ).count()
-        }

@@ -1,15 +1,15 @@
 # products/models/__init__.py
 """
-Products models package
+Products models package - LIFECYCLE VERSION
 
 Архитектура:
 - Използва nomenclatures за класификация (Brand, ProductGroup, ProductType)
-- products.py: Основен Product модел + ProductPLU
+- products.py: Product модел с lifecycle + ProductPLU
 - packaging.py: ProductPackaging + ProductBarcode
 """
 
 # Core product models
-from .products import Product, ProductPLU
+from .products import Product, ProductPLU, ProductLifecycleChoices
 
 # Packaging & Barcodes
 from .packaging import ProductPackaging, ProductBarcode
@@ -19,6 +19,7 @@ __all__ = [
     # Основни модели
     'Product',
     'ProductPLU',
+    'ProductLifecycleChoices',
 
     # Опаковки и баркодове
     'ProductPackaging',
@@ -26,8 +27,5 @@ __all__ = [
 ]
 
 # Версия и мета информация
-__version__ = '2.0.0'
+__version__ = '3.0.0'  # LIFECYCLE VERSION
 __author__ = 'Your Company'
-
-# App configuration
-default_app_config = 'products.apps.ProductsConfig'
