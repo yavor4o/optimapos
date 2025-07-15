@@ -48,6 +48,8 @@ __all__ = [
     'Currency',
     'ExchangeRate',
     'TaxGroup',
+    'PriceGroup',
+    'PriceGroupManager',
 
     # Operational
     'UnitOfMeasure',
