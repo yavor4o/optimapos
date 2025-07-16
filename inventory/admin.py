@@ -112,12 +112,12 @@ class InventoryLocationAdmin(admin.ModelAdmin):
     def manager_display(self, obj):
         """Manager with link to user admin"""
         if obj.manager:
-            url = reverse('admin:auth_user_change', args=[obj.manager.pk])
+            url = reverse('admin:accounts_user_change', args=[obj.manager.pk])
             return format_html(
                 '<a href="{}">{}</a>',
                 url, obj.manager.get_full_name() or obj.manager.username
             )
-        return format_html('<span style="color: gray;">No manager</span>')
+        return format_html('<span style="color: gray;">{}</span>', _('No manager'))
 
     manager_display.short_description = _('Manager')
 

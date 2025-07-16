@@ -237,7 +237,7 @@ class POSLocation(models.Model):
         # ordering = ['warehouse', 'code']
 
     def __str__(self):
-        return f"{self.code} - {self.name} ({self.warehouse.code})"
+        return f"{self.code} - {self.name} "
 
     def clean(self):
         # Проверка на работното време

@@ -130,12 +130,11 @@ class ProductPriceAdmin(admin.ModelAdmin):
 
     def base_price_display(self, obj):
         """Base price display"""
-        if obj.base_price:
-            return format_html(
-                '<strong>{:.2f} лв</strong>',
-                obj.base_price
-            )
-        return '-'
+        print(f"Type of base_price: {type(obj.base_price)}, Value: {obj.base_price}")
+        return str(obj.base_price) if obj.base_price is not None else '-'
+
+
+
 
     base_price_display.short_description = _('Base Price')
 
@@ -152,11 +151,8 @@ class ProductPriceAdmin(admin.ModelAdmin):
 
     def effective_price_display(self, obj):
         """Effective price with styling"""
-        return format_html(
-            '<strong style="color: green;">{:.2f} лв</strong>',
-            obj.effective_price
-        )
-
+        print(f"Type of effective_price: {type(obj.effective_price)}, Value: {obj.effective_price}")
+        return str(obj.effective_price) if obj.effective_price is not None else '-'
     effective_price_display.short_description = _('Final Price')
 
     def profit_analysis(self, obj):

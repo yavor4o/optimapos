@@ -105,7 +105,7 @@ class ProductPrice(models.Model):
         ordering = ['location', 'product']
 
     def __str__(self):
-        return f"{self.product.code} @ {self.location.code}: {self.effective_price:.2f}"
+        return f"{self.product.code} @ {self.location.code}: {self.effective_price}"
 
     def clean(self):
         # Validate pricing method consistency

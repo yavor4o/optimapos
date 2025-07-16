@@ -1,276 +1,334 @@
-from datetime import timedelta
+# nomenclatures/admin/financial.py
 
 from django.contrib import admin
-from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.urls import reverse
+from django.db.models import Count, Q
 from django.utils.safestring import mark_safe
-from django import forms
-from ..models import Currency, ExchangeRate, TaxGroup
-from ..services import CurrencyService
 
-
-class ExchangeRateInline(admin.TabularInline):
-    """Inline за последните курсове на валутата"""
-    model = ExchangeRate
-    extra = 0
-    fields = ['date', 'units', 'buy_rate', 'sell_rate', 'central_rate', 'is_active']
-    readonly_fields = ['date']
-    ordering = ['-date']
-
-
+from ..models import Currency, ExchangeRate, TaxGroup, PriceGroup
 
 
 @admin.register(Currency)
 class CurrencyAdmin(admin.ModelAdmin):
     list_display = [
-        'code',
-        'name',
-        'symbol',
-        'is_base_badge',
-        'latest_rate',
-        'is_active'
+        'code', 'name', 'symbol', 'is_base_badge',
+        'decimal_places', 'is_active'
     ]
-    list_filter = ['is_base', 'is_active']
+    list_filter = ['is_base', 'is_active', 'decimal_places']
     search_fields = ['code', 'name']
-    readonly_fields = ['is_base_badge_large']
-    inlines = [ExchangeRateInline]
 
     fieldsets = (
         (None, {
-            'fields': ('code', 'name', 'symbol')
+            'fields': ('code', 'name', 'symbol', 'is_active')
         }),
         (_('Settings'), {
-            'fields': ('is_base', 'is_base_badge_large', 'decimal_places', 'is_active')
+            'fields': ('is_base', 'decimal_places'),
         }),
     )
 
     def is_base_badge(self, obj):
-        """Badge за базова валута"""
         if obj.is_base:
             return format_html(
-                '<span style="background-color: #4CAF50; color: white; '
-                'padding: 3px 10px; border-radius: 3px;">BASE</span>'
+                '<span style="background: #4CAF50; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-size: 11px;">BASE</span>'
             )
-        return '-'
+        return ''
 
     is_base_badge.short_description = _('Base')
 
-    def is_base_badge_large(self, obj):
-        """Голям badge за детайлите"""
-        if obj.is_base:
-            return format_html(
-                '<div style="background-color: #4CAF50; color: white; '
-                'padding: 10px; border-radius: 5px; text-align: center; '
-                'font-weight: bold; max-width: 200px;">BASE CURRENCY</div>'
-            )
-        return _('Regular currency')
-
-    is_base_badge_large.short_description = _('Currency Status')
-
-    def latest_rate(self, obj):
-        """Последен курс"""
-        if obj.is_base:
-            return format_html('<span style="color: gray;">-</span>')
-
-        try:
-            rate = ExchangeRate.objects.get_rate_for_date(obj)
-            return format_html(
-                '{:.4f} <small style="color: gray;">({})</small>',
-                rate.central_rate,
-                rate.date.strftime('%d.%m.%Y')
-            )
-        except:
-            return format_html('<span style="color: red;">No rate</span>')
-
-    latest_rate.short_description = _('Latest Rate')
-
     def get_readonly_fields(self, request, obj=None):
-        readonly = list(self.readonly_fields)
-        if obj:  # Editing
-            readonly.extend(['code', 'is_base'])
-        return readonly
-
-    def has_delete_permission(self, request, obj=None):
-        """Не позволяваме изтриване на базова валута"""
+        readonly_fields = []
         if obj and obj.is_base:
-            return False
-        return super().has_delete_permission(request, obj)
+            readonly_fields.append('is_base')  # Не позволяваме промяна на базовата валута
+        return readonly_fields
 
 
 @admin.register(ExchangeRate)
 class ExchangeRateAdmin(admin.ModelAdmin):
     list_display = [
-        'currency',
-        'date',
-        'units',
-        'buy_rate',
-        'sell_rate',
-        'central_rate',
-        'spread_info',
-        'is_active'
+        'currency', 'date', 'central_rate_display',
+        'buy_rate', 'sell_rate', 'created_at'
     ]
-    list_filter = ['currency', 'date', 'is_active']
+    list_filter = ['currency', 'date']
     search_fields = ['currency__code', 'currency__name']
     date_hierarchy = 'date'
-    readonly_fields = ['spread_info_detail', 'created_at', 'created_by']
+    readonly_fields = ['created_at']
 
     fieldsets = (
-        (None, {
+        (_('Rate Information'), {
             'fields': ('currency', 'date', 'units')
         }),
         (_('Exchange Rates'), {
-            'fields': ('buy_rate', 'sell_rate', 'central_rate', 'spread_info_detail')
-        }),
-        (_('Status'), {
-            'fields': ('is_active',)
+            'fields': ('central_rate', 'buy_rate', 'sell_rate'),
         }),
         (_('System Info'), {
-            'fields': ('created_at', 'created_by'),
+            'fields': ('created_at',),
             'classes': ('collapse',)
         }),
     )
 
-    def spread_info(self, obj):
-        """Информация за спреда"""
-        spread = obj.sell_rate - obj.buy_rate
-        spread_percent = (spread / obj.central_rate) * 100
-
-        color = 'green' if spread_percent < 1 else 'orange' if spread_percent < 2 else 'red'
-
+    def central_rate_display(self, obj):
         return format_html(
-            '<span style="color: {};">{:.4f} ({:.2f}%)</span>',
-            color,
-            spread,
-            spread_percent
+            '<strong>{:.4f}</strong>',
+            obj.central_rate
         )
 
-    spread_info.short_description = _('Spread')
-
-    def spread_info_detail(self, obj):
-        """Детайлна информация за спреда"""
-        if not obj.pk:
-            return '-'
-
-        info = CurrencyService.get_rate_spread(obj.currency, obj.date)
-
-        return format_html(
-            '<div style="background: #f0f0f0; padding: 10px; border-radius: 5px;">'
-            '<strong>Buy Rate:</strong> {:.6f}<br>'
-            '<strong>Sell Rate:</strong> {:.6f}<br>'
-            '<strong>Spread:</strong> {:.6f} ({:.2f}%)<br>'
-            '</div>',
-            info['buy_rate'],
-            info['sell_rate'],
-            info['spread_amount'],
-            info['spread_percent']
-        )
-
-    spread_info_detail.short_description = _('Spread Analysis')
-
-    def save_model(self, request, obj, form, change):
-        if not change:  # New object
-            obj.created_by = request.user
-        super().save_model(request, obj, form, change)
-
-    def has_delete_permission(self, request, obj=None):
-        """Не позволяваме триене на исторически курсове"""
-        if obj and obj.date < timezone.now().date() - timedelta(days=7):
-            return False
-        return super().has_delete_permission(request, obj)
-
-    # Custom actions
-    actions = ['import_bnb_rates']
-
-    def import_bnb_rates(self, request, queryset):
-        """Action за импорт на курсове от БНБ"""
-        from django.utils import timezone
-        imported, errors = CurrencyService.import_bnb_rates(timezone.now().date())
-
-        if errors:
-            self.message_user(
-                request,
-                f"Imported {imported} rates. Errors: {', '.join(errors)}",
-                level='WARNING'
-            )
-        else:
-            self.message_user(
-                request,
-                f"Successfully imported {imported} rates",
-                level='SUCCESS'
-            )
-
-    import_bnb_rates.short_description = _('Import rates from BNB')
+    central_rate_display.short_description = _('Central Rate')
+    central_rate_display.admin_order_field = 'central_rate'
 
 
 @admin.register(TaxGroup)
 class TaxGroupAdmin(admin.ModelAdmin):
     list_display = [
-        'code',
-        'name',
-        'rate_display',
-        'tax_type',
-        'is_default_badge',
-        'is_reverse_charge',
-        'is_active'
+        'code', 'name', 'rate_display', 'tax_type_badge',
+        'is_default_badge', 'product_count', 'is_active'
     ]
-    list_filter = ['tax_type', 'is_default', 'is_reverse_charge', 'is_active']
+    list_filter = ['tax_type', 'is_default', 'is_active']
     search_fields = ['code', 'name']
-
+    readonly_fields = ['created_at', 'updated_at', 'product_count_info']
 
     fieldsets = (
         (None, {
-            'fields': ('code', 'name', 'rate', 'tax_type')
+            'fields': ('code', 'name', 'rate', 'tax_type', 'is_active')
         }),
-        (_('Settings'), {
-            'fields': ('is_default', 'is_reverse_charge', 'is_active')
+        (_('Special Settings'), {
+            'fields': ('is_default', 'is_reverse_charge'),
+        }),
+        (_('System Info'), {
+            'fields': ('created_at', 'updated_at', 'product_count_info'),
+            'classes': ('collapse',)
         }),
     )
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.annotate(
+            product_count_ann=Count('product', distinct=True)
+        )
+
     def rate_display(self, obj):
-        """Показва ставката с % - с проверка за валидност"""
-        try:
-            # Уверяваме се, че rate е число
-            if obj.rate is None:
-                return format_html('<span style="color: gray;">-</span>')
-
-            # Конвертираме в float ако е необходимо
-            rate_value = float(obj.rate)
-
-            return format_html(
-                '<span style="font-weight: bold; font-size: 14px;">{}</span>',
-                f'{rate_value:.2f}%'
-            )
-        except (ValueError, TypeError, AttributeError):
-            # Ако има проблем с форматирането, показваме суровата стойност
-            return format_html(
-                '<span style="color: red;">Invalid: {}</span>',
-                str(obj.rate) if obj.rate is not None else 'None'
-            )
+        return format_html(
+            '<strong style="color: #2196F3;">{:.2f}%</strong>',
+            obj.rate
+        )
 
     rate_display.short_description = _('Rate')
     rate_display.admin_order_field = 'rate'
 
+    def tax_type_badge(self, obj):
+        colors = {
+            'VAT': '#4CAF50',
+            'EXCISE': '#FF9800',
+            'OTHER': '#757575',
+        }
+        color = colors.get(obj.tax_type, '#757575')
+
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            color,
+            obj.get_tax_type_display()
+        )
+
+    tax_type_badge.short_description = _('Type')
+
     def is_default_badge(self, obj):
-        """Badge за данък по подразбиране"""
         if obj.is_default:
             return format_html(
-                '<span style="background-color: #2196F3; color: white; '
-                'padding: 3px 10px; border-radius: 3px;">DEFAULT</span>'
+                '<span style="background: #FF5722; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-size: 11px;">DEFAULT</span>'
             )
-        return '-'
+        return ''
 
     is_default_badge.short_description = _('Default')
 
-    def get_readonly_fields(self, request, obj=None):
-        readonly = list(self.readonly_fields or [])
-        if obj:  # Editing
-            readonly.append('code')
-        return readonly
+    def product_count(self, obj):
+        count = getattr(obj, 'product_count_ann', 0)
+        if count > 0:
+            return format_html(
+                '<span style="color: green; font-weight: bold;">{}</span>',
+                count
+            )
+        return format_html('<span style="color: gray;">0</span>')
 
-    def save_model(self, request, obj, form, change):
-        # Ако се маркира като default, махаме default от другите
-        if obj.is_default:
-            TaxGroup.objects.exclude(pk=obj.pk).update(is_default=False)
-        super().save_model(request, obj, form, change)
+    product_count.short_description = _('Products')
+    product_count.admin_order_field = 'product_count_ann'
+
+    def product_count_info(self, obj):
+        if not obj.pk:
+            return "Save first to see product count"
+        # Поправяме достъпа до продуктите
+        try:
+            count = obj.product.count() if hasattr(obj, 'product') else 0
+        except:
+            count = 0
+        return f"{count} products using this tax group"
+
+    product_count_info.short_description = _('Product Count')
+
+
+@admin.register(PriceGroup)
+class PriceGroupAdmin(admin.ModelAdmin):
+    """Admin for Price Groups - ценови групи за клиенти"""
+
+    list_display = [
+        'priority_badge', 'code', 'name', 'discount_display',
+        'customer_count', 'pricing_count', 'is_active'
+    ]
+
+    list_filter = ['is_active', 'priority']
+    search_fields = ['code', 'name', 'description']
+    readonly_fields = ['created_at', 'updated_at', 'usage_statistics']
+
+    fieldsets = (
+        (_('Basic Information'), {
+            'fields': ('code', 'name', 'description', 'is_active')
+        }),
+        (_('Pricing Settings'), {
+            'fields': ('default_discount_percentage', 'priority'),
+            'description': _('Default discount and priority for conflict resolution')
+        }),
+        (_('Statistics'), {
+            'fields': ('usage_statistics',),
+            'classes': ('collapse',)
+        }),
+        (_('System Info'), {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.annotate(
+            customer_count_ann=Count('customers', distinct=True, filter=Q(customers__is_active=True)),
+            pricing_count_ann=Count('product_group_prices', distinct=True,
+                                    filter=Q(product_group_prices__is_active=True))
+        )
+
+    def priority_badge(self, obj):
+        """Приоритет с цветно означение"""
+        if obj.priority >= 100:
+            color = '#F44336'  # Червен - висок приоритет
+            icon = '🔥'
+        elif obj.priority >= 50:
+            color = '#FF9800'  # Оранжев - среден приоритет
+            icon = '⚡'
+        elif obj.priority > 0:
+            color = '#4CAF50'  # Зелен - нисък приоритет
+            icon = '📈'
+        else:
+            color = '#757575'  # Сив - без приоритет
+            icon = '➖'
+
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px; font-weight: bold;">{} {}</span>',
+            color, icon, obj.priority
+        )
+
+    priority_badge.short_description = _('Priority')
+    priority_badge.admin_order_field = 'priority'
+
+    def discount_display(self, obj):
+        """Отстъпка с цветно означение"""
+        if obj.default_discount_percentage > 0:
+            return format_html(
+                '<strong style="color: #4CAF50;">-{:.1f}%</strong>',
+                obj.default_discount_percentage
+            )
+        return format_html('<span style="color: gray;">0%</span>')
+
+    discount_display.short_description = _('Discount')
+    discount_display.admin_order_field = 'default_discount_percentage'
+
+    def customer_count(self, obj):
+        """Брой клиенти в групата"""
+        count = getattr(obj, 'customer_count_ann', 0)
+        if count > 0:
+            return format_html(
+                '<span style="color: #2196F3; font-weight: bold;">{} 👥</span>',
+                count
+            )
+        return format_html('<span style="color: gray;">0</span>')
+
+    customer_count.short_description = _('Customers')
+    customer_count.admin_order_field = 'customer_count_ann'
+
+    def pricing_count(self, obj):
+        """Брой специални ценови правила"""
+        count = getattr(obj, 'pricing_count_ann', 0)
+        if count > 0:
+            return format_html(
+                '<span style="color: #9C27B0; font-weight: bold;">{} 💰</span>',
+                count
+            )
+        return format_html('<span style="color: gray;">0</span>')
+
+    pricing_count.short_description = _('Price Rules')
+    pricing_count.admin_order_field = 'pricing_count_ann'
+
+    def usage_statistics(self, obj):
+        """Подробна статистика за използването"""
+        if not obj.pk:
+            return "Save price group first to see statistics"
+
+        stats = []
+
+        # Клиенти
+        customer_count = obj.get_customer_count()
+        if customer_count > 0:
+            stats.append(f"<strong>Customers:</strong> {customer_count}")
+
+        # Ценови правила
+        pricing_count = obj.get_product_count()
+        if pricing_count > 0:
+            stats.append(f"<strong>Special Prices:</strong> {pricing_count}")
+
+        # Среден размер на отстъпката
+        if obj.default_discount_percentage > 0:
+            stats.append(f"<strong>Default Discount:</strong> {obj.default_discount_percentage:.1f}%")
+
+        # Приоритет
+        if obj.priority > 0:
+            stats.append(f"<strong>Priority Level:</strong> {obj.priority}")
+
+        if not stats:
+            stats.append("No usage data available")
+
+        return mark_safe('<br>'.join(stats))
+
+    usage_statistics.short_description = _('Usage Statistics')
+
+    # Actions
+    actions = ['activate_price_groups', 'deactivate_price_groups', 'bulk_set_priority']
+
+    def activate_price_groups(self, request, queryset):
+        """Активиране на ценови групи"""
+        count = queryset.update(is_active=True)
+        self.message_user(request, f'Activated {count} price groups.')
+
+    activate_price_groups.short_description = _('Activate selected price groups')
+
+    def deactivate_price_groups(self, request, queryset):
+        """Деактивиране на ценови групи"""
+        count = queryset.update(is_active=False)
+        self.message_user(request, f'Deactivated {count} price groups.')
+
+    deactivate_price_groups.short_description = _('Deactivate selected price groups')
+
+    def bulk_set_priority(self, request, queryset):
+        """Bulk промяна на приоритет"""
+        count = queryset.update(priority=50)
+        self.message_user(request, f'Set priority to 50 for {count} price groups.')
+
+    bulk_set_priority.short_description = _('Set priority to 50')
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(self.readonly_fields)
+        if obj and obj.pk:
+            # При редактиране можем да правим code readonly ако има клиенти
+            if obj.get_customer_count() > 0:
+                readonly.append('code')
+        return readonly
