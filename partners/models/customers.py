@@ -62,6 +62,7 @@ class Customer(PartnerBase):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
+        related_name='customers',
         verbose_name=_('Price Group')
     )
     discount_percent = models.DecimalField(

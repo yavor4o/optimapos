@@ -168,6 +168,8 @@ class TaxGroupAdmin(admin.ModelAdmin):
     product_count_info.short_description = _('Product Count')
 
 
+# nomenclatures/admin/financial.py - ПОПРАВЕНИ МЕТОДИ
+
 @admin.register(PriceGroup)
 class PriceGroupAdmin(admin.ModelAdmin):
     """Admin for Price Groups - ценови групи за клиенти"""
@@ -202,7 +204,8 @@ class PriceGroupAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.annotate(
-            customer_count_ann=Count('customers', distinct=True, filter=Q(customers__is_active=True)),
+            # ПОПРАВЕНО: използваме customer_set вместо customers
+            customer_count_ann=Count('customer_set', distinct=True, filter=Q(customer_set__is_active=True)),
             pricing_count_ann=Count('product_group_prices', distinct=True,
                                     filter=Q(product_group_prices__is_active=True))
         )
@@ -232,11 +235,12 @@ class PriceGroupAdmin(admin.ModelAdmin):
     priority_badge.admin_order_field = 'priority'
 
     def discount_display(self, obj):
-        """Отстъпка с цветно означение"""
-        if obj.default_discount_percentage > 0:
+        """Отстъпка с цветно означение - ПОПРАВЕНО"""
+        # Проверяваме за None и конвертираме към float
+        if obj.default_discount_percentage and obj.default_discount_percentage > 0:
             return format_html(
                 '<strong style="color: #4CAF50;">-{:.1f}%</strong>',
-                obj.default_discount_percentage
+                float(obj.default_discount_percentage)  # ✅ Конвертираме към float
             )
         return format_html('<span style="color: gray;">0%</span>')
 
@@ -270,25 +274,25 @@ class PriceGroupAdmin(admin.ModelAdmin):
     pricing_count.admin_order_field = 'pricing_count_ann'
 
     def usage_statistics(self, obj):
-        """Подробна статистика за използването"""
+        """Подробна статистика за използването - ПОПРАВЕНО"""
         if not obj.pk:
             return "Save price group first to see statistics"
 
         stats = []
 
-        # Клиенти
-        customer_count = obj.get_customer_count()
+        # Клиенти - ПОПРАВЕНО: използваме customer_set
+        customer_count = obj.customer_set.filter(is_active=True).count()
         if customer_count > 0:
             stats.append(f"<strong>Customers:</strong> {customer_count}")
 
         # Ценови правила
-        pricing_count = obj.get_product_count()
+        pricing_count = obj.product_group_prices.filter(is_active=True).count()
         if pricing_count > 0:
             stats.append(f"<strong>Special Prices:</strong> {pricing_count}")
 
-        # Среден размер на отстъпката
-        if obj.default_discount_percentage > 0:
-            stats.append(f"<strong>Default Discount:</strong> {obj.default_discount_percentage:.1f}%")
+        # Среден размер на отстъпката - ПОПРАВЕНО: safe handling
+        if obj.default_discount_percentage and obj.default_discount_percentage > 0:
+            stats.append(f"<strong>Default Discount:</strong> {float(obj.default_discount_percentage):.1f}%")
 
         # Приоритет
         if obj.priority > 0:
@@ -323,12 +327,4 @@ class PriceGroupAdmin(admin.ModelAdmin):
         count = queryset.update(priority=50)
         self.message_user(request, f'Set priority to 50 for {count} price groups.')
 
-    bulk_set_priority.short_description = _('Set priority to 50')
-
-    def get_readonly_fields(self, request, obj=None):
-        readonly = list(self.readonly_fields)
-        if obj and obj.pk:
-            # При редактиране можем да правим code readonly ако има клиенти
-            if obj.get_customer_count() > 0:
-                readonly.append('code')
-        return readonly
+    bulk_set_priority.short_description = _('Set priority to 50 for selected groups')
