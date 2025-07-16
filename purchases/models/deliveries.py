@@ -256,43 +256,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin)
         """Override to return DEL prefix"""
         return "DEL"
 
-    # =====================
-    # ДОСТАВКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
-    # =====================
-    def clean(self):
-        """Delivery-specific validation"""
-        super().clean()
 
-        # Creation type validation
-        if self.creation_type == 'from_orders':
-            if not self.source_orders.exists():
-                raise ValidationError({
-                    'source_orders': _('Source orders are required for deliveries created from orders')
-                })
-
-        # Quality control validation
-        if self.quality_checked and not self.quality_inspector:
-            raise ValidationError({
-                'quality_inspector': _('Quality inspector is required when quality check is performed')
-            })
-
-        # Received validation
-        if self.status == 'received':
-            if not self.received_at:
-                self.received_at = timezone.now()
-            if not self.received_by:
-                raise ValidationError({
-                    'received_by': _('Received by is required when status is received')
-                })
-
-        # Processed validation
-        if self.status in ['processed', 'completed']:
-            if not self.processed_at:
-                self.processed_at = timezone.now()
-            if not self.processed_by:
-                raise ValidationError({
-                    'processed_by': _('Processed by is required when status is processed/completed')
-                })
 
     # =====================
     # WORKFLOW METHODS

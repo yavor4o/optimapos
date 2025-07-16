@@ -85,65 +85,44 @@ class PromotionDurationFilter(admin.SimpleListFilter):
 
 @admin.register(PromotionalPrice)
 class PromotionalPriceAdmin(admin.ModelAdmin):
+    """Simple promotional price admin - без излишни глупости"""
+
     list_display = [
-        'name', 'product_display', 'location', 'promotional_price_display',
-        'date_range_display', 'status_display', 'quantity_range',
-        'discount_analysis', 'priority', 'is_active'
+        'name', 'product', 'location', 'promotional_price',
+        'start_date', 'end_date', 'is_active'
     ]
 
     list_filter = [
-        'is_active', 'location', 'priority',
-        PromotionStatusFilter, PromotionDurationFilter,
-        'product__product_group', 'product__brand'
+        'is_active', 'location', 'start_date', 'end_date'
     ]
 
     search_fields = [
-        'name', 'description', 'product__code', 'product__name',
-        'location__code', 'location__name'
+        'name', 'product__code', 'product__name'
     ]
 
-    list_editable = ['priority', 'is_active']
-
-    readonly_fields = [
-        'created_at', 'updated_at', 'promotion_analysis',
-    ]
-
-    date_hierarchy = 'start_date'
+    list_editable = ['is_active']
 
     fieldsets = (
-        (_('Promotion Details'), {
-            'fields': ('name', 'description', 'priority', 'is_active')
+        (_('Basic'), {
+            'fields': ('name', 'description', 'is_active')
         }),
         (_('Product & Location'), {
             'fields': ('location', 'product')
         }),
         (_('Pricing'), {
-            'fields': ('promotional_price',),
-            'description': _('Special promotional price')
+            'fields': ('promotional_price',)
         }),
         (_('Date Range'), {
-            'fields': ('start_date', 'end_date'),
-            'description': _('When the promotion is active')
+            'fields': ('start_date', 'end_date')
         }),
-        (_('Quantity Restrictions'), {
+        (_('Quantity Limits'), {
             'fields': ('min_quantity', 'max_quantity'),
-            'classes': ('collapse',),
-            'description': _('Optional quantity limits')
-        }),
-        (_('Customer Restrictions'), {
-            'fields': ('customer_groups',),
-            'classes': ('collapse',),
-            'description': _('Limit to specific customer groups (leave empty for all customers)')
-        }),
-        (_('Promotion Analysis'), {
-            'fields': ('promotion_analysis', 'current_status_info'),
-            'classes': ('collapse',),
-            'description': _('Automatically calculated promotion information')
-        }),
-        (_('System Information'), {
-            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
-        })
+        }),
+        (_('Customer Groups'), {
+            'fields': ('customer_groups',),
+            'classes': ('collapse',)
+        }),
     )
 
     filter_horizontal = ['customer_groups']
@@ -161,20 +140,35 @@ class PromotionalPriceAdmin(admin.ModelAdmin):
     product_display.short_description = _('Product')
 
     def promotional_price_display(self, obj):
+        """Promotional price display - ПОПРАВЕНО"""
         try:
-            return format_html('<strong style="color: red; font-size: 14px;">{:.2f} лв</strong>',
-                               float(obj.promotional_price))
+            price_value = float(obj.promotional_price) if obj.promotional_price else 0
+            return format_html(
+                '<strong style="color: red; font-size: 14px;">{:.2f} лв</strong>',
+                price_value
+            )
         except (TypeError, ValueError):
             return '-'
 
     def discount_analysis(self, obj):
+        """Discount analysis - ПОПРАВЕНО"""
         try:
             discount_amount = obj.get_discount_amount()
             discount_percentage = obj.get_discount_percentage()
-            return format_html('<span style="color: green;">-{:.2f} лв<br>(-{:.1f}%)</span>', discount_amount,
-                               discount_percentage)
-        except (TypeError, ValueError):
-            return '-'
+
+            # Конвертираме и двете към float
+            amount_value = float(discount_amount) if discount_amount else 0
+            percent_value = float(discount_percentage) if discount_percentage else 0
+
+            if amount_value > 0:
+                return format_html(
+                    '<span style="color: green;">-{:.2f} лв<br>(-{:.1f}%)</span>',
+                    amount_value, percent_value
+                )
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        return '-'
 
     promotional_price_display.short_description = _('Promo Price')
 

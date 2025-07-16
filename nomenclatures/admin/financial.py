@@ -69,10 +69,18 @@ class ExchangeRateAdmin(admin.ModelAdmin):
     )
 
     def central_rate_display(self, obj):
-        return format_html(
-            '<strong>{:.4f}</strong>',
-            obj.central_rate
-        )
+        # ПОПРАВЕНО: конвертираме към float
+        try:
+            rate_value = float(obj.central_rate) if obj.central_rate else 0
+            return format_html(
+                '<strong>{:.4f}</strong>',
+                rate_value
+            )
+        except (TypeError, ValueError):
+            return '-'
+
+    central_rate_display.short_description = _('Central Rate')
+    central_rate_display.admin_order_field = 'central_rate'
 
     central_rate_display.short_description = _('Central Rate')
     central_rate_display.admin_order_field = 'central_rate'
@@ -170,30 +178,27 @@ class TaxGroupAdmin(admin.ModelAdmin):
 
 # nomenclatures/admin/financial.py - ПОПРАВЕНИ МЕТОДИ
 
+# nomenclatures/admin/financial.py - ПОПРАВЕНИ МЕТОДИ
+
 @admin.register(PriceGroup)
 class PriceGroupAdmin(admin.ModelAdmin):
-    """Admin for Price Groups - ценови групи за клиенти"""
+    """Simple admin for Price Groups - без изгъзици"""
 
     list_display = [
-        'priority_badge', 'code', 'name', 'discount_display',
-        'customer_count', 'pricing_count', 'is_active'
+        'code', 'name', 'default_discount_percentage',
+        'priority', 'is_active'
     ]
 
     list_filter = ['is_active', 'priority']
     search_fields = ['code', 'name', 'description']
-    readonly_fields = ['created_at', 'updated_at', 'usage_statistics']
+    list_editable = ['is_active']
 
     fieldsets = (
         (_('Basic Information'), {
             'fields': ('code', 'name', 'description', 'is_active')
         }),
         (_('Pricing Settings'), {
-            'fields': ('default_discount_percentage', 'priority'),
-            'description': _('Default discount and priority for conflict resolution')
-        }),
-        (_('Statistics'), {
-            'fields': ('usage_statistics',),
-            'classes': ('collapse',)
+            'fields': ('default_discount_percentage', 'priority')
         }),
         (_('System Info'), {
             'fields': ('created_at', 'updated_at'),
@@ -201,130 +206,4 @@ class PriceGroupAdmin(admin.ModelAdmin):
         }),
     )
 
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.annotate(
-            # ПОПРАВЕНО: използваме customer_set вместо customers
-            customer_count_ann=Count('customer_set', distinct=True, filter=Q(customer_set__is_active=True)),
-            pricing_count_ann=Count('product_group_prices', distinct=True,
-                                    filter=Q(product_group_prices__is_active=True))
-        )
-
-    def priority_badge(self, obj):
-        """Приоритет с цветно означение"""
-        if obj.priority >= 100:
-            color = '#F44336'  # Червен - висок приоритет
-            icon = '🔥'
-        elif obj.priority >= 50:
-            color = '#FF9800'  # Оранжев - среден приоритет
-            icon = '⚡'
-        elif obj.priority > 0:
-            color = '#4CAF50'  # Зелен - нисък приоритет
-            icon = '📈'
-        else:
-            color = '#757575'  # Сив - без приоритет
-            icon = '➖'
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{} {}</span>',
-            color, icon, obj.priority
-        )
-
-    priority_badge.short_description = _('Priority')
-    priority_badge.admin_order_field = 'priority'
-
-    def discount_display(self, obj):
-        """Отстъпка с цветно означение - ПОПРАВЕНО"""
-        # Проверяваме за None и конвертираме към float
-        if obj.default_discount_percentage and obj.default_discount_percentage > 0:
-            return format_html(
-                '<strong style="color: #4CAF50;">-{:.1f}%</strong>',
-                float(obj.default_discount_percentage)  # ✅ Конвертираме към float
-            )
-        return format_html('<span style="color: gray;">0%</span>')
-
-    discount_display.short_description = _('Discount')
-    discount_display.admin_order_field = 'default_discount_percentage'
-
-    def customer_count(self, obj):
-        """Брой клиенти в групата"""
-        count = getattr(obj, 'customer_count_ann', 0)
-        if count > 0:
-            return format_html(
-                '<span style="color: #2196F3; font-weight: bold;">{} 👥</span>',
-                count
-            )
-        return format_html('<span style="color: gray;">0</span>')
-
-    customer_count.short_description = _('Customers')
-    customer_count.admin_order_field = 'customer_count_ann'
-
-    def pricing_count(self, obj):
-        """Брой специални ценови правила"""
-        count = getattr(obj, 'pricing_count_ann', 0)
-        if count > 0:
-            return format_html(
-                '<span style="color: #9C27B0; font-weight: bold;">{} 💰</span>',
-                count
-            )
-        return format_html('<span style="color: gray;">0</span>')
-
-    pricing_count.short_description = _('Price Rules')
-    pricing_count.admin_order_field = 'pricing_count_ann'
-
-    def usage_statistics(self, obj):
-        """Подробна статистика за използването - ПОПРАВЕНО"""
-        if not obj.pk:
-            return "Save price group first to see statistics"
-
-        stats = []
-
-        # Клиенти - ПОПРАВЕНО: използваме customer_set
-        customer_count = obj.customer_set.filter(is_active=True).count()
-        if customer_count > 0:
-            stats.append(f"<strong>Customers:</strong> {customer_count}")
-
-        # Ценови правила
-        pricing_count = obj.product_group_prices.filter(is_active=True).count()
-        if pricing_count > 0:
-            stats.append(f"<strong>Special Prices:</strong> {pricing_count}")
-
-        # Среден размер на отстъпката - ПОПРАВЕНО: safe handling
-        if obj.default_discount_percentage and obj.default_discount_percentage > 0:
-            stats.append(f"<strong>Default Discount:</strong> {float(obj.default_discount_percentage):.1f}%")
-
-        # Приоритет
-        if obj.priority > 0:
-            stats.append(f"<strong>Priority Level:</strong> {obj.priority}")
-
-        if not stats:
-            stats.append("No usage data available")
-
-        return mark_safe('<br>'.join(stats))
-
-    usage_statistics.short_description = _('Usage Statistics')
-
-    # Actions
-    actions = ['activate_price_groups', 'deactivate_price_groups', 'bulk_set_priority']
-
-    def activate_price_groups(self, request, queryset):
-        """Активиране на ценови групи"""
-        count = queryset.update(is_active=True)
-        self.message_user(request, f'Activated {count} price groups.')
-
-    activate_price_groups.short_description = _('Activate selected price groups')
-
-    def deactivate_price_groups(self, request, queryset):
-        """Деактивиране на ценови групи"""
-        count = queryset.update(is_active=False)
-        self.message_user(request, f'Deactivated {count} price groups.')
-
-    deactivate_price_groups.short_description = _('Deactivate selected price groups')
-
-    def bulk_set_priority(self, request, queryset):
-        """Bulk промяна на приоритет"""
-        count = queryset.update(priority=50)
-        self.message_user(request, f'Set priority to 50 for {count} price groups.')
-
-    bulk_set_priority.short_description = _('Set priority to 50 for selected groups')
+    readonly_fields = ['created_at', 'updated_at']

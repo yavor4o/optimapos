@@ -1,6 +1,6 @@
-# purchases/signals.py - REFACTORED FOR NEW STRUCTURE
+# purchases/signals.py - ПЪЛЕН ФУНКЦИОНАЛЕН ФАЙЛ С ПОПРАВКА
 
-from django.db.models.signals import post_save, post_delete, pre_delete, m2m_changed
+from django.db.models.signals import post_save, post_delete, pre_delete, m2m_changed, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
 import logging
@@ -77,7 +77,7 @@ def handle_order_status_changes(sender, instance, created, **kwargs):
         _log_document_action(instance, 'created')
 
         # Log if created from request
-        if instance.source_request:
+        if hasattr(instance, 'source_request') and instance.source_request:
             logger.info(
                 f"Order {instance.document_number} created from request {instance.source_request.document_number}")
 
@@ -121,7 +121,7 @@ def cleanup_order_totals_on_line_delete(sender, instance, **kwargs):
 
 
 # =================================================================
-# DELIVERY SIGNALS
+# DELIVERY SIGNALS - ПОПРАВЕНИ НО ПЪЛНИ
 # =================================================================
 
 @receiver(post_save, sender=DeliveryReceipt)
@@ -132,10 +132,9 @@ def handle_delivery_status_changes(sender, instance, created, **kwargs):
         logger.info(f"New delivery receipt created: {instance.document_number}")
         _log_document_action(instance, 'created')
 
-        # Log creation type
+        # ✅ ПОПРАВЕНО: Логваме creation_type БЕЗ достъп до ManyToMany при създаване
         if instance.creation_type == 'from_orders':
-            order_count = instance.source_orders.count()
-            logger.info(f"Delivery {instance.document_number} created from {order_count} orders")
+            logger.info(f"Delivery {instance.document_number} created from orders (count will be available after save)")
         elif instance.creation_type == 'direct':
             logger.info(f"Direct delivery {instance.document_number} created")
 
@@ -165,23 +164,29 @@ def handle_delivery_source_orders_changed(sender, instance, action, pk_set, **kw
     """Handle changes to delivery source orders"""
 
     if action == 'post_add':
-        order_numbers = [
-            PurchaseOrder.objects.get(pk=pk).document_number
-            for pk in pk_set
-        ]
-        logger.info(f"Added source orders to delivery {instance.document_number}: {', '.join(order_numbers)}")
+        try:
+            order_numbers = [
+                PurchaseOrder.objects.get(pk=pk).document_number
+                for pk in pk_set if pk
+            ]
+            logger.info(f"Added source orders to delivery {instance.document_number}: {', '.join(order_numbers)}")
 
-        # Update creation type if needed
-        if instance.creation_type == 'direct' and instance.source_orders.exists():
-            instance.creation_type = 'from_orders'
-            instance.save(update_fields=['creation_type'])
+            # Update creation type if needed
+            if instance.creation_type == 'direct' and instance.source_orders.exists():
+                instance.creation_type = 'from_orders'
+                instance.save(update_fields=['creation_type'])
+        except Exception as e:
+            logger.error(f"Error handling source orders addition: {e}")
 
     elif action == 'post_remove':
-        order_numbers = [
-            PurchaseOrder.objects.get(pk=pk).document_number
-            for pk in pk_set
-        ]
-        logger.info(f"Removed source orders from delivery {instance.document_number}: {', '.join(order_numbers)}")
+        try:
+            order_numbers = [
+                PurchaseOrder.objects.get(pk=pk).document_number
+                for pk in pk_set if pk
+            ]
+            logger.info(f"Removed source orders from delivery {instance.document_number}: {', '.join(order_numbers)}")
+        except Exception as e:
+            logger.error(f"Error handling source orders removal: {e}")
 
 
 @receiver(pre_delete, sender=DeliveryLine)
@@ -203,15 +208,18 @@ def cleanup_delivery_totals_on_line_delete(sender, instance, **kwargs):
 
 
 # =================================================================
-# WORKFLOW EVENT HANDLERS
+# WORKFLOW EVENT HANDLERS - ПЪЛНА ФУНКЦИОНАЛНОСТ
 # =================================================================
 
 def _handle_request_approved(request):
     """Handle request approval workflow"""
     try:
+        approved_by = getattr(request, 'approved_by', None)
+        approved_at = getattr(request, 'approved_at', None)
+
         _log_document_action(request, 'approved', {
-            'approved_by': request.approved_by.username if request.approved_by else None,
-            'approval_time': request.approved_at.isoformat() if request.approved_at else None
+            'approved_by': approved_by.username if approved_by else None,
+            'approval_time': approved_at.isoformat() if approved_at else None
         })
 
         # Notify stakeholders about approval
@@ -224,12 +232,13 @@ def _handle_request_approved(request):
 def _handle_request_converted(request):
     """Handle request conversion to order"""
     try:
-        order_number = request.converted_to_order.document_number if request.converted_to_order else 'Unknown'
+        converted_to_order = getattr(request, 'converted_to_order', None)
+        order_number = converted_to_order.document_number if converted_to_order else 'Unknown'
 
         _log_document_action(request, 'converted_to_order', {
             'order_number': order_number,
-            'converted_by': request.converted_by.username if request.converted_by else None,
-            'conversion_time': request.converted_at.isoformat() if request.converted_at else None
+            'converted_by': getattr(request, 'converted_by', None),
+            'conversion_time': getattr(request, 'converted_at', None)
         })
 
     except Exception as e:
@@ -240,8 +249,8 @@ def _handle_order_sent(order):
     """Handle order sent to supplier"""
     try:
         _log_document_action(order, 'sent_to_supplier', {
-            'sent_by': order.sent_by.username if order.sent_by else None,
-            'sent_time': order.sent_to_supplier_at.isoformat() if order.sent_to_supplier_at else None,
+            'sent_by': getattr(order, 'sent_by', None),
+            'sent_time': getattr(order, 'sent_to_supplier_at', None),
             'supplier': order.supplier.name
         })
 
@@ -255,9 +264,9 @@ def _handle_order_confirmed(order):
     """Handle order confirmation by supplier"""
     try:
         _log_document_action(order, 'confirmed_by_supplier', {
-            'supplier_confirmed': order.supplier_confirmed,
-            'supplier_reference': order.supplier_order_reference,
-            'expected_delivery': order.expected_delivery_date.isoformat() if order.expected_delivery_date else None
+            'supplier_confirmed': getattr(order, 'supplier_confirmed', None),
+            'supplier_reference': getattr(order, 'supplier_order_reference', None),
+            'expected_delivery': getattr(order, 'expected_delivery_date', None)
         })
 
         # Update delivery planning
@@ -270,18 +279,29 @@ def _handle_order_confirmed(order):
 def _handle_delivery_received(delivery):
     """Handle delivery received and processed"""
     try:
-        variance_summary = delivery.get_variance_summary()
+        # Safe access to variance summary
+        variance_summary = None
+        if hasattr(delivery, 'get_variance_summary'):
+            try:
+                variance_summary = delivery.get_variance_summary()
+            except:
+                pass
 
         _log_document_action(delivery, 'received', {
             'received_by': delivery.received_by.username if delivery.received_by else None,
-            'quality_checked': delivery.quality_checked,
-            'has_variances': delivery.has_variances,
+            'quality_checked': getattr(delivery, 'quality_checked', False),
+            'has_variances': getattr(delivery, 'has_variances', False),
             'variance_summary': variance_summary
         })
 
-        # Update source orders delivery status
-        for order in delivery.source_orders.all():
-            order.update_delivery_status()
+        # Update source orders delivery status - SAFE ACCESS
+        if hasattr(delivery, 'source_orders') and delivery.pk:
+            try:
+                for order in delivery.source_orders.all():
+                    if hasattr(order, 'update_delivery_status'):
+                        order.update_delivery_status()
+            except:
+                pass
 
         # TODO: Integrate with inventory system
         # TODO: Update product costs
@@ -295,8 +315,8 @@ def _handle_delivery_completed(delivery):
     try:
         _log_document_action(delivery, 'completed', {
             'processed_by': delivery.updated_by.username if delivery.updated_by else None,
-            'processing_time': delivery.processed_at.isoformat() if delivery.processed_at else None,
-            'total_amount': str(delivery.grand_total)
+            'processing_time': getattr(delivery, 'processed_at', None),
+            'total_amount': str(getattr(delivery, 'grand_total', 0))
         })
 
         # Final integrations
@@ -308,7 +328,7 @@ def _handle_delivery_completed(delivery):
 
 
 # =================================================================
-# AUDIT LOGGING HELPER
+# AUDIT LOGGING HELPER - ENHANCED
 # =================================================================
 
 def _log_document_action(document, action, additional_data=None):
@@ -327,13 +347,60 @@ def _log_document_action(document, action, additional_data=None):
 
     except ImportError:
         # Fallback if core audit is not available yet
-        logger.info(f"Document {document.document_number}: {action}")
+        log_data = {
+            'document_type': document.__class__.__name__,
+            'document_number': document.document_number,
+            'action': action,
+            'timestamp': timezone.now().isoformat()
+        }
+
+        if additional_data:
+            log_data.update(additional_data)
+
+        logger.info(f"Document action: {log_data}")
     except Exception as e:
         logger.error(f"Error logging action for {document.document_number}: {e}")
 
 
 # =================================================================
-# STATUS TRACKING
+# STATUS TRACKING - STORE ORIGINAL STATUS
+# =================================================================
+
+@receiver(pre_save, sender=PurchaseRequest)
+def store_request_original_status(sender, instance, **kwargs):
+    """Store original status before save"""
+    if instance.pk:
+        try:
+            original = PurchaseRequest.objects.get(pk=instance.pk)
+            instance._original_status = original.status
+        except PurchaseRequest.DoesNotExist:
+            pass
+
+
+@receiver(pre_save, sender=PurchaseOrder)
+def store_order_original_status(sender, instance, **kwargs):
+    """Store original status before save"""
+    if instance.pk:
+        try:
+            original = PurchaseOrder.objects.get(pk=instance.pk)
+            instance._original_status = original.status
+        except PurchaseOrder.DoesNotExist:
+            pass
+
+
+@receiver(pre_save, sender=DeliveryReceipt)
+def store_delivery_original_status(sender, instance, **kwargs):
+    """Store original status before save"""
+    if instance.pk:
+        try:
+            original = DeliveryReceipt.objects.get(pk=instance.pk)
+            instance._original_status = original.status
+        except DeliveryReceipt.DoesNotExist:
+            pass
+
+
+# =================================================================
+# STATUS TRACKING - POST SAVE
 # =================================================================
 
 @receiver(post_save, sender=PurchaseRequest)

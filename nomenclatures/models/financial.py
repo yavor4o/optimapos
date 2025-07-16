@@ -184,7 +184,11 @@ class ExchangeRate(models.Model):
         return f"{self.currency.code} on {self.date}: {self.central_rate}"
 
     def clean(self):
-        # Валидация на курсовете
+        # Проверка за None стойности ПРЕДИ сравнение
+        if self.buy_rate is None or self.sell_rate is None or self.central_rate is None:
+            raise ValidationError(_('All rate fields are required'))
+
+        # Валидация на курсовете - сега знаем че не са None
         if any([self.buy_rate <= 0, self.sell_rate <= 0, self.central_rate <= 0]):
             raise ValidationError(_('All rates must be positive numbers'))
 
@@ -193,11 +197,11 @@ class ExchangeRate(models.Model):
             raise ValidationError(_('Buy rate cannot be higher than sell rate'))
 
         # Не може курс за базова валута
-        if self.currency.is_base:
+        if self.currency and self.currency.is_base:
             raise ValidationError(_('Cannot set exchange rate for base currency'))
 
         # Не може курс за бъдеща дата
-        if self.date > timezone.now().date():
+        if self.date and self.date > timezone.now().date():
             raise ValidationError(_('Cannot set exchange rate for future date'))
 
     def save(self, *args, **kwargs):
