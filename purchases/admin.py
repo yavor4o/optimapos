@@ -1,138 +1,89 @@
-# purchases/admin.py - МИНИМАЛЕН РАБОТЕЩ АДМИН
-
 from django.contrib import admin
-from django.utils.html import format_html
-from django.utils.safestring import mark_safe
+from django import forms
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
 
-from .models import PurchaseRequest, PurchaseRequestLine
+from .models import (
+    PurchaseRequest, PurchaseRequestLine,
+    PurchaseOrder, PurchaseOrderLine,
+    DeliveryReceipt, DeliveryLine
+)
 
-# =====================
-# PURCHASE REQUEST ADMIN - BASIC
-# =====================
-@admin.register(PurchaseRequest)
-class PurchaseRequestAdmin(admin.ModelAdmin):
-    """Основен админ за заявки за покупка"""
+# ===========================
+# FORMS
+# ===========================
 
-    list_display = [
-        'document_number', 'supplier', 'location', 'status',
-        'urgency_level', 'requested_by', 'document_date'
-    ]
+class PurchaseRequestLineForm(forms.ModelForm):
+    class Meta:
+        model = PurchaseRequestLine
+        fields = '__all__'
 
-    list_filter = [
-        'status',
-        'urgency_level',
-        'request_type',
-        'approval_required',
-        'location',
-        'supplier',
-        'document_date'
-    ]
+    def clean(self):
+        cleaned_data = super().clean()
+        requested_quantity = cleaned_data.get('requested_quantity')
+        if requested_quantity is None:
+            raise ValidationError({'requested_quantity': _('Requested quantity is required')})
+        if requested_quantity <= 0:
+            raise ValidationError({'requested_quantity': _('Requested quantity must be positive')})
+        return cleaned_data
 
-    search_fields = [
-        'document_number', 'supplier__name', 'business_justification',
-        'notes', 'external_reference'
-    ]
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        # Ensure quantity matches requested_quantity
+        instance.quantity = instance.requested_quantity
+        if commit:
+            instance.save()
+        return instance
 
-    date_hierarchy = 'document_date'
 
-    readonly_fields = [
-        'document_number','status','created_at', 'approved_at', 'converted_at','requested_by'
-    ]
+# ===========================
+# INLINES
+# ===========================
 
-    fieldsets = (
-        (_('Basic Information'), {
-            'fields': (
-                'document_type', 'document_number', 'supplier', 'location', 'status'
-            )
-        }),
-        (_('Request Details'), {
-            'fields': (
-                'request_type', 'urgency_level', 'document_date',
-                'external_reference', 'approval_required'
-            )
-        }),
-        (_('Business Justification'), {
-            'fields': ('business_justification', 'expected_usage')
-        }),
-        (_('Approval Workflow'), {
-            'fields': (
-                 'approved_by', 'approved_at',
-                'rejection_reason'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Conversion Tracking'), {
-            'fields': (
-                'converted_to_order', 'converted_at', 'converted_by'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Notes'), {
-            'fields': ('notes',)
-        }),
+class PurchaseRequestLineInline(admin.TabularInline):
+    model = PurchaseRequestLine
+    form = PurchaseRequestLineForm
+    extra = 1
+    fields = ('line_number', 'product', 'requested_quantity', 'unit', 'estimated_price')
 
-    )
+class PurchaseOrderLineInline(admin.TabularInline):
+    model = PurchaseOrderLine
+    extra = 1
+    fields = ('line_number', 'product', 'ordered_quantity', 'unit', 'unit_price')
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'supplier', 'location', 'requested_by', 'approved_by', 'document_type'
-        )
+class DeliveryLineInline(admin.TabularInline):
+    model = DeliveryLine
+    extra = 1
+    fields = ('line_number', 'product', 'received_quantity', 'unit', 'unit_price')
 
-    # =====================
-    # FORM CUSTOMIZATION
-    # =====================
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """Customize foreign key fields"""
-        if db_field.name == "document_type":
-            # Filter to show only Purchase Request document types
-            from nomenclatures.models import DocumentType
-            kwargs["queryset"] = DocumentType.objects.filter(
-                app_name='purchases',
-                type_key='request',
-                is_active=True
-            )
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+# ===========================
+# ADMIN CLASSES
+# ===========================
 
-    def save_model(self, request, obj, form, change):
-        """Автоматично попълва user полетата"""
-        # Задайте user-а ПРЕДИ save
-        obj._current_user = request.user
-
-        if not change:  # Нов документ
-            obj.requested_by = request.user
-            obj.created_by = request.user
-
-        obj.updated_by = request.user
-
-        super().save_model(request, obj, form, change)
-# =====================
-# PURCHASE REQUEST LINE ADMIN - BASIC
-# =====================
 @admin.register(PurchaseRequestLine)
 class PurchaseRequestLineAdmin(admin.ModelAdmin):
-    """Основен админ за редове от заявки"""
+    list_display = ('line_number', 'product', 'requested_quantity', 'unit')
+    search_fields = ('product__name',)
 
-    list_display = [
-        'document_display', 'line_number', 'product', 'requested_quantity',
-        'estimated_price'
-    ]
+@admin.register(PurchaseOrderLine)
+class PurchaseOrderLineAdmin(admin.ModelAdmin):
+    list_display = ('line_number', 'product', 'ordered_quantity', 'unit')
+    search_fields = ('product__name',)
 
-    list_filter = [
-        'product__product_group',
-        'unit'
-    ]
+@admin.register(PurchaseRequest)
+class PurchaseRequestAdmin(admin.ModelAdmin):
+    list_display = ('document_number', 'supplier', 'status', 'document_date')
+    search_fields = ('document_number', 'supplier__name')
+    inlines = [PurchaseRequestLineInline]
 
-    search_fields = [
-        'product__code', 'product__name', 'document__document_number'
-    ]
+@admin.register(PurchaseOrder)
+class PurchaseOrderAdmin(admin.ModelAdmin):
+    list_display = ('document_number', 'supplier', 'status', 'expected_delivery_date')
+    search_fields = ('document_number', 'supplier__name')
+    inlines = [PurchaseOrderLineInline]
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'document', 'product', 'unit'
-        )
-
-    def document_display(self, obj):
-        return obj.document.document_number
-    document_display.short_description = _('Document')
-    document_display.admin_order_field = 'document__document_number'
+@admin.register(DeliveryReceipt)
+class DeliveryReceiptAdmin(admin.ModelAdmin):
+    list_display = ('document_number', 'supplier', 'status', 'delivery_date')
+    search_fields = ('document_number', 'supplier__name')
+    inlines = [DeliveryLineInline]

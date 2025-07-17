@@ -95,6 +95,7 @@ class PurchaseRequest(BaseDocument):
         help_text=_('How urgent is this request')
     )
 
+
     # =====================
     # BUSINESS JUSTIFICATION
     # =====================
@@ -563,6 +564,14 @@ class PurchaseRequestLine(BaseDocumentLine):
         null=True,
         blank=True,
         help_text=_('Estimated price per unit (optional, for planning)')
+    )
+
+    document = models.ForeignKey(
+        PurchaseRequest,
+        on_delete=models.CASCADE,
+        related_name='lines',
+        verbose_name=_('Purchase Request'),
+        help_text=_('Parent purchase request')
     )
 
     # =====================
