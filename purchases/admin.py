@@ -47,130 +47,285 @@ class PurchaseRequestLineForm(forms.ModelForm):
 # DYNAMIC ADMIN ACTIONS - ПРОФЕСИОНАЛНИ
 # =====================
 
+# purchases/admin.py - ОБНОВЕН APPROVAL ACTION MIXIN
+
 class ApprovalActionMixin:
-    """Mixin for adding dynamic approval actions to admin"""
+    """Mixin for adding dynamic approval actions to admin - ИЗПОЛЗВА ФИНАЛНИЯ ApprovalService"""
 
     def get_actions(self, request):
         """Динамично генериране на actions според ApprovalService"""
+        # Първо взимаме стандартните Django actions
         actions = super().get_actions(request)
 
-        # Добавяме динамични approval actions
-        approval_actions = self._generate_approval_actions(request)
-        actions.update(approval_actions)
+        # Добавяме нашите approval actions
+        try:
+            approval_actions = self._generate_approval_actions(request)
+            actions.update(approval_actions)
+        except Exception as e:
+            # Ако има грешка с ApprovalService, просто логваме но не счупваме admin-а
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error generating approval actions: {e}")
 
         return actions
 
     def _generate_approval_actions(self, request):
-        """Генерира approval actions динамично"""
+        """Генерира approval actions в правилния Django формат"""
         actions = {}
 
-        # Универсален approval action
-        def create_universal_approval_action():
-            def universal_approval_action(modeladmin, request, queryset):
-                """Универсално одобрение - намира най-подходящия преход"""
+        # Action 1: Smart Approve с ApprovalService
+        def smart_approve_action(modeladmin, request, queryset):
+            """Интелигентно одобрение с ApprovalService"""
 
+            success_count = 0
+            failed_count = 0
+            errors = []
+
+            for document in queryset:
+                try:
+                    # Използваме ApprovalService за намиране на най-добрия преход
+                    available_transitions = ApprovalService.get_available_transitions(document, request.user)
+
+                    if not available_transitions:
+                        failed_count += 1
+                        errors.append(f"{getattr(document, 'document_number', 'Unknown')}: No available transitions")
+                        continue
+
+                    # Избираме най-подходящия преход (първия approval или първия общо)
+                    best_transition = None
+
+                    # Приоритет: approval преходи
+                    for transition in available_transitions:
+                        if 'approv' in transition['to_status'].lower():
+                            best_transition = transition
+                            break
+
+                    # Ако няма approval, взимаме първия
+                    if not best_transition:
+                        best_transition = available_transitions[0]
+
+                    # Изпълняваме прехода
+                    result = ApprovalService.execute_transition(
+                        document=document,
+                        to_status=best_transition['to_status'],
+                        user=request.user,
+                        comments=f"Bulk smart approval via admin by {request.user.get_full_name()}"
+                    )
+
+                    if result['success']:
+                        success_count += 1
+                    else:
+                        failed_count += 1
+                        errors.append(f"{getattr(document, 'document_number', 'Unknown')}: {result['message']}")
+
+                except Exception as e:
+                    failed_count += 1
+                    errors.append(f"{getattr(document, 'document_number', 'Unknown')}: {str(e)}")
+
+            # Показваме резултатите
+            if success_count:
+                messages.success(request, f'Successfully processed {success_count} documents.')
+
+            if failed_count:
+                messages.warning(request, f'{failed_count} documents could not be processed.')
+
+                # Показваме първите няколко грешки
+                for error in errors[:3]:
+                    messages.error(request, error)
+
+                if len(errors) > 3:
+                    messages.info(request, f"... and {len(errors) - 3} more errors")
+
+        smart_approve_action.short_description = "🚀 Smart Approve - ApprovalService powered"
+
+        # Action 2: Show Workflow Status с ApprovalService
+        def show_workflow_status_action(modeladmin, request, queryset):
+            """Показва workflow статус с ApprovalService"""
+
+            for document in queryset:
+                try:
+                    workflow_status = ApprovalService.get_workflow_status(document)
+                    available_transitions = ApprovalService.get_available_transitions(document, request.user)
+
+                    # Форматираме съобщението
+                    doc_number = workflow_status.get('document_number', 'Unknown')
+                    current_status = workflow_status.get('current_status', 'Unknown')
+
+                    status_msg = f"📄 {doc_number}: {current_status}"
+
+                    if available_transitions:
+                        actions = [t['to_status'] for t in available_transitions]
+                        status_msg += f" → Available: {', '.join(actions)}"
+                    else:
+                        status_msg += " → No actions available"
+
+                    # Показваме и workflow levels ако има
+                    levels = workflow_status.get('workflow_levels', [])
+                    if levels:
+                        completed_levels = [l for l in levels if l['completed']]
+                        status_msg += f" | Progress: {len(completed_levels)}/{len(levels)} levels"
+
+                    messages.info(request, status_msg)
+
+                except Exception as e:
+                    messages.error(request, f"Error for {getattr(document, 'document_number', 'Unknown')}: {str(e)}")
+
+        show_workflow_status_action.short_description = "📊 Show workflow status (ApprovalService)"
+
+        # Action 3: Specific Status Transitions
+        def create_status_transition_action(to_status: str, display_name: str):
+            """Създава action за конкретен статус преход"""
+
+            def status_transition_action(modeladmin, request, queryset):
                 success_count = 0
                 failed_count = 0
                 errors = []
 
                 for document in queryset:
                     try:
-                        # Намираме възможните преходи за този потребител
+                        # Проверяваме дали преходът е възможен
                         available_transitions = ApprovalService.get_available_transitions(document, request.user)
 
-                        if not available_transitions:
+                        # Търсим конкретния преход
+                        target_transition = None
+                        for transition in available_transitions:
+                            if transition['to_status'] == to_status:
+                                target_transition = transition
+                                break
+
+                        if not target_transition:
                             failed_count += 1
-                            errors.append(f"{document.document_number}: No available transitions")
+                            errors.append(
+                                f"{getattr(document, 'document_number', 'Unknown')}: Transition to '{to_status}' not available")
                             continue
-
-                        # Взимаме първия approval преход (може да се усложни логиката)
-                        approval_transitions = [t for t in available_transitions if 'approv' in t['to_status'].lower()]
-
-                        if approval_transitions:
-                            transition = approval_transitions[0]
-                        else:
-                            transition = available_transitions[0]
 
                         # Изпълняваме прехода
                         result = ApprovalService.execute_transition(
                             document=document,
-                            to_status=transition['to_status'],
+                            to_status=to_status,
                             user=request.user,
-                            comments=f"Bulk approval via admin by {request.user.get_full_name()}"
+                            comments=f"Bulk {display_name.lower()} via admin"
                         )
 
                         if result['success']:
                             success_count += 1
                         else:
                             failed_count += 1
-                            errors.append(f"{document.document_number}: {result['message']}")
+                            errors.append(f"{getattr(document, 'document_number', 'Unknown')}: {result['message']}")
 
                     except Exception as e:
                         failed_count += 1
-                        errors.append(f"{document.document_number}: {str(e)}")
+                        errors.append(f"{getattr(document, 'document_number', 'Unknown')}: {str(e)}")
 
-                # Показваме резултатите
+                # Резултати
                 if success_count:
-                    messages.success(request,
-                                     _('Successfully processed %(count)d documents.') % {'count': success_count})
+                    messages.success(request, f'Successfully {display_name.lower()}ed {success_count} documents.')
 
                 if failed_count:
-                    messages.warning(request,
-                                     _('%(count)d documents could not be processed.') % {'count': failed_count})
-
-                    # Показваме първите няколко грешки
+                    messages.warning(request, f'{failed_count} documents could not be processed.')
                     for error in errors[:3]:
                         messages.error(request, error)
 
-            universal_approval_action.short_description = _('🚀 Smart Approve - Auto detect best action')
-            return universal_approval_action
+            status_transition_action.short_description = f"{display_name} selected documents"
+            return status_transition_action
 
-        # Rejection action
-        def create_rejection_action():
-            def rejection_action(modeladmin, request, queryset):
-                """Отхвърляне на документи"""
+        # Action 4: Bulk Reject с причина
+        def bulk_reject_action(modeladmin, request, queryset):
+            """Bulk отхвърляне - redirect към custom view"""
 
-                # Съхраняваме IDs в session за custom view
-                request.session['documents_to_reject'] = list(queryset.values_list('id', flat=True))
-                request.session['rejection_model'] = queryset.model._meta.label_lower
+            # Съхраняваме IDs в session за custom view
+            request.session['documents_to_reject'] = list(queryset.values_list('id', flat=True))
+            request.session['rejection_model'] = queryset.model._meta.label_lower
 
-                # Redirect към custom rejection view
-                return redirect('admin:purchases_rejection_view')
+            # Redirect към custom rejection view
+            return redirect('admin:purchases_rejection_view')
 
-            rejection_action.short_description = _('❌ Reject with reason')
-            return rejection_action
+        bulk_reject_action.short_description = "❌ Reject with reason (ApprovalService)"
 
-        # Workflow status action
-        def create_workflow_status_action():
-            def workflow_status_action(modeladmin, request, queryset):
-                """Показва workflow статус на документите"""
+        # Action 5: Show Approval History
+        def show_approval_history_action(modeladmin, request, queryset):
+            """Показва approval историята"""
 
-                for document in queryset:
-                    try:
-                        workflow_status = ApprovalService.get_workflow_status(document)
-                        available_transitions = ApprovalService.get_available_transitions(document, request.user)
+            for document in queryset[:5]:  # Ограничаваме до 5 документа за четимост
+                try:
+                    history = ApprovalService.get_approval_history(document)
+                    doc_number = getattr(document, 'document_number', 'Unknown')
 
-                        # Форматираме съобщението
-                        status_msg = f"📄 {document.document_number}: {workflow_status['current_status']}"
+                    if history:
+                        history_msg = f"📋 {doc_number} History: "
+                        history_items = []
 
-                        if available_transitions:
-                            actions = [t['to_status'] for t in available_transitions]
-                            status_msg += f" → Available: {', '.join(actions)}"
-                        else:
-                            status_msg += " → No actions available"
+                        for entry in history[-3:]:  # Последните 3 записа
+                            timestamp = entry['timestamp'].strftime('%m-%d %H:%M')
+                            action = entry['action']
+                            actor = entry['actor']
+                            history_items.append(f"{timestamp} {action} by {actor}")
 
-                        messages.info(request, status_msg)
+                        history_msg += " | ".join(history_items)
+                        messages.info(request, history_msg)
+                    else:
+                        messages.info(request, f"📋 {doc_number}: No approval history")
 
-                    except Exception as e:
-                        messages.error(request, f"Error for {document.document_number}: {str(e)}")
+                except Exception as e:
+                    messages.error(request,
+                                   f"History error for {getattr(document, 'document_number', 'Unknown')}: {str(e)}")
 
-            workflow_status_action.short_description = _('📊 Show workflow status')
-            return workflow_status_action
+            if queryset.count() > 5:
+                messages.info(request, f"Showing history for first 5 documents (total: {queryset.count()})")
 
-        # Добавяме действията
-        actions['universal_approval'] = create_universal_approval_action()
-        actions['reject_with_reason'] = create_rejection_action()
-        actions['show_workflow_status'] = create_workflow_status_action()
+        show_approval_history_action.short_description = "📜 Show approval history"
+
+        # Action 6: Test ApprovalService Connection
+        def test_service_action(modeladmin, request, queryset):
+            """Тества дали ApprovalService работи правилно"""
+
+            test_results = []
+
+            for document in queryset[:3]:  # Тестваме само първите 3
+                try:
+                    doc_number = getattr(document, 'document_number', 'Unknown')
+
+                    # Тест 1: Get available transitions
+                    transitions = ApprovalService.get_available_transitions(document, request.user)
+                    test_results.append(f"✅ {doc_number}: {len(transitions)} transitions available")
+
+                    # Тест 2: Get workflow status
+                    status = ApprovalService.get_workflow_status(document)
+                    levels = len(status.get('workflow_levels', []))
+                    test_results.append(f"✅ {doc_number}: {levels} workflow levels configured")
+
+                    # Тест 3: Get history
+                    history = ApprovalService.get_approval_history(document)
+                    test_results.append(f"✅ {doc_number}: {len(history)} history entries")
+
+                except Exception as e:
+                    test_results.append(f"❌ {getattr(document, 'document_number', 'Unknown')}: {str(e)}")
+
+            # Показваме резултатите
+            for result in test_results:
+                if result.startswith('✅'):
+                    messages.success(request, result)
+                else:
+                    messages.error(request, result)
+
+            messages.info(request, "ApprovalService test completed!")
+
+        test_service_action.short_description = "🔧 Test ApprovalService connection"
+
+        # ВАЖНО: Django формат - tuple с (function, name, description)
+        actions['smart_approve'] = (smart_approve_action, 'smart_approve', smart_approve_action.short_description)
+        actions['show_workflow'] = (show_workflow_status_action, 'show_workflow',
+                                    show_workflow_status_action.short_description)
+        actions['bulk_reject'] = (bulk_reject_action, 'bulk_reject', bulk_reject_action.short_description)
+        actions['show_history'] = (show_approval_history_action, 'show_history',
+                                   show_approval_history_action.short_description)
+        actions['test_service'] = (test_service_action, 'test_service', test_service_action.short_description)
+
+        # Добавяме специфични статус actions (ако са налични)
+        common_statuses = ['submitted', 'approved', 'regional_approved', 'central_approved']
+        for status in common_statuses:
+            action_func = create_status_transition_action(status, status.replace('_', ' ').title())
+            actions[f'transition_to_{status}'] = (action_func, f'transition_to_{status}', action_func.short_description)
 
         return actions
 

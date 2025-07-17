@@ -1,4 +1,4 @@
-# nomenclatures/admin/approvals.py
+# nomenclatures/admin/approvals.py - ПОПРАВЕНА ВЕРСИЯ
 
 from django.contrib import admin
 from django.utils.html import format_html
@@ -10,7 +10,7 @@ from nomenclatures.models import ApprovalRule, ApprovalLog
 
 @admin.register(ApprovalRule)
 class ApprovalRuleAdmin(admin.ModelAdmin):
-    """Admin interface for Approval Rules"""
+    """Admin interface for Approval Rules - ПОПРАВЕНА ВЕРСИЯ"""
 
     list_display = [
         'name', 'document_type_display', 'status_transition_display',
@@ -59,8 +59,8 @@ class ApprovalRuleAdmin(admin.ModelAdmin):
         }),
         (_('Workflow Control'), {
             'fields': [
-                'is_parallel', 'requires_previous_level', 'rejection_allowed',
-                'escalation_days'
+                'is_parallel', 'requires_previous_level',
+                'rejection_allowed', 'escalation_days'
             ],
             'classes': ['collapse']
         }),
@@ -73,16 +73,17 @@ class ApprovalRuleAdmin(admin.ModelAdmin):
     ]
 
     def document_type_display(self, obj):
-        """Display document type with icon"""
+        """Display document type with icon - ПОПРАВЕНА БЕЗ DESCRIPTION"""
         if obj.document_type:
+            # DocumentType няма description поле - използваме само name
             return format_html(
-                '<span title="{}">{}</span>',
-                obj.document_type.description or obj.document_type.name,
+                '<span title="Document Type: {}">{}</span>',
+                obj.document_type.name,
                 obj.document_type.name
             )
         elif obj.content_type:
             return format_html(
-                '<em title="Fallback">{}</em>',
+                '<em title="Fallback Content Type">{}</em>',
                 obj.content_type.name
             )
         return '-'
@@ -92,7 +93,7 @@ class ApprovalRuleAdmin(admin.ModelAdmin):
     def status_transition_display(self, obj):
         """Display status transition with arrow"""
         return format_html(
-            '<span style="font-family: monospace;">{} → {}</span>',
+            '<span style="font-family: monospace; background: #f8f9fa; padding: 2px 6px; border-radius: 3px;">{} → {}</span>',
             obj.from_status,
             obj.to_status
         )
@@ -101,13 +102,33 @@ class ApprovalRuleAdmin(admin.ModelAdmin):
 
     def amount_range_display(self, obj):
         """Display amount range"""
-        return obj.get_amount_range_display()
+        if obj.max_amount:
+            return format_html(
+                '<span style="font-family: monospace;">{} - {} {}</span>',
+                obj.min_amount,
+                obj.max_amount,
+                obj.currency
+            )
+        else:
+            return format_html(
+                '<span style="font-family: monospace;">From {} {}</span>',
+                obj.min_amount,
+                obj.currency
+            )
 
     amount_range_display.short_description = _('Amount Range')
 
     def approver_display(self, obj):
         """Display approver information"""
-        display = obj.get_approver_display()
+        # Определяме approver-а според типа
+        if obj.approver_type == 'user' and obj.approver_user:
+            display = obj.approver_user.get_full_name() or obj.approver_user.username
+        elif obj.approver_type == 'role' and obj.approver_role:
+            display = obj.approver_role.name
+        elif obj.approver_type == 'permission' and obj.approver_permission:
+            display = obj.approver_permission.name
+        else:
+            display = 'Dynamic'
 
         # Color code by type
         colors = {
@@ -119,8 +140,9 @@ class ApprovalRuleAdmin(admin.ModelAdmin):
         color = colors.get(obj.approver_type, '#6c757d')
 
         return format_html(
-            '<span style="color: {}; font-weight: bold;">{}</span>',
+            '<span style="color: {}; font-weight: bold;" title="Type: {}">{}</span>',
             color,
+            obj.get_approver_type_display(),
             display
         )
 
@@ -220,7 +242,7 @@ class ApprovalLogAdmin(admin.ModelAdmin):
     def status_transition(self, obj):
         """Display status transition"""
         return format_html(
-            '<span style="font-family: monospace;">{} → {}</span>',
+            '<span style="font-family: monospace; background: #f8f9fa; padding: 2px 6px; border-radius: 3px;">{} → {}</span>',
             obj.from_status,
             obj.to_status
         )
@@ -229,16 +251,18 @@ class ApprovalLogAdmin(admin.ModelAdmin):
 
     def rule_info(self, obj):
         """Display rule information"""
-        return format_html(
-            '<span title="{}">{}</span>',
-            obj.rule.description or 'No description',
-            obj.rule.name
-        )
+        if obj.rule:
+            return format_html(
+                '<span title="{}">{}</span>',
+                obj.rule.description or 'No description',
+                obj.rule.name
+            )
+        return '-'
 
     rule_info.short_description = _('Applied Rule')
 
 
-# Add custom admin actions
+# Custom admin actions
 @admin.action(description=_('Activate selected approval rules'))
 def activate_rules(modeladmin, request, queryset):
     """Activate selected approval rules"""
