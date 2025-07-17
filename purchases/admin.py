@@ -4,159 +4,177 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.utils.safestring import mark_safe
-from django.db.models import Count, Sum, Q
-from django.utils import timezone
+
 
 from .models import (
     PurchaseRequest, PurchaseRequestLine,
-    PurchaseOrder, PurchaseOrderLine,
-    DeliveryReceipt, DeliveryLine,
+
 
 )
 
 
-# =================================================================
-# INLINE ADMINS
-# =================================================================
+# САМО ЧАСТТА ЗА PurchaseRequest В purchases/admin.py
 
+# =====================
+# PURCHASE REQUEST INLINE
+# =====================
 class PurchaseRequestLineInline(admin.TabularInline):
     model = PurchaseRequestLine
     extra = 1
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
-        'estimated_price', 'suggested_supplier', 'priority'
+        'estimated_price', 'item_justification'
     ]
-    readonly_fields = ['line_number']
+    readonly_fields = []
 
-    def get_extra(self, request, obj=None, **kwargs):
-        if obj:
-            return 0
-        return 1
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('product', 'unit')
 
 
-class PurchaseOrderLineInline(admin.TabularInline):
-    model = PurchaseOrderLine
-    extra = 1
-    fields = [
-        'line_number', 'product', 'ordered_quantity', 'unit', 'unit_price',
-        'discount_percent', 'line_total', 'delivery_status'
-    ]
-    readonly_fields = ['line_number', 'line_total']
-
-    def get_extra(self, request, obj=None, **kwargs):
-        if obj:
-            return 0
-        return 1
-
-
-class DeliveryLineInline(admin.TabularInline):
-    model = DeliveryLine
-    extra = 1
-    fields = [
-        'line_number', 'product', 'received_quantity', 'unit', 'unit_price',
-        'batch_number', 'expiry_date', 'quality_approved', 'quality_issue_type'
-    ]
-    readonly_fields = ['line_number', 'variance_quantity']
-
-    def get_extra(self, request, obj=None, **kwargs):
-        if obj:
-            return 0
-        return 1
-
-
-# =================================================================
-# PURCHASE REQUEST ADMIN
-# =================================================================
-
+# =====================
+# PURCHASE REQUEST ADMIN - DOCUMENTTYPE DRIVEN
+# =====================
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(admin.ModelAdmin):
-    """Админ за заявки за покупка"""
+    """Админ за заявки за покупка - с DocumentType интеграция"""
 
     list_display = [
         'document_number', 'supplier', 'location', 'status_display',
-        'urgency_display', 'lines_count', 'estimated_total', 'requested_by',
-        'created_at'
+        'urgency_display', 'lines_count', 'estimated_total',
+        'requested_by', 'document_date'
     ]
 
     list_filter = [
-        'status', 'urgency_level', 'location', 'supplier',
-        'created_at', 'requested_by'
+        'status',  # Dynamic от DocumentType
+        'urgency_level',
+        'request_type',
+        'approval_required',
+        'location',
+        'supplier',
+        'requested_by',
+        'document_date'
     ]
 
     search_fields = [
-        'document_number', 'supplier__name', 'requested_by__username',
+        'document_number', 'supplier__name', 'business_justification',
         'notes', 'external_reference'
     ]
 
-    date_hierarchy = 'created_at'
+    date_hierarchy = 'document_date'
     inlines = [PurchaseRequestLineInline]
 
     readonly_fields = [
-        'document_number', 'created_at', 'updated_at', 'request_analytics'
+        'document_number', 'created_at', 'updated_at', 'approved_at',
+        'converted_at', 'request_analytics', 'workflow_info'
     ]
 
     fieldsets = (
         (_('Basic Information'), {
             'fields': (
-                'document_number', 'supplier', 'location', 'status',
-                'urgency_level'
+                'document_type',  # ← ДОБАВЕНО DocumentType field!
+                'document_number', 'supplier', 'location', 'status'
             )
         }),
         (_('Request Details'), {
             'fields': (
-                'document_date', 'external_reference', 'requested_by',
-                'approved_by', 'approved_at'
+                'request_type', 'urgency_level', 'document_date',
+                'external_reference', 'approval_required'
             )
+        }),
+        (_('Business Justification'), {
+            'fields': ('business_justification', 'expected_usage')
+        }),
+        (_('Approval Workflow'), {
+            'fields': (
+                'requested_by', 'approved_by', 'approved_at',
+                'rejection_reason'
+            ),
+            'classes': ('collapse',)
+        }),
+        (_('Conversion Tracking'), {
+            'fields': (
+                'converted_to_order', 'converted_at', 'converted_by'
+            ),
+            'classes': ('collapse',)
         }),
         (_('Notes'), {
             'fields': ('notes',)
         }),
         (_('System Info'), {
-            'fields': ('created_at', 'updated_at', 'request_analytics'),
+            'fields': (
+                'created_at', 'updated_at', 'request_analytics', 'workflow_info'
+            ),
             'classes': ('collapse',)
         }),
     )
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'supplier', 'location', 'requested_by', 'approved_by'
+            'supplier', 'location', 'requested_by', 'approved_by',
+            'document_type'  # ← DocumentType relation
         ).prefetch_related('lines')
 
-    # Display methods
+    # =====================
+    # DISPLAY METHODS - DOCUMENTTYPE AWARE
+    # =====================
     def status_display(self, obj):
-        colors = {
+        """Dynamic status display based on DocumentType"""
+        default_colors = {
             'draft': '#757575',
             'submitted': '#FF9800',
             'approved': '#4CAF50',
-            'converted': '#2196F3',
             'rejected': '#F44336',
+            'converted': '#2196F3',
             'cancelled': '#9E9E9E'
         }
-        color = colors.get(obj.status, '#757575')
+
+        color = default_colors.get(obj.status, '#757575')
+
+        # Enhanced display with DocumentType context
+        status_text = obj.get_status_display_with_context() if hasattr(obj,
+                                                                       'get_status_display_with_context') else obj.status.title()
 
         return format_html(
             '<span style="background-color: {}; color: white; padding: 3px 8px; '
             'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, obj.get_status_display()
+            color, status_text
         )
 
     status_display.short_description = _('Status')
 
     def urgency_display(self, obj):
-        if obj.urgency_level == 'high':
-            return format_html('<span style="color: #F44336;">🔥 High</span>')
-        elif obj.urgency_level == 'medium':
-            return format_html('<span style="color: #FF9800;">⚡ Medium</span>')
-        else:
-            return format_html('<span style="color: #4CAF50;">📋 Normal</span>')
+        colors = {
+            'low': '#4CAF50',
+            'normal': '#2196F3',
+            'high': '#FF9800',
+            'critical': '#F44336'
+        }
+        icons = {
+            'low': '📝',
+            'normal': '📋',
+            'high': '⚡',
+            'critical': '🔥'
+        }
+
+        color = colors.get(obj.urgency_level, '#757575')
+        icon = icons.get(obj.urgency_level, '📋')
+
+        return format_html(
+            '<span style="color: {};">{} {}</span>',
+            color, icon, obj.get_urgency_level_display()
+        )
 
     urgency_display.short_description = _('Urgency')
 
     def lines_count(self, obj):
         count = obj.lines.count()
-        return format_html('<strong>{}</strong>', count)
+        total_items = sum(line.requested_quantity for line in obj.lines.all())
+        return format_html(
+            '<strong>{}</strong> lines<br><small>{} items</small>',
+            count, total_items
+        )
 
-    lines_count.short_description = _('Lines')
+    lines_count.short_description = _('Lines/Items')
 
     def estimated_total(self, obj):
         try:
@@ -165,7 +183,10 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 for line in obj.lines.all()
                 if line.estimated_price
             )
-            return format_html('<strong>{:.2f} лв</strong>', float(total))
+            if total > 0:
+                return format_html('<strong style="color: #2196F3;">{:.2f} лв</strong>', float(total))
+            else:
+                return format_html('<span style="color: #999;">No estimate</span>')
         except:
             return '-'
 
@@ -180,11 +201,14 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         analysis_parts = [
             f"<strong>Document:</strong> {obj.document_number}",
-            f"<strong>Status:</strong> {obj.get_status_display()}",
+            f"<strong>Status:</strong> {obj.get_status_display_with_context() if hasattr(obj, 'get_status_display_with_context') else obj.status}",
             f"<strong>Lines:</strong> {lines_count}",
             f"<strong>Total Items:</strong> {total_items}",
             f"<strong>Urgency:</strong> {obj.get_urgency_level_display()}",
         ]
+
+        if obj.document_type:
+            analysis_parts.append(f"<strong>Document Type:</strong> {obj.document_type.name}")
 
         if obj.requested_by:
             analysis_parts.append(f"<strong>Requested By:</strong> {obj.requested_by.get_full_name()}")
@@ -196,558 +220,220 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
     request_analytics.short_description = _('Request Analytics')
 
-    # Actions
-    actions = ['submit_requests', 'approve_requests', 'convert_to_orders']
+    def workflow_info(self, obj):
+        """Show DocumentType workflow information"""
+        if not obj.pk or not obj.document_type:
+            return "Save request first to see workflow info"
+
+        info_parts = []
+
+        # Current workflow status
+        if hasattr(obj, 'get_next_statuses'):
+            next_statuses = obj.get_next_statuses()
+            if next_statuses:
+                info_parts.append(f"<strong>Next Statuses:</strong> {', '.join(next_statuses)}")
+
+        # Available actions
+        if hasattr(obj, 'get_available_actions'):
+            actions = obj.get_available_actions()
+            if actions:
+                action_labels = [action['label'] for action in actions]
+                info_parts.append(f"<strong>Available Actions:</strong> {', '.join(action_labels)}")
+
+        # DocumentType info
+        doc_type = obj.document_type
+        info_parts.append(f"<strong>Document Type:</strong> {doc_type.name} ({doc_type.code})")
+
+        if doc_type.requires_approval:
+            limit_text = f" (>{doc_type.approval_limit} BGN)" if doc_type.approval_limit else ""
+            info_parts.append(f"<strong>Requires Approval:</strong> Yes{limit_text}")
+
+        return mark_safe('<br>'.join(info_parts))
+
+    workflow_info.short_description = _('Workflow Info')
+
+    # =====================
+    # ACTIONS - DOCUMENTTYPE DRIVEN
+    # =====================
+    actions = ['submit_requests', 'approve_requests', 'convert_to_orders', 'cancel_requests']
 
     def submit_requests(self, request, queryset):
-        count = queryset.filter(status='draft').update(status='submitted')
-        self.message_user(request, f'Submitted {count} requests.')
+        """Submit requests for approval"""
+        count = 0
+        for req in queryset:
+            if hasattr(req, 'can_be_submitted') and req.can_be_submitted():
+                try:
+                    req.submit_for_approval(request.user)
+                    count += 1
+                except Exception as e:
+                    self.message_user(request, f'Error submitting {req.document_number}: {e}', level='ERROR')
 
-    submit_requests.short_description = _('Submit requests')
+        self.message_user(request, f'Submitted {count} requests for approval.')
+
+    submit_requests.short_description = _('Submit for approval')
 
     def approve_requests(self, request, queryset):
-        count = queryset.filter(status='submitted').update(
-            status='approved',
-            approved_by=request.user,
-            approved_at=timezone.now()
-        )
+        """Approve submitted requests"""
+        count = 0
+        for req in queryset:
+            if hasattr(req, 'can_be_approved') and req.can_be_approved():
+                try:
+                    req.approve(request.user, 'Approved via admin action')
+                    count += 1
+                except Exception as e:
+                    self.message_user(request, f'Error approving {req.document_number}: {e}', level='ERROR')
+
         self.message_user(request, f'Approved {count} requests.')
 
     approve_requests.short_description = _('Approve requests')
 
     def convert_to_orders(self, request, queryset):
+        """Convert approved requests to orders"""
         count = 0
-        for req in queryset.filter(status='approved'):
-            try:
-                # Here you would call a service to convert request to order
-                count += 1
-            except Exception as e:
-                self.message_user(request, f'Error converting {req.document_number}: {e}', level='ERROR')
+        for req in queryset:
+            if hasattr(req, 'can_be_converted') and req.can_be_converted():
+                try:
+                    req.convert_to_order(request.user)
+                    count += 1
+                except Exception as e:
+                    self.message_user(request, f'Error converting {req.document_number}: {e}', level='ERROR')
 
         self.message_user(request, f'Converted {count} requests to orders.')
 
     convert_to_orders.short_description = _('Convert to orders')
 
+    def cancel_requests(self, request, queryset):
+        """Cancel requests"""
+        count = 0
+        for req in queryset:
+            if hasattr(req, 'can_be_cancelled') and req.can_be_cancelled():
+                try:
+                    req.cancel(request.user, 'Cancelled via admin action')
+                    count += 1
+                except Exception as e:
+                    self.message_user(request, f'Error cancelling {req.document_number}: {e}', level='ERROR')
 
-# =================================================================
-# PURCHASE ORDER ADMIN
-# =================================================================
+        self.message_user(request, f'Cancelled {count} requests.')
 
-@admin.register(PurchaseOrder)
-class PurchaseOrderAdmin(admin.ModelAdmin):
-    """Админ за поръчки към доставчици"""
+    cancel_requests.short_description = _('Cancel requests')
+
+    # =====================
+    # FORM CUSTOMIZATION
+    # =====================
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Customize foreign key fields"""
+        if db_field.name == "document_type":
+            # Filter to show only Purchase Request document types
+            from nomenclatures.models import DocumentType
+            kwargs["queryset"] = DocumentType.objects.filter(
+                app_name='purchases',
+                type_key='request',
+                is_active=True
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+# =====================
+# PURCHASE REQUEST LINE ADMIN
+# =====================
+@admin.register(PurchaseRequestLine)
+class PurchaseRequestLineAdmin(admin.ModelAdmin):
+    """Админ за редове от заявки - enhanced version"""
 
     list_display = [
-        'document_number', 'supplier', 'location', 'status_display',
-        'urgency_display', 'lines_count', 'grand_total_display',
-        'expected_delivery_date', 'delivery_status_display'
+        'document_number', 'line_number', 'product', 'requested_quantity_display',
+        'estimated_price_display', 'estimated_total_display', 'document_status'
     ]
 
     list_filter = [
-        'status', 'is_urgent', 'delivery_status', 'supplier_confirmed',
-        'location', 'supplier', 'expected_delivery_date'
+        'document__status',  # Dynamic от DocumentType
+        'document__urgency_level',
+        'document__request_type',
+        'product__product_group',
+        'unit'
     ]
 
     search_fields = [
-        'document_number', 'supplier__name', 'supplier_order_reference',
-        'notes', 'external_reference'
+        'product__code', 'product__name', 'document__document_number',
+        'item_justification'
     ]
 
-    date_hierarchy = 'expected_delivery_date'
-    inlines = [PurchaseOrderLineInline]
-
-    readonly_fields = [
-        'document_number', 'created_at', 'updated_at', 'subtotal',
-        'discount_total', 'vat_total', 'grand_total', 'order_analytics'
-    ]
+    readonly_fields = ['estimated_total_display']
 
     fieldsets = (
-        (_('Basic Information'), {
-            'fields': (
-                'document_number', 'supplier', 'location', 'status',
-                'is_urgent'
-            )
+        (_('Line Information'), {
+            'fields': ('document', 'line_number', 'product', 'unit')
         }),
-        (_('Order Details'), {
-            'fields': (
-                'document_date', 'expected_delivery_date', 'external_reference',
-                'supplier_order_reference', 'supplier_confirmed', 'order_method'
-            )
+        (_('Quantities & Pricing'), {
+            'fields': ('requested_quantity', 'estimated_price', 'estimated_total_display')
         }),
-        (_('Source Information'), {
-            'fields': ('source_request',),
-            'classes': ('collapse',)
-        }),
-        (_('Financial Summary'), {
-            'fields': (
-                'subtotal', 'discount_total', 'vat_total', 'grand_total'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Payment Information'), {
-            'fields': ('is_paid', 'payment_date', 'payment_method'),
-            'classes': ('collapse',)
-        }),
-        (_('Notes'), {
-            'fields': ('notes',)
-        }),
-        (_('System Info'), {
-            'fields': ('created_at', 'updated_at', 'order_analytics'),
-            'classes': ('collapse',)
+        (_('Business Details'), {
+            'fields': ('item_justification', 'suggested_supplier')
         }),
     )
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'supplier', 'location', 'source_request'
-        ).prefetch_related('lines')
-
-    # Display methods
-    def status_display(self, obj):
-        colors = {
-            'draft': '#757575',
-            'sent': '#FF9800',
-            'confirmed': '#4CAF50',
-            'cancelled': '#F44336',
-            'completed': '#2196F3'
-        }
-        color = colors.get(obj.status, '#757575')
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, obj.get_status_display()
+            'document', 'document__supplier', 'document__document_type',
+            'product', 'unit'
         )
 
-    status_display.short_description = _('Status')
+    # =====================
+    # DISPLAY METHODS
+    # =====================
+    def document_number(self, obj):
+        return obj.document.document_number
 
-    def urgency_display(self, obj):
-        if obj.is_urgent:
-            return format_html('<span style="color: #F44336;">🔥 Urgent</span>')
-        else:
-            return format_html('<span style="color: #4CAF50;">📋 Normal</span>')
+    document_number.short_description = _('Document')
+    document_number.admin_order_field = 'document__document_number'
 
-    urgency_display.short_description = _('Urgency')
+    def requested_quantity_display(self, obj):
+        if obj.unit:
+            return format_html(
+                '<strong>{}</strong> {}',
+                obj.requested_quantity, obj.unit.code
+            )
+        return format_html('<strong>{}</strong>', obj.requested_quantity)
 
-    def lines_count(self, obj):
-        count = obj.lines.count()
-        return format_html('<strong>{}</strong>', count)
+    requested_quantity_display.short_description = _('Requested Qty')
 
-    lines_count.short_description = _('Lines')
+    def estimated_price_display(self, obj):
+        if obj.estimated_price:
+            return format_html(
+                '<span style="color: #2196F3;">{:.4f} лв</span>',
+                float(obj.estimated_price)
+            )
+        return format_html('<span style="color: #999;">No estimate</span>')
 
-    def grand_total_display(self, obj):
-        try:
-            total = float(obj.grand_total) if obj.grand_total else 0
-            return format_html('<strong style="color: #2196F3;">{:.2f} лв</strong>', total)
-        except:
-            return '-'
+    estimated_price_display.short_description = _('Est. Price')
 
-    grand_total_display.short_description = _('Grand Total')
+    def estimated_total_display(self, obj):
+        if obj.estimated_total:
+            return format_html(
+                '<strong style="color: #4CAF50;">{:.2f} лв</strong>',
+                float(obj.estimated_total)
+            )
+        return format_html('<span style="color: #999;">-</span>')
 
-    def delivery_status_display(self, obj):
-        colors = {
-            'pending': '#FF9800',
-            'partial': '#9C27B0',
-            'completed': '#4CAF50',
-            'cancelled': '#F44336'
+    estimated_total_display.short_description = _('Est. Total')
+
+    def document_status(self, obj):
+        """Show document status"""
+        status_colors = {
+            'draft': '#757575',
+            'submitted': '#FF9800',
+            'approved': '#4CAF50',
+            'rejected': '#F44336',
+            'converted': '#2196F3',
+            'cancelled': '#9E9E9E'
         }
-        color = colors.get(obj.delivery_status, '#757575')
+
+        color = status_colors.get(obj.document.status, '#757575')
 
         return format_html(
             '<span style="color: {}; font-weight: bold;">{}</span>',
-            color, obj.get_delivery_status_display()
+            color, obj.document.status.title()
         )
 
-    delivery_status_display.short_description = _('Delivery Status')
-
-    def order_analytics(self, obj):
-        if not obj.pk:
-            return "Save order first to see analytics"
-
-        lines_count = obj.lines.count()
-        total_value = float(obj.grand_total) if obj.grand_total else 0
-
-        analysis_parts = [
-            f"<strong>Document:</strong> {obj.document_number}",
-            f"<strong>Status:</strong> {obj.get_status_display()}",
-            f"<strong>Lines:</strong> {lines_count}",
-            f"<strong>Total Value:</strong> {total_value:.2f} лв",
-            f"<strong>Delivery Status:</strong> {obj.get_delivery_status_display()}",
-        ]
-
-        if obj.source_request:
-            analysis_parts.append(f"<strong>Source Request:</strong> {obj.source_request.document_number}")
-
-        if obj.supplier_order_reference:
-            analysis_parts.append(f"<strong>Supplier Reference:</strong> {obj.supplier_order_reference}")
-
-        if obj.expected_delivery_date:
-            analysis_parts.append(f"<strong>Expected Delivery:</strong> {obj.expected_delivery_date}")
-
-        return mark_safe('<br>'.join(analysis_parts))
-
-    order_analytics.short_description = _('Order Analytics')
-
-    # Actions
-    actions = ['send_to_supplier', 'mark_as_confirmed', 'create_deliveries']
-
-    def send_to_supplier(self, request, queryset):
-        count = queryset.filter(status='draft').update(status='sent')
-        self.message_user(request, f'Sent {count} orders to suppliers.')
-
-    send_to_supplier.short_description = _('Send to supplier')
-
-    def mark_as_confirmed(self, request, queryset):
-        count = queryset.filter(status='sent').update(
-            status='confirmed',
-            supplier_confirmed=True
-        )
-        self.message_user(request, f'Confirmed {count} orders.')
-
-    mark_as_confirmed.short_description = _('Mark as confirmed')
-
-    def create_deliveries(self, request, queryset):
-        count = 0
-        for order in queryset.filter(status='confirmed'):
-            try:
-                # Here you would call delivery service
-                count += 1
-            except Exception as e:
-                self.message_user(request, f'Error creating delivery for {order.document_number}: {e}', level='ERROR')
-
-        self.message_user(request, f'Created deliveries for {count} orders.')
-
-    create_deliveries.short_description = _('Create deliveries')
-
-
-# =================================================================
-# DELIVERY RECEIPT ADMIN
-# =================================================================
-
-@admin.register(DeliveryReceipt)
-class DeliveryReceiptAdmin(admin.ModelAdmin):
-    """Професионален админ за доставки"""
-
-    list_display = [
-        'document_number', 'supplier', 'delivery_date', 'status_display',
-        'quality_status', 'variance_status', 'received_by_display', 'total_value'
-    ]
-
-    list_filter = [
-        'status', 'has_quality_issues', 'has_variances', 'quality_checked',
-        'delivery_date', 'supplier', 'creation_type', 'location'
-    ]
-
-    search_fields = [
-        'document_number', 'supplier__name', 'delivery_note_number',
-        'vehicle_info', 'driver_name', 'notes'
-    ]
-
-    date_hierarchy = 'delivery_date'
-    inlines = [DeliveryLineInline]
-
-    readonly_fields = [
-        'document_number', 'created_at', 'updated_at', 'received_at',
-        'processed_at', 'subtotal', 'discount_total', 'vat_total',
-        'grand_total', 'delivery_analytics'
-    ]
-
-    fieldsets = (
-        (_('Basic Information'), {
-            'fields': (
-                'document_number', 'supplier', 'location', 'status',
-                'creation_type'
-            )
-        }),
-        (_('Delivery Details'), {
-            'fields': (
-                'delivery_date', 'delivery_note_number', 'external_reference',
-                'vehicle_info', 'driver_name', 'driver_phone'
-            )
-        }),
-        (_('Quality Control'), {
-            'fields': (
-                'quality_checked', 'has_quality_issues', 'quality_inspector',
-                'quality_notes'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Financial Summary'), {
-            'fields': (
-                'subtotal', 'discount_total', 'vat_total', 'grand_total'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Status Tracking'), {
-            'fields': (
-                'has_variances', 'received_by', 'received_at',
-                'processed_by', 'processed_at'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Additional Info'), {
-            'fields': (
-                'special_handling_notes', 'notes'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('System Info'), {
-            'fields': (
-                'created_at', 'updated_at', 'delivery_analytics'
-            ),
-            'classes': ('collapse',)
-        }),
-    )
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'supplier', 'location', 'received_by', 'quality_inspector'
-        ).prefetch_related('lines')
-
-    # Display methods
-    def status_display(self, obj):
-        colors = {
-            'draft': '#757575',
-            'delivered': '#FF9800',
-            'received': '#2196F3',
-            'processed': '#9C27B0',
-            'completed': '#4CAF50',
-            'cancelled': '#F44336'
-        }
-        color = colors.get(obj.status, '#757575')
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, obj.get_status_display()
-        )
-
-    status_display.short_description = _('Status')
-
-    def quality_status(self, obj):
-        if obj.quality_checked:
-            if obj.has_quality_issues:
-                return format_html('<span style="color: #F44336;">❌ Issues Found</span>')
-            else:
-                return format_html('<span style="color: #4CAF50;">✅ Approved</span>')
-        else:
-            return format_html('<span style="color: #FF9800;">⏳ Pending</span>')
-
-    quality_status.short_description = _('Quality')
-
-    def variance_status(self, obj):
-        if obj.has_variances:
-            return format_html('<span style="color: #FF5722;">⚠️ Variances</span>')
-        else:
-            return format_html('<span style="color: #4CAF50;">✓ No Variances</span>')
-
-    variance_status.short_description = _('Variances')
-
-    def received_by_display(self, obj):
-        if obj.received_by:
-            return format_html(
-                '<span title="Received: {}">{}</span>',
-                obj.received_at.strftime('%d.%m.%Y %H:%M') if obj.received_at else 'Unknown time',
-                obj.received_by.get_full_name() or obj.received_by.username
-            )
-        return '-'
-
-    received_by_display.short_description = _('Received By')
-
-    def total_value(self, obj):
-        try:
-            total = float(obj.grand_total) if obj.grand_total else 0
-            return format_html('<strong style="color: #2196F3;">{:.2f} лв</strong>', total)
-        except:
-            return '-'
-
-    total_value.short_description = _('Total Value')
-
-    def delivery_analytics(self, obj):
-        if not obj.pk:
-            return "Save delivery first to see analytics"
-
-        try:
-            lines_count = obj.lines.count()
-            total_value = float(obj.grand_total) if obj.grand_total else 0
-
-            # Safe access to source_orders
-            source_orders_count = 0
-            if obj.pk:
-                try:
-                    source_orders_count = obj.source_orders.count()
-                except:
-                    pass
-
-            analysis_parts = [
-                f"<strong>Document:</strong> {obj.document_number}",
-                f"<strong>Status:</strong> {obj.get_status_display()}",
-                f"<strong>Lines:</strong> {lines_count}",
-                f"<strong>Total Value:</strong> {total_value:.2f} лв",
-                f"<strong>Source Orders:</strong> {source_orders_count}",
-                f"<strong>Creation Type:</strong> {obj.get_creation_type_display()}",
-            ]
-
-            if obj.received_by:
-                analysis_parts.append(f"<strong>Received By:</strong> {obj.received_by.get_full_name()}")
-
-            if obj.delivery_note_number:
-                analysis_parts.append(f"<strong>Delivery Note:</strong> {obj.delivery_note_number}")
-
-            if obj.vehicle_info:
-                analysis_parts.append(f"<strong>Vehicle:</strong> {obj.vehicle_info}")
-
-            return mark_safe('<br>'.join(analysis_parts))
-
-        except Exception as e:
-            return f"Analysis error: {str(e)}"
-
-    delivery_analytics.short_description = _('Delivery Analytics')
-
-    # Actions
-    actions = ['mark_as_delivered', 'receive_deliveries', 'mark_quality_checked']
-
-    def mark_as_delivered(self, request, queryset):
-        count = 0
-        for delivery in queryset.filter(status='draft'):
-            try:
-                delivery.mark_as_delivered(request.user)
-                count += 1
-            except Exception as e:
-                self.message_user(request, f'Error marking {delivery.document_number}: {e}', level='ERROR')
-
-        self.message_user(request, f'Marked {count} deliveries as delivered.')
-
-    mark_as_delivered.short_description = _('Mark as delivered')
-
-    def receive_deliveries(self, request, queryset):
-        count = 0
-        for delivery in queryset.filter(status='delivered'):
-            try:
-                delivery.receive_delivery(request.user, quality_check=True)
-                count += 1
-            except Exception as e:
-                self.message_user(request, f'Error receiving {delivery.document_number}: {e}', level='ERROR')
-
-        self.message_user(request, f'Received {count} deliveries.')
-
-    receive_deliveries.short_description = _('Receive deliveries')
-
-    def mark_quality_checked(self, request, queryset):
-        count = queryset.update(
-            quality_checked=True,
-            quality_inspector=request.user
-        )
-        self.message_user(request, f'Quality checked {count} deliveries.')
-
-    mark_quality_checked.short_description = _('Mark quality checked')
-
-
-# =================================================================
-# DOCUMENT TYPE ADMIN
-# =================================================================
-
-# @admin.register(DocumentType)
-# class DocumentTypeAdmin(admin.ModelAdmin):
-#     """Админ за типове документи"""
-#
-#     list_display = [
-#         'code', 'name', 'type_key', 'stock_effect_display',
-#         'can_be_source', 'sort_order', 'is_active'
-#     ]
-#
-#     list_filter = [
-#         'type_key', 'is_active', 'stock_effect', 'can_be_source'
-#     ]
-#
-#     search_fields = ['code', 'name', 'description']
-#
-#     fieldsets = (
-#         (_('Basic Information'), {
-#             'fields': ('code', 'name', 'type_key', 'description')
-#         }),
-#         (_('Behavior'), {
-#             'fields': (
-#                 'stock_effect', 'can_be_source', 'can_reference_multiple_sources',
-#                 'requires_batch', 'requires_quality_check'
-#             )
-#         }),
-#         (_('Display'), {
-#             'fields': ('sort_order', 'is_active')
-#         }),
-#     )
-#
-#     def stock_effect_display(self, obj):
-#         if obj.stock_effect == 1:
-#             return format_html('<span style="color: #4CAF50;">⬆️ Increase</span>')
-#         elif obj.stock_effect == -1:
-#             return format_html('<span style="color: #F44336;">⬇️ Decrease</span>')
-#         else:
-#             return format_html('<span style="color: #757575;">➖ No Effect</span>')
-#
-#     stock_effect_display.short_description = _('Stock Effect')
-
-
-# =================================================================
-# LINE ADMINS (Optional - for detailed management)
-# =================================================================
-
-@admin.register(PurchaseRequestLine)
-class PurchaseRequestLineAdmin(admin.ModelAdmin):
-    """Админ за редове от заявки"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'requested_quantity',
-        'estimated_price', 'priority_display'
-    ]
-
-    list_filter = ['document__status', 'priority', 'suggested_supplier']
-    search_fields = ['product__code', 'product__name', 'document__document_number']
-
-    def priority_display(self, obj):
-        if obj.priority > 0:
-            return format_html('<span style="color: #F44336;">🔥 {}</span>', obj.priority)
-        return '-'
-
-    priority_display.short_description = _('Priority')
-
-
-@admin.register(PurchaseOrderLine)
-class PurchaseOrderLineAdmin(admin.ModelAdmin):
-    """Админ за редове от поръчки"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'ordered_quantity',
-        'unit_price', 'line_total', 'delivery_status'
-    ]
-
-    list_filter = ['document__status', 'delivery_status']
-    search_fields = ['product__code', 'product__name', 'document__document_number']
-
-
-@admin.register(DeliveryLine)
-class DeliveryLineAdmin(admin.ModelAdmin):
-    """Админ за редове от доставки"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'received_quantity',
-        'unit_price', 'quality_status', 'batch_number', 'expiry_date'
-    ]
-
-    list_filter = [
-        'quality_approved', 'document__status', 'document__supplier',
-        'expiry_date'
-    ]
-
-    search_fields = [
-        'product__code', 'product__name', 'batch_number',
-        'document__document_number'
-    ]
-
-    def quality_status(self, obj):
-        if obj.quality_approved:
-            return format_html('<span style="color: green;">✅ Approved</span>')
-        else:
-            return format_html('<span style="color: red;">❌ Rejected</span>')
-
-    quality_status.short_description = _('Quality')
+    document_status.short_description = _('Doc Status')
+    document_status.admin_order_field = 'document__status'

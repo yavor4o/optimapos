@@ -1,4 +1,3 @@
-# purchases/models/requests.py - FIXED WITH NEW ARCHITECTURE
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -51,19 +50,16 @@ class PurchaseRequest(BaseDocument):
 
     Логика: Заявка е САМО искане за стоки, БЕЗ финансови данни!
     Използва само BaseDocument - НЕ използва FinancialMixin или PaymentMixin.
+
+    Workflow се управлява от DocumentType:
+    - Статуси идват от DocumentType.allowed_statuses
+    - Transitions се валидират от DocumentType.status_transitions
+    - Business rules идват от DocumentType настройки
     """
 
-
     # =====================
-    # ЗАЯВКА-СПЕЦИФИЧНИ ПОЛЕТА
-    # =====================
-    status = models.CharField(
-        _('Status'),
-        max_length=20,
-
-    )
-
     # REQUEST TYPE
+    # =====================
     REQUEST_TYPE_CHOICES = [
         ('regular', _('Regular Purchase')),
         ('urgent', _('Urgent Purchase')),
@@ -81,7 +77,9 @@ class PurchaseRequest(BaseDocument):
         help_text=_('Type of purchase request')
     )
 
+    # =====================
     # URGENCY
+    # =====================
     URGENCY_CHOICES = [
         ('low', _('Low')),
         ('normal', _('Normal')),
@@ -97,7 +95,9 @@ class PurchaseRequest(BaseDocument):
         help_text=_('How urgent is this request')
     )
 
+    # =====================
     # BUSINESS JUSTIFICATION
+    # =====================
     business_justification = models.TextField(
         _('Business Justification'),
         help_text=_('Why is this purchase needed?')
@@ -204,8 +204,6 @@ class PurchaseRequest(BaseDocument):
         """Request-specific validation"""
         super().clean()
 
-        # БЕЗ delivery_date validation - заявките нямат delivery_date!
-
         # Approval validation
         if self.status == 'approved':
             if not self.approved_by:
@@ -230,17 +228,17 @@ class PurchaseRequest(BaseDocument):
                 })
 
     # =====================
-    # WORKFLOW METHODS
+    # WORKFLOW METHODS - DOCUMENTTYPE DRIVEN
     # =====================
     def submit_for_approval(self, user=None):
         """Submit request for approval"""
-        if self.status != self.DRAFT:
-            raise ValidationError("Can only submit draft requests")
+        if not self.can_transition_to('submitted'):
+            raise ValidationError("Cannot submit request in current status")
 
         if not self.lines.exists():
             raise ValidationError("Cannot submit request without lines")
 
-        self.status = self.SUBMITTED
+        self.status = 'submitted'
         self.updated_by = user
         self.save()
 
@@ -248,10 +246,10 @@ class PurchaseRequest(BaseDocument):
 
     def approve(self, user, notes=''):
         """Approve the request"""
-        if self.status != self.SUBMITTED:
-            raise ValidationError("Can only approve submitted requests")
+        if not self.can_transition_to('approved'):
+            raise ValidationError("Cannot approve request in current status")
 
-        self.status = self.APPROVED
+        self.status = 'approved'
         self.approved_by = user
         self.approved_at = timezone.now()
         if notes:
@@ -263,10 +261,10 @@ class PurchaseRequest(BaseDocument):
 
     def reject(self, user, reason):
         """Reject the request"""
-        if self.status != self.SUBMITTED:
-            raise ValidationError("Can only reject submitted requests")
+        if not self.can_transition_to('rejected'):
+            raise ValidationError("Cannot reject request in current status")
 
-        self.status = self.REJECTED
+        self.status = 'rejected'
         self.rejection_reason = reason
         self.updated_by = user
         self.save()
@@ -275,8 +273,8 @@ class PurchaseRequest(BaseDocument):
 
     def convert_to_order(self, user=None):
         """Convert approved request to purchase order"""
-        if self.status != self.APPROVED:
-            raise ValidationError("Can only convert approved requests")
+        if not self.can_transition_to('converted'):
+            raise ValidationError("Cannot convert request in current status")
 
         # Import here to avoid circular imports
         from .orders import PurchaseOrder, PurchaseOrderLine
@@ -285,7 +283,6 @@ class PurchaseRequest(BaseDocument):
         order = PurchaseOrder.objects.create(
             supplier=self.supplier,
             location=self.location,
-            # НЕ delivery_date! Поръчката има expected_delivery_date
             expected_delivery_date=timezone.now().date() + timezone.timedelta(days=7),
             external_reference=self.external_reference,
             notes=f"Created from request {self.document_number}\n{self.notes}".strip(),
@@ -308,7 +305,7 @@ class PurchaseRequest(BaseDocument):
             )
 
         # Update request status
-        self.status = self.CONVERTED
+        self.status = 'converted'
         self.converted_to_order = order
         self.converted_at = timezone.now()
         self.converted_by = user
@@ -319,54 +316,80 @@ class PurchaseRequest(BaseDocument):
 
         return order
 
+    def cancel(self, user=None, reason=''):
+        """Cancel the request"""
+        if not self.can_transition_to('cancelled'):
+            raise ValidationError("Cannot cancel request in current status")
+
+        self.status = 'cancelled'
+        if reason:
+            self.notes = (self.notes + f'\nCancelled: {reason}').strip()
+        self.updated_by = user
+        self.save()
+
+        return True
+
     # =====================
-    # BUSINESS LOGIC CHECKS
+    # BUSINESS LOGIC CHECKS - DOCUMENTTYPE DRIVEN
     # =====================
     def can_be_edited(self):
-        """Override with request-specific logic"""
-        return self.status in [self.DRAFT]
+        """Check if request can be edited - enhanced with DocumentType logic"""
+        # Use parent DocumentType logic first
+        if not super().can_be_edited():
+            return False
+
+        # Additional request-specific logic
+        return not self.is_converted and not self.is_cancelled
 
     def can_be_submitted(self):
         """Check if request can be submitted"""
         return (
-                self.status == self.DRAFT and
+                self.can_transition_to('submitted') and
                 self.lines.exists()
         )
 
     def can_be_approved(self):
         """Check if request can be approved"""
-        return self.status == self.SUBMITTED
+        return self.can_transition_to('approved')
 
     def can_be_rejected(self):
         """Check if request can be rejected"""
-        return self.status == self.SUBMITTED
+        return self.can_transition_to('rejected')
 
     def can_be_converted(self):
         """Check if request can be converted to order"""
-        return self.status == self.APPROVED
+        return self.can_transition_to('converted')
 
     def can_be_cancelled(self):
-        """Override with request-specific logic"""
-        return self.status in [self.DRAFT, self.SUBMITTED]
+        """Check if request can be cancelled - enhanced with DocumentType logic"""
+        return self.can_transition_to('cancelled')
 
     # =====================
-    # PROPERTIES
+    # PROPERTIES - DOCUMENTTYPE DRIVEN
     # =====================
     @property
     def is_pending_approval(self):
-        return self.status == self.SUBMITTED
+        return self.status == 'submitted'
 
     @property
     def is_approved(self):
-        return self.status == self.APPROVED
+        return self.status == 'approved'
 
     @property
     def is_converted(self):
-        return self.status == self.CONVERTED
+        return self.status == 'converted'
 
     @property
     def is_rejected(self):
-        return self.status == self.REJECTED
+        return self.status == 'rejected'
+
+    @property
+    def is_cancelled(self):
+        return self.status == 'cancelled'
+
+    @property
+    def is_draft(self):
+        return self.status == 'draft'
 
     @property
     def approval_duration_days(self):
@@ -382,95 +405,177 @@ class PurchaseRequest(BaseDocument):
             line.estimated_price * line.requested_quantity
             for line in self.lines.all()
             if line.estimated_price
-        ) or Decimal('0.00')
+        )
+
+    # =====================
+    # STATUS DISPLAY METHODS
+    # =====================
+    def get_status_display_with_context(self):
+        """Enhanced status display with additional context"""
+        status_display = self.status.title()
+
+        if self.is_pending_approval and self.approval_required:
+            return f"{status_display} (Awaiting Approval)"
+        elif self.is_approved and not self.is_converted:
+            return f"{status_display} (Ready for Order)"
+        elif self.is_converted and self.converted_to_order:
+            return f"{status_display} (Order: {self.converted_to_order.document_number})"
+
+        return status_display
+
+    def get_urgency_color(self):
+        """Get color for urgency level"""
+        colors = {
+            'low': 'green',
+            'normal': 'blue',
+            'high': 'orange',
+            'critical': 'red'
+        }
+        return colors.get(self.urgency_level, 'gray')
+
+    # =====================
+    # WORKFLOW INFORMATION
+    # =====================
+    def get_available_actions(self, user=None):
+        """Get available workflow actions for this request"""
+        actions = []
+
+        if self.can_be_submitted():
+            actions.append({
+                'action': 'submit_for_approval',
+                'label': _('Submit for Approval'),
+                'method': 'POST',
+                'requires_confirmation': False
+            })
+
+        if self.can_be_approved() and user:
+            # Additional check: user has approval permissions
+            actions.append({
+                'action': 'approve',
+                'label': _('Approve'),
+                'method': 'POST',
+                'requires_confirmation': True,
+                'requires_notes': True
+            })
+
+        if self.can_be_rejected():
+            actions.append({
+                'action': 'reject',
+                'label': _('Reject'),
+                'method': 'POST',
+                'requires_confirmation': True,
+                'requires_reason': True
+            })
+
+        if self.can_be_converted():
+            actions.append({
+                'action': 'convert_to_order',
+                'label': _('Convert to Order'),
+                'method': 'POST',
+                'requires_confirmation': True
+            })
+
+        if self.can_be_cancelled():
+            actions.append({
+                'action': 'cancel',
+                'label': _('Cancel'),
+                'method': 'POST',
+                'requires_confirmation': True,
+                'requires_reason': True
+            })
+
+        return actions
+
+    def get_workflow_history(self):
+        """Get workflow transition history"""
+        # This would integrate with audit/logging system
+        history = []
+
+        if self.created_at:
+            history.append({
+                'status': 'draft',
+                'timestamp': self.created_at,
+                'user': self.created_by,
+                'action': 'created'
+            })
+
+        if self.approved_at and self.approved_by:
+            history.append({
+                'status': 'approved',
+                'timestamp': self.approved_at,
+                'user': self.approved_by,
+                'action': 'approved'
+            })
+
+        if self.converted_at and self.converted_by:
+            history.append({
+                'status': 'converted',
+                'timestamp': self.converted_at,
+                'user': self.converted_by,
+                'action': 'converted'
+            })
+
+        return sorted(history, key=lambda x: x['timestamp'])
 
 
+# =====================
+# REQUEST LINE MODEL
+# =====================
 class PurchaseRequestLineManager(models.Manager):
     """Manager for Purchase Request Lines"""
 
-    def for_request(self, request):
-        """Lines for specific request"""
-        return self.filter(document=request)
+    def with_estimated_cost(self):
+        """Lines with estimated cost information"""
+        return self.filter(estimated_price__isnull=False, estimated_price__gt=0)
 
-    def pending_approval(self):
-        """Lines in requests pending approval"""
-        return self.filter(document__status='submitted')
-
-    def approved(self):
-        """Lines in approved requests"""
-        return self.filter(document__status='approved')
-
-    def for_product(self, product):
-        """Lines for specific product"""
-        return self.filter(product=product)
+    def without_estimated_cost(self):
+        """Lines missing estimated cost"""
+        return self.filter(
+            models.Q(estimated_price__isnull=True) |
+            models.Q(estimated_price=0)
+        )
 
 
 class PurchaseRequestLine(BaseDocumentLine):
     """
-    Purchase Request Line - Ред на заявка
+    Purchase Request Line - редове от заявка
 
-    Логика: НЕ използва FinancialLineMixin защото заявките нямат финансови данни!
-    Има само estimated_price за ориентировъчни разчети.
+    Логика: Редовете съдържат САМО искания за количества, БЕЗ финансови данни!
+    Estimated price е опционална информация за планиране.
     """
 
     # =====================
-    # FOREIGN KEY TO PARENT
-    # =====================
-    document = models.ForeignKey(
-        PurchaseRequest,
-        on_delete=models.CASCADE,
-        related_name='lines',
-        verbose_name=_('Purchase Request')
-    )
-
-    # =====================
-    # ЗАЯВКА-СПЕЦИФИЧНИ ПОЛЕТА
+    # REQUEST LINE FIELDS
     # =====================
     requested_quantity = models.DecimalField(
         _('Requested Quantity'),
-        max_digits=10,
+        max_digits=12,
         decimal_places=3,
-        help_text=_('Quantity requested')
+        help_text=_('How many units are requested')
     )
 
     estimated_price = models.DecimalField(
-        _('Estimated Price'),
-        max_digits=10,
+        _('Estimated Unit Price'),
+        max_digits=12,
         decimal_places=4,
         null=True,
         blank=True,
-        help_text=_('Estimated price per unit (optional)')
+        help_text=_('Estimated price per unit (optional, for planning)')
     )
 
-    # Suggested supplier for this specific item
-    suggested_supplier = models.ForeignKey(
-        'partners.Supplier',
-        on_delete=models.SET_NULL,
-        null=True,
+    # =====================
+    # BUSINESS JUSTIFICATION
+    # =====================
+    usage_description = models.TextField(
+        _('Usage Description'),
         blank=True,
-        verbose_name=_('Suggested Supplier'),
-        help_text=_('Preferred supplier for this item')
+        help_text=_('How will this specific item be used?')
     )
 
-    # Usage justification for this specific item
-    item_justification = models.TextField(
-        _('Item Justification'),
+    alternative_products = models.TextField(
+        _('Alternative Products'),
         blank=True,
-        help_text=_('Why is this specific item needed?')
-    )
-
-    # Priority within the request
-    priority = models.IntegerField(
-        _('Priority'),
-        default=0,
-        help_text=_('Priority within this request (higher = more important)')
-    )
-
-    # Quality requirements
-    quality_notes = models.TextField(
-        _('Quality Notes'),
-        blank=True,
-        help_text=_('Quality requirements or notes')
+        help_text=_('Acceptable alternative products if this one is not available')
     )
 
     # =====================
@@ -481,65 +586,59 @@ class PurchaseRequestLine(BaseDocumentLine):
     class Meta:
         verbose_name = _('Purchase Request Line')
         verbose_name_plural = _('Purchase Request Lines')
-        unique_together = [['document', 'line_number']]
-        ordering = ['document', 'line_number']
-        indexes = [
-            models.Index(fields=['document', 'line_number']),
-            models.Index(fields=['product']),
-            models.Index(fields=['suggested_supplier']),
-            models.Index(fields=['priority']),
-        ]
+        ordering = ['line_number']
 
     def __str__(self):
-        return f"{self.document.document_number} - Line {self.line_number}: {self.product.code}"
+        return f"Line {self.line_number}: {self.product.name} x {self.requested_quantity}"
 
     # =====================
-    # ЗАЯВКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
+    # CALCULATED PROPERTIES
+    # =====================
+    @property
+    def estimated_total(self):
+        """Estimated total cost for this line"""
+        if self.estimated_price:
+            return self.estimated_price * self.requested_quantity
+        return None
+
+    @property
+    def has_alternatives(self):
+        """Does this line have alternative products specified?"""
+        return bool(self.alternative_products.strip())
+
+    # =====================
+    # VALIDATION
     # =====================
     def clean(self):
-        """Request line specific validation"""
+        """Request line validation"""
         super().clean()
 
-        # Set quantity from requested_quantity for base validation
-        if self.requested_quantity and not self.quantity:
-            self.quantity = self.requested_quantity
-
-        # Requested quantity must be positive
         if self.requested_quantity <= 0:
             raise ValidationError({
-                'requested_quantity': _('Requested quantity must be greater than zero')
+                'requested_quantity': _('Requested quantity must be positive')
             })
 
-        # Estimated price validation (if provided)
         if self.estimated_price is not None and self.estimated_price < 0:
             raise ValidationError({
                 'estimated_price': _('Estimated price cannot be negative')
             })
 
-    def save(self, *args, **kwargs):
-        """Enhanced save"""
-        # Sync quantity with requested_quantity
-        if self.requested_quantity:
-            self.quantity = self.requested_quantity
-
-        super().save(*args, **kwargs)
-
     # =====================
-    # PROPERTIES
+    # BUSINESS METHODS
     # =====================
-    @property
-    def estimated_line_total(self):
-        """Estimated total for this line (if price is provided)"""
-        if self.estimated_price and self.requested_quantity:
-            return self.estimated_price * self.requested_quantity
-        return None
+    def get_quantity_display(self):
+        """Get formatted quantity with unit"""
+        if self.unit:
+            return f"{self.requested_quantity} {self.unit.code}"
+        return str(self.requested_quantity)
 
-    @property
-    def has_suggested_supplier(self):
-        """Does this line have a suggested supplier?"""
-        return self.suggested_supplier is not None
+    def get_estimated_total_display(self):
+        """Get formatted estimated total"""
+        total = self.estimated_total
+        if total:
+            return f"{total:.2f} лв"
+        return "No estimate"
 
-    @property
-    def is_high_priority(self):
-        """Is this a high priority item?"""
-        return self.priority > 0
+    def is_high_value(self, threshold=500):
+        """Check if this line has high estimated value"""
+        return self.estimated_total and self.estimated_total >= threshold
