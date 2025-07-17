@@ -66,26 +66,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     НЕ използва DeliveryMixin защото има expected_delivery_date, не delivery_date.
     """
 
-    # =====================
-    # STATUS CHOICES - специфични за поръчки
-    # =====================
-    DRAFT = 'draft'
-    SENT = 'sent'
-    CONFIRMED = 'confirmed'
-    IN_DELIVERY = 'in_delivery'
-    RECEIVED = 'received'
-    CANCELLED = 'cancelled'
-    CLOSED = 'closed'
 
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (SENT, _('Sent to Supplier')),
-        (CONFIRMED, _('Confirmed by Supplier')),
-        (IN_DELIVERY, _('In Delivery')),
-        (RECEIVED, _('Received')),
-        (CANCELLED, _('Cancelled')),
-        (CLOSED, _('Closed')),
-    ]
 
     # =====================
     # ПОРЪЧКА-СПЕЦИФИЧНИ ПОЛЕТА
@@ -93,8 +74,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     status = models.CharField(
         _('Status'),
         max_length=20,
-        choices=STATUS_CHOICES,
-        default=DRAFT
+
     )
 
     # DELIVERY DATE - expected, не actual!

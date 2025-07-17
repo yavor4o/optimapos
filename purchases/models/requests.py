@@ -53,24 +53,6 @@ class PurchaseRequest(BaseDocument):
     Използва само BaseDocument - НЕ използва FinancialMixin или PaymentMixin.
     """
 
-    # =====================
-    # STATUS CHOICES - специфични за заявки
-    # =====================
-    DRAFT = 'draft'
-    SUBMITTED = 'submitted'
-    APPROVED = 'approved'
-    REJECTED = 'rejected'
-    CONVERTED = 'converted'
-    CANCELLED = 'cancelled'
-
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (SUBMITTED, _('Submitted for Approval')),
-        (APPROVED, _('Approved')),
-        (REJECTED, _('Rejected')),
-        (CONVERTED, _('Converted to Order')),
-        (CANCELLED, _('Cancelled')),
-    ]
 
     # =====================
     # ЗАЯВКА-СПЕЦИФИЧНИ ПОЛЕТА
@@ -78,8 +60,7 @@ class PurchaseRequest(BaseDocument):
     status = models.CharField(
         _('Status'),
         max_length=20,
-        choices=STATUS_CHOICES,
-        default=DRAFT
+
     )
 
     # REQUEST TYPE

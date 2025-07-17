@@ -1,4 +1,4 @@
-# purchases/models/base.py - FIXED CLEAN ARCHITECTURE
+# purchases/models/base.py - ИНТЕГРИРАН С DocumentType
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -18,12 +18,23 @@ class DocumentManager(models.Manager):
     def for_supplier(self, supplier):
         """Filter by supplier with optimizations"""
         return self.filter(supplier=supplier).select_related(
-            'supplier', 'location'
+            'supplier', 'location', 'document_type'
         ).prefetch_related('lines__product')
 
     def for_location(self, location):
         """Filter by location"""
         return self.filter(location=location)
+
+    def for_document_type(self, doc_type):
+        """Filter by document type"""
+        if hasattr(doc_type, 'pk'):
+            return self.filter(document_type=doc_type)
+        else:
+            # String lookup by code or type_key
+            return self.filter(
+                models.Q(document_type__code=doc_type) |
+                models.Q(document_type__type_key=doc_type)
+            )
 
     def search(self, query):
         """Search documents by various fields"""
@@ -34,6 +45,14 @@ class DocumentManager(models.Manager):
             models.Q(notes__icontains=query)
         )
 
+    def pending_approval(self):
+        """Documents pending approval"""
+        return self.filter(status__in=['submitted', 'pending_approval'])
+
+    def ready_for_processing(self):
+        """Documents ready for processing"""
+        return self.filter(status__in=['confirmed', 'approved', 'received'])
+
 
 class LineManager(models.Manager):
     """Base manager for document lines"""
@@ -42,27 +61,45 @@ class LineManager(models.Manager):
         """Lines for specific product"""
         return self.filter(product=product)
 
+    def with_variances(self):
+        """Lines with quantity variances"""
+        return self.filter(variance_quantity__gt=0)
+
 
 # =================================================================
-# MINIMAL BASE DOCUMENT - САМО ОБЩИТЕ ПОЛЕТА
+# BASE DOCUMENT - ИНТЕГРИРАН С DocumentType
 # =================================================================
 
 class BaseDocument(models.Model):
     """
-    Минимален базов клас с САМО наистина общите полета
+    Базов клас за всички purchase документи
 
-    Съдържа само полетата които се ползват от ВСИЧКИ документи.
-    Всичко останало е в mixin-ите или конкретните модели.
+    ИНТЕГРИРАН С nomenclatures.DocumentType за:
+    - Configuration-driven workflow
+    - Automatic numbering
+    - Business rules validation
+    - Status management
     """
 
     # =====================
-    # CORE FIELDS - задължителни за всички
+    # DOCUMENT TYPE INTEGRATION
+    # =====================
+    document_type = models.ForeignKey(
+        'nomenclatures.DocumentType',
+        on_delete=models.PROTECT,
+        verbose_name=_('Document Type'),
+        help_text=_('Type defines workflow, numbering and business rules'),
+        limit_choices_to={'app_name': 'purchases', 'is_active': True}
+    )
+
+    # =====================
+    # CORE FIELDS
     # =====================
     document_number = models.CharField(
         _('Document Number'),
         max_length=50,
         unique=True,
-        help_text=_('Auto-generated unique document number')
+        help_text=_('Auto-generated from document type configuration')
     )
 
     document_date = models.DateField(
@@ -73,13 +110,13 @@ class BaseDocument(models.Model):
 
     status = models.CharField(
         _('Status'),
-        max_length=20,
-        help_text=_('Current document status')
-        # NOTE: Choices ще се дефинират в конкретните модели
+        max_length=30,
+        help_text=_('Current document status - validated by document type')
+        # БЕЗ choices - идват динамично от DocumentType!
     )
 
     # =====================
-    # BUSINESS RELATIONSHIPS - общи за всички
+    # BUSINESS RELATIONSHIPS
     # =====================
     supplier = models.ForeignKey(
         'partners.Supplier',
@@ -96,7 +133,7 @@ class BaseDocument(models.Model):
     )
 
     # =====================
-    # REFERENCE FIELDS - опционални но общи
+    # REFERENCE FIELDS
     # =====================
     external_reference = models.CharField(
         _('External Reference'),
@@ -112,7 +149,7 @@ class BaseDocument(models.Model):
     )
 
     # =====================
-    # AUDIT FIELDS - задължителни за всички
+    # AUDIT FIELDS
     # =====================
     created_at = models.DateTimeField(
         _('Created At'),
@@ -152,65 +189,368 @@ class BaseDocument(models.Model):
     def __str__(self):
         return f"{self.document_number} - {self.supplier.name}"
 
-    def clean(self):
-        """Минимална валидация"""
-        super().clean()
-        # ПРЕМАХНАТО: date validation за да няма проблеми
-        pass
+    # =====================
+    # DOCUMENT TYPE INTEGRATION METHODS
+    # =====================
 
+    def get_allowed_statuses(self):
+        """Get allowed statuses from DocumentType"""
+        return self.document_type.allowed_statuses if self.document_type else ['draft']
 
+    def get_next_statuses(self):
+        """Get possible next statuses from current status"""
+        if not self.document_type:
+            return []
+        return self.document_type.get_next_statuses(self.status)
 
-    def save(self, *args, **kwargs):
-        """Enhanced save with document number generation"""
-        # Generate document number if new
-        if not self.document_number:
-            self.document_number = self.generate_document_number()
+    def can_transition_to(self, new_status):
+        """Check if status transition is allowed by DocumentType"""
+        if not self.document_type:
+            return False
+        return self.document_type.can_transition_to(self.status, new_status)
 
-        # Full clean before saving
-        self.full_clean()
-        super().save(*args, **kwargs)
+    def is_final_status(self):
+        """Check if current status is final"""
+        if not self.document_type:
+            return False
+        return self.document_type.is_final_status(self.status)
+
+    def get_workflow_rules(self):
+        """Get workflow configuration from DocumentType"""
+        if not self.document_type:
+            return {}
+
+        return {
+            'requires_approval': self.document_type.requires_approval,
+            'approval_limit': self.document_type.approval_limit,
+            'auto_confirm': self.document_type.auto_confirm,
+            'affects_inventory': self.document_type.affects_inventory,
+            'inventory_direction': self.document_type.inventory_direction,
+            'inventory_timing': self.document_type.inventory_timing,
+            'auto_transitions': self.document_type.auto_transitions,
+        }
+
+    def needs_approval(self, amount=None):
+        """Check if document needs approval based on DocumentType rules"""
+        if not self.document_type or not self.document_type.requires_approval:
+            return False
+
+        if not amount:
+            # Try to get amount from document
+            amount = getattr(self, 'grand_total', None) or getattr(self, 'total', 0)
+
+        return self.document_type.needs_approval(amount)
+
+    def should_affect_inventory(self):
+        """Check if document should affect inventory at current status"""
+        if not self.document_type:
+            return False
+        return self.document_type.should_affect_inventory(self.status)
+
+    def get_inventory_movement_type(self):
+        """Get inventory movement type for this document"""
+        if not self.document_type:
+            return None
+        return self.document_type.get_inventory_movement_type()
 
     # =====================
     # DOCUMENT NUMBER GENERATION
     # =====================
+
     def generate_document_number(self):
-        """
-        Generate unique document number
-        Override in subclasses for specific prefixes
-        """
-        prefix = self.get_document_prefix()
-        year = timezone.now().year
+        """Generate unique document number using DocumentType configuration"""
+        if not self.document_type:
+            # Fallback if no DocumentType
+            prefix = self.get_document_prefix()
+            year = timezone.now().year
 
-        # Find last number for this year and prefix
-        last_doc = self.__class__.objects.filter(
-            document_number__startswith=f"{prefix}-{year}-"
-        ).order_by('-document_number').first()
+            last_doc = self.__class__.objects.filter(
+                document_number__startswith=f"{prefix}-{year}-"
+            ).order_by('-document_number').first()
 
-        if last_doc:
-            try:
-                last_number = int(last_doc.document_number.split('-')[-1])
-                new_number = last_number + 1
-            except (ValueError, IndexError):
+            if last_doc:
+                try:
+                    last_number = int(last_doc.document_number.split('-')[-1])
+                    new_number = last_number + 1
+                except (ValueError, IndexError):
+                    new_number = 1
+            else:
                 new_number = 1
-        else:
-            new_number = 1
 
-        return f"{prefix}-{year}-{new_number:04d}"
+            return f"{prefix}-{year}-{new_number:04d}"
+
+        # Use DocumentType numbering
+        return self.document_type.get_next_number()
 
     def get_document_prefix(self):
-        """Override in subclasses"""
-        return "DOC"
+        """Get document prefix - override in subclasses or use DocumentType"""
+        if self.document_type:
+            return self.document_type.number_prefix
+        return "DOC"  # Fallback
 
     # =====================
-    # BASIC BUSINESS LOGIC
+    # BUSINESS LOGIC METHODS
     # =====================
+
     def can_be_edited(self):
-        """Override in subclasses with specific logic"""
-        return True
+        """Check if document can be edited based on DocumentType and status"""
+        if not self.document_type:
+            return True  # Fallback
+
+        # Check if status is final
+        if self.is_final_status():
+            return False
+
+        # Check DocumentType rules
+        workflow_rules = self.get_workflow_rules()
+        if workflow_rules.get('auto_confirm') and self.status != self.document_type.default_status:
+            return False
+
+        # Default logic
+        return self.status in ['draft', 'submitted']
 
     def can_be_cancelled(self):
-        """Override in subclasses with specific logic"""
-        return True
+        """Check if document can be cancelled"""
+        if self.is_final_status():
+            return False
+
+        return 'cancelled' in self.get_next_statuses()
+
+    def can_be_approved(self):
+        """Check if document can be approved"""
+        if not self.document_type or not self.document_type.requires_approval:
+            return False
+
+        return 'approved' in self.get_next_statuses()
+
+    def can_be_confirmed(self):
+        """Check if document can be confirmed"""
+        return 'confirmed' in self.get_next_statuses()
+
+    # =====================
+    # VALIDATION METHODS
+    # =====================
+
+    def clean(self):
+        """Enhanced validation with DocumentType integration"""
+        super().clean()
+
+        if not self.document_type:
+            raise ValidationError({
+                'document_type': _('Document type is required')
+            })
+
+        # Validate status against DocumentType
+        if self.status and self.status not in self.get_allowed_statuses():
+            raise ValidationError({
+                'status': f'Status "{self.status}" not allowed for document type "{self.document_type.name}"'
+            })
+
+        # Validate business rules from DocumentType
+        if hasattr(self, 'grand_total'):
+            total = getattr(self, 'grand_total', 0)
+            validation_errors = self.document_type.validate_document_data({
+                'total': total,
+                'supplier': self.supplier,
+                'customer': getattr(self, 'customer', None),
+                'lines': hasattr(self, 'lines') and self.lines.exists()
+            })
+
+            if validation_errors:
+                raise ValidationError({'__all__': validation_errors})
+
+        # Supplier validation based on DocumentType
+        if self.document_type.requires_supplier and not self.supplier:
+            raise ValidationError({
+                'supplier': _('Supplier is required for this document type')
+            })
+
+    def save(self, *args, **kwargs):
+        """Enhanced save with DocumentType integration"""
+
+        # Set default status from DocumentType
+        if not self.status and self.document_type:
+            self.status = self.document_type.default_status
+
+        # Generate document number if needed
+        if not self.document_number and self.document_type and self.document_type.auto_number:
+            self.document_number = self.generate_document_number()
+
+        # Full clean before saving
+        self.full_clean()
+
+        # Check for auto-transitions
+        is_new = not self.pk
+        old_status = None
+
+        if not is_new:
+            old_instance = self.__class__.objects.get(pk=self.pk)
+            old_status = old_instance.status
+
+        super().save(*args, **kwargs)
+
+        # Handle auto-transitions after save
+        if (self.document_type and
+                self.document_type.auto_transitions and
+                old_status != self.status):
+
+            auto_next_status = self.document_type.auto_transitions.get(self.status)
+            if auto_next_status and self.can_transition_to(auto_next_status):
+                # Schedule auto-transition (можем да го направим веднага или с Celery task)
+                self.status = auto_next_status
+                self.__class__.objects.filter(pk=self.pk).update(status=auto_next_status)
+
+    # =====================
+    # UTILITY METHODS
+    # =====================
+
+    def get_workflow_info(self):
+        """Get complete workflow information for this document"""
+        return {
+            'document_type': {
+                'code': self.document_type.code if self.document_type else None,
+                'name': self.document_type.name if self.document_type else None,
+                'type_key': self.document_type.type_key if self.document_type else None,
+            },
+            'current_status': self.status,
+            'allowed_statuses': self.get_allowed_statuses(),
+            'next_statuses': self.get_next_statuses(),
+            'is_final': self.is_final_status(),
+            'can_edit': self.can_be_edited(),
+            'can_cancel': self.can_be_cancelled(),
+            'can_approve': self.can_be_approved(),
+            'can_confirm': self.can_be_confirmed(),
+            'needs_approval': self.needs_approval(),
+            'affects_inventory': self.should_affect_inventory(),
+            'workflow_rules': self.get_workflow_rules(),
+        }
+
+
+# =================================================================
+# MINIMAL BASE DOCUMENT LINE
+# =================================================================
+
+class BaseDocumentLine(models.Model):
+    """
+    Базов клас за редове в документи
+    """
+
+    # =====================
+    # CORE FIELDS
+    # =====================
+    line_number = models.PositiveIntegerField(
+        _('Line Number'),
+        help_text=_('Sequential line number within document')
+    )
+
+    product = models.ForeignKey(
+        'products.Product',
+        on_delete=models.PROTECT,
+        verbose_name=_('Product'),
+        help_text=_('Product being purchased')
+    )
+
+    quantity = models.DecimalField(
+        _('Quantity'),
+        max_digits=10,
+        decimal_places=3,
+        help_text=_('Quantity in specified unit')
+    )
+
+    unit = models.ForeignKey(
+        'nomenclatures.UnitOfMeasure',
+        on_delete=models.PROTECT,
+        verbose_name=_('Unit'),
+        help_text=_('Unit of measure for this line')
+    )
+
+    # =====================
+    # BATCH/QUALITY TRACKING (Optional based on DocumentType)
+    # =====================
+
+    batch_number = models.CharField(
+        _('Batch Number'),
+        max_length=50,
+        blank=True,
+        help_text=_('Batch/Lot number for tracking')
+    )
+
+    expiry_date = models.DateField(
+        _('Expiry Date'),
+        null=True,
+        blank=True,
+        help_text=_('Product expiry date')
+    )
+
+    serial_numbers = models.TextField(
+        _('Serial Numbers'),
+        blank=True,
+        help_text=_('Serial numbers (one per line)')
+    )
+
+    quality_approved = models.BooleanField(
+        _('Quality Approved'),
+        default=True,
+        help_text=_('Passed quality control')
+    )
+
+    quality_notes = models.TextField(
+        _('Quality Notes'),
+        blank=True,
+        help_text=_('Quality control notes')
+    )
+
+    # =====================
+    # MANAGERS
+    # =====================
+    objects = LineManager()
+
+    class Meta:
+        abstract = True
+        ordering = ['line_number']
+
+    def __str__(self):
+        return f"Line {self.line_number}: {self.product.code} x {self.quantity}"
+
+    def clean(self):
+        """Validation based on document's DocumentType requirements"""
+        super().clean()
+
+        # Get document's DocumentType for validation
+        document = getattr(self, 'document', None)
+        if document and document.document_type:
+            doc_type = document.document_type
+
+            # Batch tracking validation
+            if doc_type.requires_batch_tracking and not self.batch_number:
+                raise ValidationError({
+                    'batch_number': _('Batch number is required for this document type')
+                })
+
+            # Expiry date validation
+            if doc_type.requires_expiry_dates and not self.expiry_date:
+                raise ValidationError({
+                    'expiry_date': _('Expiry date is required for this document type')
+                })
+
+            # Serial number validation
+            if doc_type.requires_serial_numbers and not self.serial_numbers:
+                raise ValidationError({
+                    'serial_numbers': _('Serial numbers are required for this document type')
+                })
+
+            # Quality check validation
+            if doc_type.requires_quality_check and not hasattr(self, '_skip_quality_check'):
+                if not self.quality_approved and not self.quality_notes:
+                    raise ValidationError({
+                        'quality_notes': _('Quality notes required when not approved')
+                    })
+
+        # Quantity must be positive
+        if self.quantity is not None and self.quantity <= 0:
+            raise ValidationError({
+                'quantity': _('Quantity must be positive')
+            })
 
 
 # =================================================================
@@ -279,6 +619,17 @@ class FinancialMixin(models.Model):
             'subtotal', 'discount_total', 'vat_total', 'grand_total'
         ])
 
+    def clean(self):
+        """Financial validation enhanced with DocumentType"""
+        super().clean()
+
+        # VAT validation based on DocumentType
+        if hasattr(self, 'document_type') and self.document_type:
+            if self.document_type.requires_vat_calculation and self.vat_total < 0:
+                raise ValidationError({
+                    'vat_total': _('VAT total cannot be negative')
+                })
+
 
 class PaymentMixin(models.Model):
     """
@@ -312,10 +663,10 @@ class PaymentMixin(models.Model):
         abstract = True
 
     def clean(self):
-        """Payment-specific validation"""
+        """Payment validation enhanced with DocumentType"""
         super().clean()
 
-        # Payment validation - само за документи с този mixin
+        # Payment validation
         if self.payment_date and not self.is_paid:
             raise ValidationError({
                 'payment_date': _('Payment date can only be set if document is marked as paid')
@@ -323,6 +674,14 @@ class PaymentMixin(models.Model):
 
         if self.is_paid and not self.payment_date:
             self.payment_date = timezone.now().date()
+
+        # DocumentType payment validation
+        if hasattr(self, 'document_type') and self.document_type:
+            if self.document_type.requires_payment and not self.is_paid:
+                if self.status in ['completed', 'processed']:
+                    raise ValidationError({
+                        'is_paid': _('Payment is required for this document type')
+                    })
 
 
 class DeliveryMixin(models.Model):
@@ -348,108 +707,14 @@ class DeliveryMixin(models.Model):
         abstract = True
 
     def clean(self):
-        """Delivery-specific validation"""
+        """Delivery validation"""
         super().clean()
+        # Delivery date може да е във всякакво време - това е реалната дата
 
-        # НЕ ПРАВИМ date validation тук - delivery_date може да е във всякакво време
-        # Това е реалната дата на доставка, не планирана
-
-
-# =================================================================
-# MINIMAL BASE DOCUMENT LINE
-# =================================================================
-
-class BaseDocumentLine(models.Model):
-    """
-    Минимален базов клас за редове - САМО общите полета
-    """
-
-    # =====================
-    # CORE FIELDS
-    # =====================
-    line_number = models.PositiveIntegerField(
-        _('Line Number'),
-        help_text=_('Sequential line number within document')
-    )
-
-    product = models.ForeignKey(
-        'products.Product',
-        on_delete=models.PROTECT,
-        verbose_name=_('Product'),
-        help_text=_('Product being purchased')
-    )
-
-    quantity = models.DecimalField(
-        _('Quantity'),
-        max_digits=10,
-        decimal_places=3,
-        help_text=_('Quantity in specified unit')
-    )
-
-    unit = models.ForeignKey(
-        'nomenclatures.UnitOfMeasure',
-        on_delete=models.PROTECT,
-        verbose_name=_('Unit'),
-        help_text=_('Unit of measure for this line')
-    )
-
-    # =====================
-    # MANAGERS
-    # =====================
-    objects = LineManager()
-
-    class Meta:
-        abstract = True
-        ordering = ['line_number']
-
-    def __str__(self):
-        return f"Line {self.line_number}: {self.product.code} x {self.quantity}"
-
-    # =====================
-    # MINIMAL VALIDATION
-    # =====================
-    def clean(self):
-        """Основна валидация - БЕЗ financial проверки"""
-        super().clean()
-
-        # Quantity must be positive - ПОПРАВЕНО за None стойности
-        if self.quantity is not None and self.quantity <= 0:
-            raise ValidationError({
-                'quantity': _('Quantity must be greater than zero')
-            })
-
-    def save(self, *args, **kwargs):
-        """Auto-generate line_number if not set"""
-
-        # Auto-generate line_number if not provided
-        if not self.line_number and hasattr(self, 'document') and self.document:
-            from django.db.models import Max
-
-            # Find the highest line number for this document
-            max_line = self.__class__.objects.filter(
-                document=self.document
-            ).aggregate(max_line=Max('line_number'))['max_line']
-
-            self.line_number = (max_line or 0) + 1
-
-        # If still no line_number (new document), default to 1
-        if not self.line_number:
-            self.line_number = 1
-
-        # Call parent save
-        super().save(*args, **kwargs)
-
-
-# =================================================================
-# FINANCIAL LINE MIXIN
-# =================================================================
 
 class FinancialLineMixin(models.Model):
     """
     Mixin за редове с финансови данни
-
-    Използва се от PurchaseOrderLine и DeliveryLine.
-    НЕ се използва от PurchaseRequestLine.
     """
 
     unit_price = models.DecimalField(
@@ -457,7 +722,7 @@ class FinancialLineMixin(models.Model):
         max_digits=10,
         decimal_places=4,
         default=Decimal('0.0000'),
-        help_text=_('Price per unit')
+        help_text=_('Price per unit excluding VAT')
     )
 
     discount_percent = models.DecimalField(
@@ -468,50 +733,51 @@ class FinancialLineMixin(models.Model):
         help_text=_('Discount percentage')
     )
 
+    discount_amount = models.DecimalField(
+        _('Discount Amount'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Calculated discount amount')
+    )
+
+    vat_rate = models.DecimalField(
+        _('VAT Rate %'),
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('20.00'),
+        help_text=_('VAT rate percentage')
+    )
+
+    vat_amount = models.DecimalField(
+        _('VAT Amount'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Calculated VAT amount')
+    )
+
     line_total = models.DecimalField(
         _('Line Total'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Total amount for this line')
+        help_text=_('Total including VAT')
     )
 
     class Meta:
         abstract = True
 
-    def clean(self):
-        """Financial validation"""
-        super().clean()
-
-        # Unit price must be non-negative
-        if self.unit_price < 0:
-            raise ValidationError({
-                'unit_price': _('Unit price cannot be negative')
-            })
-
-        # Discount validation
-        if self.discount_percent < 0 or self.discount_percent > 100:
-            raise ValidationError({
-                'discount_percent': _('Discount percentage must be between 0 and 100')
-            })
+    def calculate_totals(self):
+        """Calculate line totals"""
+        if self.quantity and self.unit_price:
+            gross_amount = self.quantity * self.unit_price
+            self.discount_amount = gross_amount * (self.discount_percent / 100)
+            net_amount = gross_amount - self.discount_amount
+            self.vat_amount = net_amount * (self.vat_rate / 100)
+            self.line_total = net_amount + self.vat_amount
 
     def save(self, *args, **kwargs):
-        """Save with financial calculations"""
-        self.calculate_line_total()
+        """Auto-calculate totals before saving"""
+        self.calculate_totals()
         super().save(*args, **kwargs)
-
-    def calculate_line_total(self):
-        """Calculate line total with discount"""
-        if self.quantity and self.unit_price:
-            subtotal = self.quantity * self.unit_price
-            discount_amount = subtotal * (self.discount_percent / 100)
-            self.line_total = subtotal - discount_amount
-        else:
-            self.line_total = Decimal('0.00')
-
-    @property
-    def discount_amount(self):
-        """Calculate discount amount"""
-        if self.quantity and self.unit_price:
-            return (self.quantity * self.unit_price) * (self.discount_percent / 100)
-        return Decimal('0.00')

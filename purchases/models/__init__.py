@@ -21,9 +21,7 @@ from .base import (
     FinancialLineMixin
 )
 
-# from .document_types import (
-#     DocumentType
-# )
+
 
 from .requests import (
     PurchaseRequest,

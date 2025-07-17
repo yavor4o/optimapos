@@ -76,6 +76,12 @@ class DocumentType(BaseNomenclature):
         help_text=_('Model class name (optional): PurchaseOrder, SalesQuote, Contract')
     )
 
+    sort_order = models.PositiveIntegerField(
+        _('Sort Order'),
+        default=0,
+        help_text=_('Order for display in lists')
+    )
+
     # =====================
     # NUMBERING SYSTEM
     # =====================

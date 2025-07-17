@@ -60,24 +60,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin)
     - Delivery информация (DeliveryMixin)
     """
 
-    # =====================
-    # STATUS CHOICES - специфични за доставки
-    # =====================
-    DRAFT = 'draft'
-    DELIVERED = 'delivered'
-    RECEIVED = 'received'
-    PROCESSED = 'processed'
-    COMPLETED = 'completed'
-    CANCELLED = 'cancelled'
 
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (DELIVERED, _('Delivered (Arrived)')),
-        (RECEIVED, _('Received (Checked)')),
-        (PROCESSED, _('Processed (Inventory Updated)')),
-        (COMPLETED, _('Completed')),
-        (CANCELLED, _('Cancelled')),
-    ]
 
     # =====================
     # ДОСТАВКА-СПЕЦИФИЧНИ ПОЛЕТА
@@ -85,8 +68,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin)
     status = models.CharField(
         _('Status'),
         max_length=20,
-        choices=STATUS_CHOICES,
-        default=DRAFT
+
     )
 
     # CREATION TYPE

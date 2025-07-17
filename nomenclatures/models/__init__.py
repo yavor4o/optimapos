@@ -10,6 +10,7 @@ Nomenclatures models package
 
 # Base imports
 from .base import BaseNomenclature, ActiveManager
+from .documents import DocumentType, DocumentTypeManager
 
 # Product related
 from .product import (
@@ -54,6 +55,10 @@ __all__ = [
     # Operational
     'UnitOfMeasure',
     'PaymentType',
+
+    # Documents
+    'DocumentType',
+    'DocumentTypeManager',
 
 ]
 
