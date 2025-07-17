@@ -21,9 +21,9 @@ from .base import (
     FinancialLineMixin
 )
 
-from .document_types import (
-    DocumentType
-)
+# from .document_types import (
+#     DocumentType
+# )
 
 from .requests import (
     PurchaseRequest,
@@ -61,7 +61,7 @@ __all__ = [
     'FinancialLineMixin',
 
     # Document types
-    'DocumentType',
+    # 'DocumentType',
 
     # Request models
     'PurchaseRequest',

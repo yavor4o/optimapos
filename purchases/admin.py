@@ -11,7 +11,7 @@ from .models import (
     PurchaseRequest, PurchaseRequestLine,
     PurchaseOrder, PurchaseOrderLine,
     DeliveryReceipt, DeliveryLine,
-    DocumentType
+
 )
 
 
@@ -647,45 +647,45 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
 # DOCUMENT TYPE ADMIN
 # =================================================================
 
-@admin.register(DocumentType)
-class DocumentTypeAdmin(admin.ModelAdmin):
-    """Админ за типове документи"""
-
-    list_display = [
-        'code', 'name', 'type_key', 'stock_effect_display',
-        'can_be_source', 'sort_order', 'is_active'
-    ]
-
-    list_filter = [
-        'type_key', 'is_active', 'stock_effect', 'can_be_source'
-    ]
-
-    search_fields = ['code', 'name', 'description']
-
-    fieldsets = (
-        (_('Basic Information'), {
-            'fields': ('code', 'name', 'type_key', 'description')
-        }),
-        (_('Behavior'), {
-            'fields': (
-                'stock_effect', 'can_be_source', 'can_reference_multiple_sources',
-                'requires_batch', 'requires_quality_check'
-            )
-        }),
-        (_('Display'), {
-            'fields': ('sort_order', 'is_active')
-        }),
-    )
-
-    def stock_effect_display(self, obj):
-        if obj.stock_effect == 1:
-            return format_html('<span style="color: #4CAF50;">⬆️ Increase</span>')
-        elif obj.stock_effect == -1:
-            return format_html('<span style="color: #F44336;">⬇️ Decrease</span>')
-        else:
-            return format_html('<span style="color: #757575;">➖ No Effect</span>')
-
-    stock_effect_display.short_description = _('Stock Effect')
+# @admin.register(DocumentType)
+# class DocumentTypeAdmin(admin.ModelAdmin):
+#     """Админ за типове документи"""
+#
+#     list_display = [
+#         'code', 'name', 'type_key', 'stock_effect_display',
+#         'can_be_source', 'sort_order', 'is_active'
+#     ]
+#
+#     list_filter = [
+#         'type_key', 'is_active', 'stock_effect', 'can_be_source'
+#     ]
+#
+#     search_fields = ['code', 'name', 'description']
+#
+#     fieldsets = (
+#         (_('Basic Information'), {
+#             'fields': ('code', 'name', 'type_key', 'description')
+#         }),
+#         (_('Behavior'), {
+#             'fields': (
+#                 'stock_effect', 'can_be_source', 'can_reference_multiple_sources',
+#                 'requires_batch', 'requires_quality_check'
+#             )
+#         }),
+#         (_('Display'), {
+#             'fields': ('sort_order', 'is_active')
+#         }),
+#     )
+#
+#     def stock_effect_display(self, obj):
+#         if obj.stock_effect == 1:
+#             return format_html('<span style="color: #4CAF50;">⬆️ Increase</span>')
+#         elif obj.stock_effect == -1:
+#             return format_html('<span style="color: #F44336;">⬇️ Decrease</span>')
+#         else:
+#             return format_html('<span style="color: #757575;">➖ No Effect</span>')
+#
+#     stock_effect_display.short_description = _('Stock Effect')
 
 
 # =================================================================
