@@ -368,6 +368,12 @@ class BaseDocument(models.Model):
     def save(self, *args, **kwargs):
         """Enhanced save with DocumentType integration"""
 
+        user = getattr(self, '_current_user', None)
+        if user and user.is_authenticated:
+            if not self.pk:  # New record
+                self.created_by = user
+            self.updated_by = user
+
         # Set default status from DocumentType
         if not self.status and self.document_type:
             self.status = self.document_type.default_status

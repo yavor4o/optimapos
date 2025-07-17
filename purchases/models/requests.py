@@ -100,6 +100,8 @@ class PurchaseRequest(BaseDocument):
     # =====================
     business_justification = models.TextField(
         _('Business Justification'),
+        blank=True,
+        null=True,
         help_text=_('Why is this purchase needed?')
     )
 

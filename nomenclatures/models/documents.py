@@ -181,6 +181,8 @@ class DocumentType(BaseNomenclature):
     auto_approve_conditions = models.JSONField(
         _('Auto Approve Conditions'),
         default=dict,
+        blank=True,
+        null=True,
         help_text=_('Conditions for automatic approval')
     )
 
@@ -439,6 +441,8 @@ class DocumentType(BaseNomenclature):
     custom_validation_rules = models.JSONField(
         _('Custom Validation Rules'),
         default=dict,
+        blank=True,
+        null=True,
         help_text=_('Additional validation rules in JSON format')
     )
 
