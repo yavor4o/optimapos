@@ -136,95 +136,111 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
         """
         ДИНАМИЧНО генериране на actions на база ApprovalService
 
-        Не хардкодира статуси - използва каквото има в DocumentType!
+        РЕШЕНИЕ 1: Просто присвояване на методите
         """
         actions = super().get_actions(request)
 
-        # Добавяме само generic actions
-        actions.update({
-            'smart_workflow_action': (
-                self.smart_workflow_action,
-                'smart_workflow_action',
-                'Smart workflow (auto-detect next step)'
-            ),
-            'convert_final_approved': (
-                self.convert_final_approved_action,
-                'convert_final_approved',
-                'Convert to orders (final approved requests)'
-            ),
-        })
+        # Просто присвояваме методите - Django ще се погрижи за параметрите
+        actions['submit_for_approval'] = self.submit_for_approval_action
+        actions['smart_workflow'] = self.smart_workflow_action
+        actions['convert_final_approved'] = self.convert_final_approved_action
 
         return actions
 
-    def smart_workflow_action(self, request, queryset):
+    def submit_for_approval_action(self, request, queryset):
         """
-        УМЕН ACTION - автоматично открива следващата стъпка
-
-        За всеки документ проверява какви transitions има и изпълнява най-логичната.
+        ПРОСТ ACTION: draft → submitted БЕЗ ApprovalService
         """
-        success_count = 0
-        failed_count = 0
-        actions_taken = {}
+        updated = 0
 
-        for document in queryset:
-            try:
-                # Намираме всички възможни transitions за този user
-                available_transitions = ApprovalService.get_available_transitions(document, request.user)
-
-                if not available_transitions:
-                    messages.warning(request, f"{document.document_number}: No available actions for current user")
-                    failed_count += 1
-                    continue
-
-                # Избираме първия наличен transition (най-висок приоритет)
-                target_transition = available_transitions[0]
-                target_status = target_transition['to_status']
-
-                result = ApprovalService.execute_transition(
-                    document=document,
-                    to_status=target_status,
-                    user=request.user,
-                    comments=f"Smart workflow action via admin by {request.user.get_full_name() or request.user.username}"
+        for document in queryset.filter(status='draft'):
+            if not document.lines.exists():
+                messages.warning(
+                    request,
+                    f'{document.document_number} has no lines - cannot submit'
                 )
+                continue
 
-                if result['success']:
-                    success_count += 1
+            document.status = 'submitted'
+            document.save()
+            updated += 1
 
-                    # Групираме actions за summary
-                    action_key = f"{document.status} → {target_status}"
-                    if action_key not in actions_taken:
-                        actions_taken[action_key] = 0
-                    actions_taken[action_key] += 1
-
-                else:
-                    messages.error(request, f"{document.document_number}: {result['message']}")
-                    failed_count += 1
-
-            except Exception as e:
-                messages.error(request, f"Error processing {document.document_number}: {str(e)}")
-                failed_count += 1
-
-        # Показваме summary на извършените действия
-        if success_count:
-            summary_parts = []
-            for action, count in actions_taken.items():
-                summary_parts.append(f"{count} docs: {action}")
-
+        if updated:
             messages.success(
                 request,
-                f'Successfully processed {success_count} requests. Actions: {"; ".join(summary_parts)}'
+                f'Successfully submitted {updated} request(s) for approval'
             )
 
-        if failed_count:
-            messages.warning(request, f'{failed_count} requests could not be processed.')
+    submit_for_approval_action.short_description = _('Submit for approval')
 
-    smart_workflow_action.short_description = _('Smart workflow (auto-detect next step)')
+    def smart_workflow_action(self, request, queryset):
+        """
+        УМЕН ACTION: Използва ApprovalService за всички преходи
+        """
+        user = request.user
+        processed = 0
+
+        for document in queryset:
+            # За draft документи - прост submit
+            if document.status == 'draft':
+                if not document.lines.exists():
+                    messages.warning(
+                        request,
+                        f'{document.document_number} has no lines - cannot submit'
+                    )
+                    continue
+
+                document.status = 'submitted'
+                document.save()
+                processed += 1
+                messages.info(
+                    request,
+                    f'{document.document_number}: submitted for approval'
+                )
+                continue
+
+            # За всички останали - ApprovalService
+            transitions = ApprovalService.get_available_transitions(document, user)
+
+            if not transitions:
+                messages.warning(
+                    request,
+                    f'{document.document_number}: No available transitions'
+                )
+                continue
+
+            # Изпълняваме първия наличен преход
+            first_transition = transitions[0]
+            result = ApprovalService.execute_transition(
+                document=document,
+                to_status=first_transition['to_status'],
+                user=user,
+                comments=f"Smart workflow action: {first_transition['name']}"
+            )
+
+            if result['success']:
+                processed += 1
+                messages.success(
+                    request,
+                    f'{document.document_number}: {result["message"]}'
+                )
+            else:
+                messages.error(
+                    request,
+                    f'{document.document_number}: {result["message"]}'
+                )
+
+        if processed:
+            messages.info(
+                request,
+                f'Processed {processed} document(s) successfully'
+            )
+
+    smart_workflow_action.short_description = _('Smart workflow transition')
 
     def convert_final_approved_action(self, request, queryset):
         """
         ДИНАМИЧНО ОТКРИВАНЕ на final approved статус за conversion
-
-        Не хардкодира 'central_approved' - открива кой е final approval статус!
         """
         success_count = 0
         failed_count = 0
@@ -733,26 +749,17 @@ class DeliveryReceiptAdmin(DynamicApprovalMixin, admin.ModelAdmin):
     # =====================
 
     def get_actions(self, request):
-        """Add delivery-specific actions"""
+        """
+        ДИНАМИЧНО генериране на actions на база ApprovalService
+
+        РЕШЕНИЕ 1: Просто присвояване на методите
+        """
         actions = super().get_actions(request)
 
-        actions.update({
-            'mark_as_delivered': (
-                self.mark_as_delivered_action,
-                'mark_as_delivered',
-                'Mark as delivered'
-            ),
-            'receive_deliveries': (
-                self.receive_deliveries_action,
-                'receive_deliveries',
-                'Receive deliveries'
-            ),
-            'complete_processing': (
-                self.complete_processing_action,
-                'complete_processing',
-                'Complete processing'
-            ),
-        })
+        # Просто присвояваме методите - Django ще се погрижи за параметрите
+        actions['submit_for_approval'] = self.submit_for_approval_action
+        actions['smart_workflow'] = self.smart_workflow_action
+        actions['convert_final_approved'] = self.convert_final_approved_action
 
         return actions
 

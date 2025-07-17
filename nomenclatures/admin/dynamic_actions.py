@@ -1,4 +1,4 @@
-# purchases/admin/dynamic_actions.py
+
 
 from django.contrib import admin
 from django.contrib import messages
