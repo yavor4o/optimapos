@@ -1,28 +1,29 @@
-# purchases/admin.py
+# purchases/admin.py - ПРОФЕСИОНАЛНА ВЕРСИЯ С APPROVAL SERVICE
 
 from django.contrib import admin
 from django.contrib import messages
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError, PermissionDenied
-from django.shortcuts import render, redirect
-from django.urls import path, reverse
-from django.http import HttpResponseRedirect
 from django.utils.html import format_html
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import render, redirect
+from django.urls import path
 from django import forms
 
+from nomenclatures.services.approval_service import ApprovalService
 from .models.requests import PurchaseRequest, PurchaseRequestLine
 from .models.orders import PurchaseOrder, PurchaseOrderLine
 from .models.deliveries import DeliveryReceipt, DeliveryLine
-from .services.request_service import RequestService
-from .services.workflow_service import WorkflowService
+
+# Import на ApprovalService
+
 
 
 # =====================
-# FORMS - БАЗИРАНИ НА РЕАЛНАТА СТРУКТУРА
+# FORMS - ЗАПАЗВАМЕ СЪЩИТЕ
 # =====================
 
 class PurchaseRequestLineForm(forms.ModelForm):
-    """Enhanced form for Purchase Request Lines - ПРАВИЛНО според migration 0004"""
+    """Enhanced form for Purchase Request Lines"""
 
     class Meta:
         model = PurchaseRequestLine
@@ -41,432 +42,249 @@ class PurchaseRequestLineForm(forms.ModelForm):
             'expiry_date': forms.DateInput(attrs={'type': 'date'}),
         }
 
-    def clean_requested_quantity(self):
-        quantity = self.cleaned_data.get('requested_quantity')
-        if quantity is None:
-            raise ValidationError(_('Requested quantity is required'))
-        if quantity <= 0:
-            raise ValidationError(_('Requested quantity must be positive'))
-        return quantity
 
-    def clean_estimated_price(self):
-        price = self.cleaned_data.get('estimated_price')
-        if price is not None and price < 0:
-            raise ValidationError(_('Estimated price cannot be negative'))
-        return price
+# =====================
+# DYNAMIC ADMIN ACTIONS - ПРОФЕСИОНАЛНИ
+# =====================
 
+class ApprovalActionMixin:
+    """Mixin for adding dynamic approval actions to admin"""
 
-class PurchaseOrderLineForm(forms.ModelForm):
-    """Form for Purchase Order Lines"""
+    def get_actions(self, request):
+        """Динамично генериране на actions според ApprovalService"""
+        actions = super().get_actions(request)
 
-    class Meta:
-        model = PurchaseOrderLine
-        fields = ['product', 'quantity', 'unit_price', 'discount_percent']
+        # Добавяме динамични approval actions
+        approval_actions = self._generate_approval_actions(request)
+        actions.update(approval_actions)
 
+        return actions
 
-class DeliveryLineForm(forms.ModelForm):
-    """Form for Delivery Lines"""
+    def _generate_approval_actions(self, request):
+        """Генерира approval actions динамично"""
+        actions = {}
 
-    class Meta:
-        model = DeliveryLine
-        fields = ['product', 'received_quantity', 'unit_price', 'quality_approved']
+        # Универсален approval action
+        def create_universal_approval_action():
+            def universal_approval_action(modeladmin, request, queryset):
+                """Универсално одобрение - намира най-подходящия преход"""
+
+                success_count = 0
+                failed_count = 0
+                errors = []
+
+                for document in queryset:
+                    try:
+                        # Намираме възможните преходи за този потребител
+                        available_transitions = ApprovalService.get_available_transitions(document, request.user)
+
+                        if not available_transitions:
+                            failed_count += 1
+                            errors.append(f"{document.document_number}: No available transitions")
+                            continue
+
+                        # Взимаме първия approval преход (може да се усложни логиката)
+                        approval_transitions = [t for t in available_transitions if 'approv' in t['to_status'].lower()]
+
+                        if approval_transitions:
+                            transition = approval_transitions[0]
+                        else:
+                            transition = available_transitions[0]
+
+                        # Изпълняваме прехода
+                        result = ApprovalService.execute_transition(
+                            document=document,
+                            to_status=transition['to_status'],
+                            user=request.user,
+                            comments=f"Bulk approval via admin by {request.user.get_full_name()}"
+                        )
+
+                        if result['success']:
+                            success_count += 1
+                        else:
+                            failed_count += 1
+                            errors.append(f"{document.document_number}: {result['message']}")
+
+                    except Exception as e:
+                        failed_count += 1
+                        errors.append(f"{document.document_number}: {str(e)}")
+
+                # Показваме резултатите
+                if success_count:
+                    messages.success(request,
+                                     _('Successfully processed %(count)d documents.') % {'count': success_count})
+
+                if failed_count:
+                    messages.warning(request,
+                                     _('%(count)d documents could not be processed.') % {'count': failed_count})
+
+                    # Показваме първите няколко грешки
+                    for error in errors[:3]:
+                        messages.error(request, error)
+
+            universal_approval_action.short_description = _('🚀 Smart Approve - Auto detect best action')
+            return universal_approval_action
+
+        # Rejection action
+        def create_rejection_action():
+            def rejection_action(modeladmin, request, queryset):
+                """Отхвърляне на документи"""
+
+                # Съхраняваме IDs в session за custom view
+                request.session['documents_to_reject'] = list(queryset.values_list('id', flat=True))
+                request.session['rejection_model'] = queryset.model._meta.label_lower
+
+                # Redirect към custom rejection view
+                return redirect('admin:purchases_rejection_view')
+
+            rejection_action.short_description = _('❌ Reject with reason')
+            return rejection_action
+
+        # Workflow status action
+        def create_workflow_status_action():
+            def workflow_status_action(modeladmin, request, queryset):
+                """Показва workflow статус на документите"""
+
+                for document in queryset:
+                    try:
+                        workflow_status = ApprovalService.get_workflow_status(document)
+                        available_transitions = ApprovalService.get_available_transitions(document, request.user)
+
+                        # Форматираме съобщението
+                        status_msg = f"📄 {document.document_number}: {workflow_status['current_status']}"
+
+                        if available_transitions:
+                            actions = [t['to_status'] for t in available_transitions]
+                            status_msg += f" → Available: {', '.join(actions)}"
+                        else:
+                            status_msg += " → No actions available"
+
+                        messages.info(request, status_msg)
+
+                    except Exception as e:
+                        messages.error(request, f"Error for {document.document_number}: {str(e)}")
+
+            workflow_status_action.short_description = _('📊 Show workflow status')
+            return workflow_status_action
+
+        # Добавяме действията
+        actions['universal_approval'] = create_universal_approval_action()
+        actions['reject_with_reason'] = create_rejection_action()
+        actions['show_workflow_status'] = create_workflow_status_action()
+
+        return actions
 
 
 # =====================
-# INLINES - АКТУАЛИЗИРАНИ ПОЛЕТА
+# CUSTOM URLS MIXIN
 # =====================
 
-class PurchaseRequestLineInline(admin.TabularInline):
-    """Inline for Purchase Request Lines"""
-
-    model = PurchaseRequestLine
-    form = PurchaseRequestLineForm
-    extra = 1
-    min_num = 1
-
-    fields = [
-        'line_number', 'product', 'requested_quantity',
-        'estimated_price', 'usage_description', 'quality_approved'
-    ]
-
-    readonly_fields = ['line_number']
-
-    def get_readonly_fields(self, request, obj=None):
-        """Make fields readonly for non-draft requests"""
-        readonly = list(self.readonly_fields)
-
-        if obj and obj.status != 'draft':
-            readonly.extend(['product', 'requested_quantity', 'estimated_price'])
-
-        return readonly
-
-
-class PurchaseOrderLineInline(admin.TabularInline):
-    """Inline for Purchase Order Lines"""
-
-    model = PurchaseOrderLine
-    form = PurchaseOrderLineForm
-    extra = 0
-    min_num = 1
-
-    fields = ['line_number', 'product', 'quantity', 'unit_price', 'line_total_display']
-    readonly_fields = ['line_number', 'line_total_display']
-
-    def line_total_display(self, obj):
-        if obj and obj.quantity and obj.unit_price:
-            return format_html('<strong>{:.2f}</strong>', obj.quantity * obj.unit_price)
-        return '-'
-
-    line_total_display.short_description = _('Line Total')
-
-
-class DeliveryLineInline(admin.TabularInline):
-    """Inline for Delivery Lines"""
-
-    model = DeliveryLine
-    form = DeliveryLineForm
-    extra = 0
-
-    fields = [
-        'line_number', 'product', 'received_quantity',
-        'unit_price', 'quality_approved', 'line_total_display'
-    ]
-    readonly_fields = ['line_number', 'line_total_display']
-
-    def line_total_display(self, obj):
-        if obj and obj.received_quantity and obj.unit_price:
-            return format_html('<strong>{:.2f}</strong>', obj.received_quantity * obj.unit_price)
-        return '-'
-
-    line_total_display.short_description = _('Line Total')
-
-
-# =====================
-# ADMIN ACTIONS
-# =====================
-
-@admin.action(description=_('Submit selected requests for approval'))
-def submit_requests_for_approval(modeladmin, request, queryset):
-    """Submit multiple requests for approval"""
-
-    draft_requests = queryset.filter(status='draft')
-
-    if not draft_requests.exists():
-        messages.warning(request, _('No draft requests found to submit.'))
-        return
-
-    submitted_count = 0
-    failed_count = 0
-    errors = []
-
-    for req in draft_requests:
-        try:
-            result = RequestService.submit_for_approval(req, request.user)
-            if result['success']:
-                submitted_count += 1
-            else:
-                failed_count += 1
-                errors.append(f"{req.document_number}: {result['message']}")
-        except Exception as e:
-            failed_count += 1
-            errors.append(f"{req.document_number}: {str(e)}")
-
-    # Display results
-    if submitted_count:
-        messages.success(request,
-                         _('Successfully submitted %(count)d requests for approval.') % {'count': submitted_count})
-
-    if failed_count:
-        messages.warning(request, _('%(count)d requests could not be submitted.') % {'count': failed_count})
-        for error in errors[:3]:  # Show max 3 errors
-            messages.error(request, error)
-
-
-@admin.action(description=_('Approve selected requests'))
-def approve_requests(modeladmin, request, queryset):
-    """Approve multiple requests"""
-
-    submitted_requests = queryset.filter(status='submitted')
-
-    if not submitted_requests.exists():
-        messages.warning(request, _('No submitted requests found to approve.'))
-        return
-
-    # Check permissions
-    if not request.user.has_perm('purchases.approve_requests'):
-        messages.error(request, _('You do not have permission to approve requests.'))
-        return
-
-    # Bulk approve
-    result = RequestService.bulk_approve_requests(
-        list(submitted_requests),
-        request.user,
-        notes=_("Bulk approved by %(user)s") % {'user': request.user.get_full_name()}
-    )
-
-    # Display results
-    if result['approved_count']:
-        messages.success(request, _('Successfully approved %(count)d requests.') % {'count': result['approved_count']})
-
-    if result['failed_count']:
-        messages.warning(request, _('%(count)d requests could not be approved.') % {'count': result['failed_count']})
-        for failure in result['failed_requests'][:3]:
-            messages.error(request, f"{failure['request'].document_number}: {failure['error']}")
-
-
-@admin.action(description=_('Convert approved requests to orders'))
-def convert_requests_to_orders(modeladmin, request, queryset):
-    """Convert approved requests to purchase orders"""
-
-    approved_requests = queryset.filter(status='approved')
-
-    if not approved_requests.exists():
-        messages.warning(request, _('No approved requests found to convert.'))
-        return
-
-    # Bulk convert
-    result = RequestService.bulk_convert_to_orders(
-        list(approved_requests),
-        request.user
-    )
-
-    # Display results
-    if result['converted_count']:
-        messages.success(request, _('Successfully converted %(count)d requests to orders.') % {
-            'count': result['converted_count']})
-
-        # Show created order numbers
-        order_numbers = [conv['order'].document_number for conv in result['converted_orders'][:5]]
-        if order_numbers:
-            messages.info(request, _('Created orders: %(orders)s') % {'orders': ', '.join(order_numbers)})
-
-    if result['failed_count']:
-        messages.warning(request, _('%(count)d requests could not be converted.') % {'count': result['failed_count']})
-
-
-@admin.action(description=_('Mark as urgent'))
-def mark_requests_urgent(modeladmin, request, queryset):
-    """Mark requests as urgent"""
-
-    editable_requests = queryset.filter(status__in=['draft', 'submitted'])
-    updated = editable_requests.update(urgency_level='high')
-
-    if updated:
-        messages.success(request, _('Marked %(count)d requests as urgent.') % {'count': updated})
-    else:
-        messages.warning(request, _('No requests could be marked as urgent.'))
-
-
-@admin.action(description=_('Smart process: Submit → Approve → Convert'))
-def smart_process_requests(modeladmin, request, queryset):
-    """Smart processing: automatically submit, approve and convert eligible requests"""
-
-    if not request.user.has_perm('purchases.approve_requests'):
-        messages.error(request, _('You need approval permissions for smart processing.'))
-        return
-
-    total_processed = 0
-
-    # Step 1: Submit draft requests
-    draft_requests = queryset.filter(status='draft')
-    for req in draft_requests:
-        try:
-            result = RequestService.submit_for_approval(req, request.user)
-            if result['success']:
-                total_processed += 1
-        except Exception as e:
-            messages.warning(request, _('Could not submit %(doc)s: %(error)s') % {
-                'doc': req.document_number, 'error': str(e)
-            })
-
-    # Step 2: Approve submitted requests
-    all_submitted = queryset.filter(status='submitted')
-    if all_submitted.exists():
-        result = RequestService.bulk_approve_requests(
-            list(all_submitted),
-            request.user,
-            notes=_("Smart bulk processing")
-        )
-        total_processed += result['approved_count']
-
-    # Step 3: Convert approved requests
-    all_approved = queryset.filter(status='approved')
-    if all_approved.exists():
-        result = RequestService.bulk_convert_to_orders(
-            list(all_approved),
-            request.user
-        )
-        total_processed += result['converted_count']
-
-        if result['converted_count']:
-            order_numbers = [conv['order'].document_number for conv in result['converted_orders'][:3]]
-            messages.info(request, _('Created orders: %(orders)s') % {'orders': ', '.join(order_numbers)})
-
-    if total_processed:
-        messages.success(request,
-                         _('Smart processed %(count)d requests through the workflow.') % {'count': total_processed})
-    else:
-        messages.warning(request, _('No requests were processed.'))
-
-
-# =====================
-# CUSTOM ADMIN MIXIN
-# =====================
-
-class CustomWorkflowAdminMixin:
-    """Mixin to add custom workflow URLs and views"""
+class CustomWorkflowUrlsMixin:
+    """Mixin за custom URLs"""
 
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
             path(
-                'reject-requests/',
-                self.admin_site.admin_view(self.reject_requests_view),
-                name='purchases_reject_requests'
-            ),
-            path(
-                'workflow-action/',
-                self.admin_site.admin_view(self.workflow_action_view),
-                name='purchases_workflow_action'
+                'rejection-view/',
+                self.admin_site.admin_view(self.rejection_view),
+                name='purchases_rejection_view'
             ),
         ]
         return custom_urls + urls
 
-    def reject_requests_view(self, request):
-        """Custom view for rejecting requests with reason"""
+    def rejection_view(self, request):
+        """Custom view за отхвърляне с причина"""
 
         if request.method == 'POST':
             reason = request.POST.get('rejection_reason', '').strip()
             if not reason:
                 messages.error(request, _('Rejection reason is required.'))
-                return render(request, 'admin/purchases/reject_requests.html', {
-                    'title': _('Reject Purchase Requests')
+                return render(request, 'admin/purchases/rejection_form.html', {
+                    'title': _('Reject Documents'),
                 })
 
-            # Get request IDs from session
-            request_ids = request.session.get('requests_to_reject', [])
-            if not request_ids:
-                messages.error(request, _('No requests found to reject.'))
+            # Взимаме документите от session
+            document_ids = request.session.get('documents_to_reject', [])
+            model_label = request.session.get('rejection_model', 'purchases.purchaserequest')
+
+            if not document_ids:
+                messages.error(request, _('No documents found to reject.'))
                 return redirect('admin:purchases_purchaserequest_changelist')
 
-            # Reject requests
-            requests_to_reject = PurchaseRequest.objects.filter(id__in=request_ids)
-            rejected_count = 0
+            # Намираме правилния модел
+            if model_label == 'purchases.purchaserequest':
+                documents = PurchaseRequest.objects.filter(id__in=document_ids)
+            else:
+                # Може да добавите други модели тук
+                documents = PurchaseRequest.objects.filter(id__in=document_ids)
 
-            for req in requests_to_reject:
+            # Отхвърляме документите
+            rejected_count = 0
+            failed_count = 0
+
+            for document in documents:
                 try:
-                    result = RequestService.reject_request(req, request.user, reason)
+                    result = ApprovalService.reject_document(
+                        document=document,
+                        user=request.user,
+                        reason=reason
+                    )
+
                     if result['success']:
                         rejected_count += 1
+                    else:
+                        failed_count += 1
+                        messages.error(request, f"{document.document_number}: {result['message']}")
+
                 except Exception as e:
-                    messages.error(request, _('Error rejecting %(doc)s: %(error)s') % {
-                        'doc': req.document_number, 'error': str(e)
-                    })
+                    failed_count += 1
+                    messages.error(request, f"{document.document_number}: {str(e)}")
 
+            # Показваме резултатите
             if rejected_count:
-                messages.success(request, _('Successfully rejected %(count)d requests.') % {'count': rejected_count})
+                messages.success(request, _('Successfully rejected %(count)d documents.') % {'count': rejected_count})
 
-            # Clear session
-            if 'requests_to_reject' in request.session:
-                del request.session['requests_to_reject']
+            if failed_count:
+                messages.warning(request, _('%(count)d documents could not be rejected.') % {'count': failed_count})
+
+            # Изчистваме session
+            for key in ['documents_to_reject', 'rejection_model']:
+                if key in request.session:
+                    del request.session[key]
 
             return redirect('admin:purchases_purchaserequest_changelist')
 
-        # GET request - show form
-        request_ids = request.session.get('requests_to_reject', [])
-        if not request_ids:
-            messages.error(request, _('No requests found to reject.'))
+        # GET заявка - показваме формата
+        document_ids = request.session.get('documents_to_reject', [])
+        if not document_ids:
+            messages.error(request, _('No documents found to reject.'))
             return redirect('admin:purchases_purchaserequest_changelist')
 
-        requests_to_reject = PurchaseRequest.objects.filter(id__in=request_ids)
+        # Взимаме документите за показване
+        documents = PurchaseRequest.objects.filter(id__in=document_ids)
 
         context = {
-            'requests': requests_to_reject,
-            'title': _('Reject Purchase Requests'),
+            'documents': documents,
+            'title': _('Reject Documents'),
             'opts': self.model._meta,
         }
 
-        return render(request, 'admin/purchases/reject_requests.html', context)
-
-    def workflow_action_view(self, request):
-        """Custom view for executing workflow actions"""
-
-        if request.method == 'POST':
-            action = request.POST.get('action')
-            notes = request.POST.get('notes', '')
-
-            # Get document from session
-            document_id = request.session.get('workflow_document_id')
-            document_type = request.session.get('workflow_document_type')
-
-            if not document_id or document_type != 'request':
-                messages.error(request, _('Invalid workflow action request.'))
-                return redirect('admin:purchases_purchaserequest_changelist')
-
-            try:
-                req = PurchaseRequest.objects.get(id=document_id)
-
-                # Execute action
-                result = WorkflowService.execute_workflow_action(
-                    req, action, request.user, notes=notes
-                )
-
-                if result['success']:
-                    messages.success(request, result['message'])
-                else:
-                    messages.error(request, result['message'])
-
-                # Clear session
-                for key in ['workflow_document_id', 'workflow_document_type']:
-                    if key in request.session:
-                        del request.session[key]
-
-                return redirect('admin:purchases_purchaserequest_changelist')
-
-            except PurchaseRequest.DoesNotExist:
-                messages.error(request, _('Request not found.'))
-                return redirect('admin:purchases_purchaserequest_changelist')
-            except Exception as e:
-                messages.error(request, _('Error executing workflow action: %(error)s') % {'error': str(e)})
-                return redirect('admin:purchases_purchaserequest_changelist')
-
-        # GET request - show workflow form
-        document_id = request.session.get('workflow_document_id')
-        document_type = request.session.get('workflow_document_type')
-
-        if not document_id or document_type != 'request':
-            messages.error(request, _('Invalid workflow action request.'))
-            return redirect('admin:purchases_purchaserequest_changelist')
-
-        try:
-            req = PurchaseRequest.objects.get(id=document_id)
-            workflow_options = WorkflowService.get_workflow_options(req)
-
-            context = {
-                'document': req,
-                'workflow_options': workflow_options,
-                'title': _('Workflow Actions for %(doc)s') % {'doc': req.document_number},
-                'opts': self.model._meta,
-            }
-
-            return render(request, 'admin/purchases/workflow_action.html', context)
-
-        except PurchaseRequest.DoesNotExist:
-            messages.error(request, _('Request not found.'))
-            return redirect('admin:purchases_purchaserequest_changelist')
+        return render(request, 'admin/purchases/rejection_form.html', context)
 
 
 # =====================
-# ADMIN CLASSES
+# MAIN ADMIN CLASSES
 # =====================
 
 @admin.register(PurchaseRequest)
-class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
-    """Admin for Purchase Requests"""
+class PurchaseRequestAdmin(ApprovalActionMixin, CustomWorkflowUrlsMixin, admin.ModelAdmin):
+    """Enhanced Purchase Request Admin с професионален ApprovalService"""
 
     list_display = [
         'document_number', 'supplier', 'status_display', 'urgency_display',
-        'requested_by', 'lines_count', 'estimated_total_display', 'document_date'
+        'requested_by', 'lines_count', 'estimated_total_display',
+        'workflow_status_display', 'available_actions_display', 'document_date'
     ]
 
     list_filter = [
@@ -481,19 +299,9 @@ class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
 
     date_hierarchy = 'document_date'
 
-    inlines = [PurchaseRequestLineInline]
-
-    actions = [
-        submit_requests_for_approval,
-        approve_requests,
-        convert_requests_to_orders,
-        mark_requests_urgent,
-        smart_process_requests,
-    ]
-
     readonly_fields = [
         'document_number', 'created_at', 'updated_at', 'estimated_total_display',
-        'approved_at', 'converted_at', 'workflow_status_display'
+        'workflow_status_display', 'approval_chain_display'
     ]
 
     fieldsets = (
@@ -509,16 +317,9 @@ class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
                 'expected_usage'
             )
         }),
-        (_('Workflow'), {
+        (_('Workflow Status'), {
             'fields': (
-                'requested_by', 'approved_by', 'approved_at',
-                'rejection_reason', 'workflow_status_display'
-            ),
-            'classes': ('collapse',)
-        }),
-        (_('Conversion'), {
-            'fields': (
-                'converted_to_order', 'converted_at', 'converted_by'
+                'workflow_status_display', 'approval_chain_display'
             ),
             'classes': ('collapse',)
         }),
@@ -530,23 +331,17 @@ class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
         }),
     )
 
-    def get_readonly_fields(self, request, obj=None):
-        """Dynamic readonly fields based on status"""
-        readonly = list(self.readonly_fields)
-
-        if obj and obj.status != 'draft':
-            readonly.extend([
-                'supplier', 'location', 'request_type', 'urgency_level',
-                'business_justification', 'expected_usage'
-            ])
-
-        return readonly
+    # =====================
+    # DISPLAY METHODS
+    # =====================
 
     def status_display(self, obj):
         """Colored status display"""
         colors = {
             'draft': '#6c757d',
             'submitted': '#ffc107',
+            'regional_approved': '#17a2b8',
+            'central_approved': '#28a745',
             'approved': '#28a745',
             'rejected': '#dc3545',
             'converted': '#17a2b8',
@@ -554,7 +349,6 @@ class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
         }
         color = colors.get(obj.status, '#6c757d')
 
-        # Capitalize first letter of status for display
         display_status = obj.status.replace('_', ' ').title()
 
         return format_html(
@@ -588,42 +382,108 @@ class PurchaseRequestAdmin(CustomWorkflowAdminMixin, admin.ModelAdmin):
 
     def estimated_total_display(self, obj):
         """Display estimated total"""
-        try:
-            # Използваме директно сумиране на редовете
-            total = sum(
-                line.estimated_price * line.requested_quantity
-                for line in obj.lines.all()
-                if line.estimated_price
-            )
-            if total:
-                return format_html('<strong>{:.2f}</strong>', total)
-            return '-'
-        except Exception:
-            return '-'
+        total = obj.get_estimated_total()
+        if total:
+            return format_html('<strong>{:.2f} BGN</strong>', total)
+        return '-'
 
     estimated_total_display.short_description = _('Estimated Total')
 
     def workflow_status_display(self, obj):
-        """Display workflow status with timeline"""
-        statuses = []
+        """Display workflow status using ApprovalService"""
+        try:
+            workflow_status = ApprovalService.get_workflow_status(obj)
 
-        if obj.created_at:
-            statuses.append(f"Created: {obj.created_at.strftime('%Y-%m-%d %H:%M')}")
+            # Показваме текущия статус и прогреса
+            current = workflow_status['current_status']
+            levels = workflow_status['workflow_levels']
 
-        if obj.status == 'submitted':
-            statuses.append("⏳ Waiting for approval")
-        elif obj.approved_at:
-            statuses.append(f"✅ Approved: {obj.approved_at.strftime('%Y-%m-%d %H:%M')}")
-        elif obj.status == 'rejected':
-            statuses.append("❌ Rejected")
+            if not levels:
+                return format_html('<span style="color: gray;">No workflow defined</span>')
 
-        if obj.converted_at:
-            statuses.append(f"🔄 Converted: {obj.converted_at.strftime('%Y-%m-%d %H:%M')}")
+            # Създаваме прогрес бар
+            progress_items = []
+            for level in levels:
+                if level['completed']:
+                    progress_items.append(f"✅ {level['name']}")
+                else:
+                    progress_items.append(f"⏳ {level['name']}")
 
-        return format_html('<br>'.join(statuses))
+            progress_text = " → ".join(progress_items[:3])  # Показваме първите 3 нива
+
+            return format_html(
+                '<div title="{}"><strong>{}</strong><br><small>{}</small></div>',
+                f"Current: {current}",
+                current.title(),
+                progress_text
+            )
+
+        except Exception as e:
+            return format_html('<span style="color: red;">Error: {}</span>', str(e))
 
     workflow_status_display.short_description = _('Workflow Status')
 
+    def available_actions_display(self, obj):
+        """Display available actions for current user"""
+        try:
+            # Използваме заявката от request context
+            if hasattr(self, '_current_request') and self._current_request:
+                user = self._current_request.user
+                transitions = ApprovalService.get_available_transitions(obj, user)
+
+                if transitions:
+                    actions = []
+                    for t in transitions[:3]:  # Показваме първите 3 действия
+                        action_name = t['to_status'].replace('_', ' ').title()
+                        actions.append(action_name)
+
+                    return format_html(
+                        '<span style="color: blue; font-size: 0.9em;">🎯 {}</span>',
+                        ', '.join(actions)
+                    )
+                else:
+                    return format_html('<span style="color: gray; font-size: 0.9em;">No actions</span>')
+            else:
+                return "Login required"
+
+        except Exception as e:
+            return format_html('<span style="color: red; font-size: 0.9em;">Error</span>')
+
+    available_actions_display.short_description = _('Available Actions')
+
+    def approval_chain_display(self, obj):
+        """Display approval chain information"""
+        try:
+            workflow_status = ApprovalService.get_workflow_status(obj)
+            history = workflow_status['approval_history']
+
+            if not history:
+                return format_html('<em>No approval history</em>')
+
+            history_items = []
+            for entry in history[-5:]:  # Последните 5 записа
+                timestamp = entry['timestamp'].strftime('%Y-%m-%d %H:%M')
+                actor = entry['actor']
+                action = entry['action']
+
+                history_items.append(f"{timestamp}: {action} by {actor}")
+
+            return format_html('<br>'.join(history_items))
+
+        except Exception:
+            return format_html('<em>Error loading history</em>')
+
+    approval_chain_display.short_description = _('Approval Chain')
+
+    def changelist_view(self, request, extra_context=None):
+        """Override за да запазим request context"""
+        self._current_request = request
+        return super().changelist_view(request, extra_context)
+
+
+# =====================
+# ОСТАНАЛИТЕ ADMIN КЛАСОВЕ (ЗАПАЗВАМЕ СЪЩИТЕ)
+# =====================
 
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
@@ -640,22 +500,12 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     ]
 
     search_fields = [
-        'document_number', 'supplier__name', 'supplier_order_reference',
-        'external_reference'
-    ]
-
-    date_hierarchy = 'expected_delivery_date'
-    inlines = [PurchaseOrderLineInline]
-
-    readonly_fields = [
-        'document_number', 'created_at', 'updated_at',
-        'subtotal', 'discount_total', 'vat_total', 'grand_total'
+        'document_number', 'supplier__name', 'supplier_order_reference'
     ]
 
     def grand_total_display(self, obj):
-        """Display grand total"""
         if obj.grand_total:
-            return format_html('<strong>{:.2f}</strong>', obj.grand_total)
+            return format_html('<strong>{:.2f} BGN</strong>', obj.grand_total)
         return '-'
 
     grand_total_display.short_description = _('Total')
@@ -671,7 +521,7 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
     ]
 
     list_filter = [
-        'status', 'has_quality_issues', 'quality_checked', 'has_variances',
+        'status', 'has_quality_issues', 'quality_checked',
         'delivery_date', 'supplier'
     ]
 
@@ -679,18 +529,9 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
         'document_number', 'supplier__name', 'delivery_note_number'
     ]
 
-    date_hierarchy = 'delivery_date'
-    inlines = [DeliveryLineInline]
-
-    readonly_fields = [
-        'document_number', 'created_at', 'updated_at',
-        'subtotal', 'discount_total', 'vat_total', 'grand_total'
-    ]
-
     def grand_total_display(self, obj):
-        """Display grand total"""
         if obj.grand_total:
-            return format_html('<strong>{:.2f}</strong>', obj.grand_total)
+            return format_html('<strong>{:.2f} BGN</strong>', obj.grand_total)
         return '-'
 
     grand_total_display.short_description = _('Total')
@@ -707,43 +548,3 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
             return format_html('<span style="color: red;">❌ Rejected</span>')
 
     quality_status_display.short_description = _('Quality Status')
-
-
-# =====================
-# LINE ADMINS (FOR DEBUGGING)
-# =====================
-
-@admin.register(PurchaseRequestLine)
-class PurchaseRequestLineAdmin(admin.ModelAdmin):
-    """Admin for Purchase Request Lines (for debugging)"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'requested_quantity', 'estimated_price'
-    ]
-
-    list_filter = ['document__status', 'document__supplier']
-    search_fields = ['product__name', 'document__document_number']
-
-
-@admin.register(PurchaseOrderLine)
-class PurchaseOrderLineAdmin(admin.ModelAdmin):
-    """Admin for Purchase Order Lines (for debugging)"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'quantity', 'unit_price'
-    ]
-
-    list_filter = ['document__status', 'document__supplier']
-    search_fields = ['product__name', 'document__document_number']
-
-
-@admin.register(DeliveryLine)
-class DeliveryLineAdmin(admin.ModelAdmin):
-    """Admin for Delivery Lines (for debugging)"""
-
-    list_display = [
-        'document', 'line_number', 'product', 'received_quantity', 'unit_price', 'quality_approved'
-    ]
-
-    list_filter = ['document__status', 'document__supplier', 'quality_approved']
-    search_fields = ['product__name', 'document__document_number']
