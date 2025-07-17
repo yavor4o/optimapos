@@ -1,3 +1,6 @@
+import logging
+import warnings
+
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
@@ -6,6 +9,7 @@ from decimal import Decimal
 
 from .base import BaseDocument, BaseDocumentLine
 
+logger = logging.getLogger(__name__)
 
 class PurchaseRequestManager(models.Manager):
     """Manager for Purchase Requests with specific queries"""
@@ -561,6 +565,167 @@ class PurchaseRequest(BaseDocument):
             raise ValidationError(result['message'])
 
         return True
+
+    def approve(self, user, notes=''):
+        """
+        LEGACY WRAPPER: Use ApprovalService.execute_transition() instead
+
+        This method is deprecated but kept for backward compatibility.
+        All approval logic now goes through ApprovalService for consistency.
+        """
+        warnings.warn(
+            "PurchaseRequest.approve() is deprecated. "
+            "Use ApprovalService.execute_transition(document, 'approved', user, notes) for better error handling and audit trail.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+
+            result = ApprovalService.execute_transition(
+                document=self,
+                to_status='approved',
+                user=user,
+                comments=notes or 'Approved via legacy method'
+            )
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            logger.info(f"Request {self.document_number} approved via legacy method by {user}")
+            return True
+
+        except ImportError:
+            # Fallback if ApprovalService not available
+            logger.warning("ApprovalService not available, falling back to direct status change")
+
+            if self.status != 'submitted':
+                raise ValidationError("Can only approve submitted requests")
+
+            self.status = 'approved'
+            self.approved_by = user
+            self.approved_at = timezone.now()
+            if notes:
+                self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
+            self.updated_by = user
+            self.save()
+
+            return True
+
+    def reject(self, user, reason):
+        """
+        LEGACY WRAPPER: Use ApprovalService.execute_transition() instead
+        """
+        warnings.warn(
+            "PurchaseRequest.reject() is deprecated. "
+            "Use ApprovalService.execute_transition(document, 'rejected', user, reason)",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        if not reason:
+            raise ValidationError("Rejection reason is required")
+
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+
+            result = ApprovalService.execute_transition(
+                document=self,
+                to_status='rejected',
+                user=user,
+                comments=reason
+            )
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            logger.info(f"Request {self.document_number} rejected via legacy method by {user}")
+            return True
+
+        except ImportError:
+            # Fallback if ApprovalService not available
+            logger.warning("ApprovalService not available, falling back to direct status change")
+
+            if self.status != 'submitted':
+                raise ValidationError("Can only reject submitted requests")
+
+            self.status = 'rejected'
+            self.rejection_reason = reason
+            self.updated_by = user
+            self.save()
+
+            return True
+
+    def submit_for_approval(self, user=None):
+        """
+        LEGACY WRAPPER: Use ApprovalService.execute_transition() instead
+        """
+        warnings.warn(
+            "PurchaseRequest.submit_for_approval() is deprecated. "
+            "Use ApprovalService.execute_transition(document, 'submitted', user)",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+
+            result = ApprovalService.execute_transition(
+                document=self,
+                to_status='submitted',
+                user=user,
+                comments='Submitted for approval via legacy method'
+            )
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            return True
+
+        except ImportError:
+            # Fallback logic
+            if self.status != 'draft':
+                raise ValidationError("Can only submit draft requests")
+
+            if not self.lines.exists():
+                raise ValidationError("Cannot submit request without lines")
+
+            self.status = 'submitted'
+            self.updated_by = user
+            self.save()
+
+            return True
+
+    def convert_to_order(self, user=None, **kwargs):
+        """
+        LEGACY WRAPPER: Use OrderService.create_from_request() instead
+
+        This method is kept for backward compatibility but now uses
+        the improved OrderService logic with proper workflow handling.
+        """
+        warnings.warn(
+            "PurchaseRequest.convert_to_order() is deprecated. "
+            "Use OrderService.create_from_request() directly for better error handling and workflow support.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        try:
+            from ..services.order_service import OrderService
+
+            result = OrderService.create_from_request(self, user, **kwargs)
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            return result['order']
+
+        except ImportError:
+            raise ValidationError("OrderService not available")
+
+
+
 # =====================
 # REQUEST LINE MODEL
 # =====================

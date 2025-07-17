@@ -105,30 +105,38 @@ class DynamicApprovalMixin:
         return approval_action
 
     def _handle_document_approval(self, document, user):
-        """Обработва одобрението на един документ"""
+        """
+        ФИКСИРАНО: Обработва одобрението на един документ
 
-        # Намираме възможните преходи за този потребител
-        available_transitions = ApprovalService.get_available_transitions(document, user)
+        Добавена логика за draft → submitted случая
+        """
 
-        if not available_transitions:
-            return {
-                'success': False,
-                'message': 'No available approval transitions for this user'
-            }
+        # СПЕЦИАЛЕН СЛУЧАЙ: draft → submitted (submit, не approval!)
+        if document.status == 'draft':
+            try:
+                # Проверяваме дали може да се submit-не
+                if not hasattr(document, 'lines') or not document.lines.exists():
+                    return {
+                        'success': False,
+                        'message': 'Cannot submit request without lines'
+                    }
 
-        # Взимаме първия възможен преход (може да се подобри логиката)
-        transition = available_transitions[0]
-        target_status = transition['to_status']
+                # ДИРЕКТЕН SUBMIT БЕЗ ApprovalService
+                document.status = 'submitted'
+                if hasattr(document, 'updated_by'):
+                    document.updated_by = user
+                document.save()
 
-        # Изпълняваме прехода
-        result = ApprovalService.execute_transition(
-            document=document,
-            to_status=target_status,
-            user=user,
-            comments=f"Approved via admin action by {user.get_full_name()}"
-        )
+                return {
+                    'success': True,
+                    'message': f'Submitted for approval (draft → submitted)'
+                }
 
-        return result
+            except Exception as e:
+                return {
+                    'success': False,
+                    'message': f'Error submitting document: {str(e)}'
+                }
 
     def _handle_document_rejection(self, document, user, request):
         """Обработва отхвърлянето на един документ"""
@@ -195,8 +203,15 @@ class DynamicApprovalMixin:
     # =====================
 
     def workflow_status_display(self, obj):
-        """Display method за показване на workflow статус в list_display"""
+        """
+        ПОДОБРЕН: Display method за показване на workflow статус в list_display
+        """
         try:
+            # СПЕЦИАЛЕН СЛУЧАЙ: draft документи
+            if obj.status == 'draft':
+                return format_html('<span style="color: orange;">📝 Ready to Submit</span>')
+
+            # ЗА ОСТАНАЛИТЕ: ApprovalService логика
             workflow_status = ApprovalService.get_workflow_status(obj)
 
             if workflow_status['is_completed']:
@@ -204,7 +219,7 @@ class DynamicApprovalMixin:
             elif workflow_status['available_transitions']:
                 return format_html(
                     '<span style="color: orange;">⏳ {} actions available</span>',
-                    workflow_status['available_transitions']
+                    len(workflow_status['available_transitions'])
                 )
             else:
                 return format_html('<span style="color: gray;">⏸️ Waiting</span>')
@@ -215,9 +230,18 @@ class DynamicApprovalMixin:
     workflow_status_display.short_description = _('Workflow Status')
 
     def available_actions_display(self, obj):
-        """Display method за показване на достъпни actions"""
+        """
+        ПОДОБРЕН: Display method за показване на достъпни actions
+        """
         try:
-            # Показваме за текущия потребител (ако има request context)
+            # СПЕЦИАЛЕН СЛУЧАЙ: draft документи
+            if obj.status == 'draft':
+                if hasattr(obj, 'lines') and obj.lines.exists():
+                    return format_html('<span style="color: blue;">📤 Can Submit</span>')
+                else:
+                    return format_html('<span style="color: gray;">📝 Add Lines First</span>')
+
+            # ЗА ОСТАНАЛИТЕ: ApprovalService логика
             if hasattr(self, '_current_request') and self._current_request:
                 user = self._current_request.user
                 transitions = ApprovalService.get_available_transitions(obj, user)
@@ -235,6 +259,8 @@ class DynamicApprovalMixin:
 
         except Exception:
             return format_html('<span style="color: red;">Error</span>')
+
+
 
     available_actions_display.short_description = _('Available Actions')
 

@@ -1,11 +1,13 @@
 # purchases/models/orders.py - FIXED WITH NEW ARCHITECTURE
+import logging
+import warnings
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
-
+logger = logging.getLogger(__name__)
 from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, FinancialLineMixin
 
 
@@ -271,53 +273,115 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # =====================
     # WORKFLOW METHODS
     # =====================
-    def send_to_supplier(self, user=None):
-        """Send order to supplier"""
-        if self.status != self.DRAFT:
-            raise ValidationError("Can only send draft orders")
 
-        if not self.lines.exists():
-            raise ValidationError("Cannot send order without lines")
+    def approve(self, user, notes=''):
+        """
+        LEGACY WRAPPER: Use ApprovalService.execute_transition() instead
+        """
+        warnings.warn(
+            "PurchaseOrder.approve() is deprecated. "
+            "Use ApprovalService.execute_transition(document, 'approved', user, notes)",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
-        self.status = self.SENT
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+
+            result = ApprovalService.execute_transition(
+                document=self,
+                to_status='approved',
+                user=user,
+                comments=notes or 'Approved via legacy method'
+            )
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            return True
+
+        except ImportError:
+            # Fallback if ApprovalService not available
+            if self.status != 'pending_approval':
+                raise ValidationError("Can only approve orders pending approval")
+
+            self.status = 'approved'
+            self.updated_by = user
+            if notes:
+                self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
+            self.save()
+
+            return True
+
+    def confirm(self, user, notes=''):
+        """
+        LEGACY WRAPPER: Confirm order (move to confirmed status)
+        """
+        warnings.warn(
+            "PurchaseOrder.confirm() is deprecated. "
+            "Use ApprovalService.execute_transition(document, 'confirmed', user, notes)",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+
+            result = ApprovalService.execute_transition(
+                document=self,
+                to_status='confirmed',
+                user=user,
+                comments=notes or 'Confirmed via legacy method'
+            )
+
+            if not result['success']:
+                raise ValidationError(result['message'])
+
+            return True
+
+        except ImportError:
+            # Fallback
+            if self.status not in ['draft', 'approved']:
+                raise ValidationError(f"Cannot confirm order with status '{self.status}'")
+
+            self.status = 'confirmed'
+            self.updated_by = user
+            if notes:
+                self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
+            self.save()
+
+            return True
+
+    def send_to_supplier(self, user, notes=''):
+        """
+        Business method: Mark order as sent to supplier
+        This is NOT deprecated as it's business logic, not approval workflow
+        """
+        if not self.can_be_sent_to_supplier():
+            raise ValidationError(f"Cannot send order with status '{self.status}' to supplier")
+
+        from django.utils import timezone
+
+        self.status = 'sent'
         self.sent_to_supplier_at = timezone.now()
         self.sent_by = user
+        if notes:
+            self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
         self.updated_by = user
         self.save()
 
+        logger.info(f"Order {self.document_number} sent to supplier by {user}")
         return True
 
-    def confirm_by_supplier(self, user=None, supplier_reference=''):
-        """Mark order as confirmed by supplier"""
-        if self.status not in [self.SENT, self.DRAFT]:
-            raise ValidationError("Can only confirm sent or draft orders")
+    def can_be_sent_to_supplier(self):
+        """Check if order can be sent to supplier"""
+        return self.status == 'confirmed' and not hasattr(self, 'sent_to_supplier_at')
 
-        self.status = self.CONFIRMED
-        self.supplier_confirmed = True
-        self.supplier_confirmed_date = timezone.now().date()
-        if supplier_reference:
-            self.supplier_order_reference = supplier_reference
-        self.updated_by = user
-        self.save()
 
-        return True
 
-    def mark_as_delivered(self, user=None):
-        """Mark order as fully delivered"""
-        self.delivery_status = 'completed'
-        self.status = self.RECEIVED
-        self.updated_by = user
-        self.save()
 
-        return True
 
-    def mark_as_partially_delivered(self, user=None):
-        """Mark order as partially delivered"""
-        self.delivery_status = 'partial'
-        self.updated_by = user
-        self.save()
 
-        return True
 
     def update_delivery_status(self):
         """Update delivery status based on line delivery progress"""
@@ -370,6 +434,63 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     def can_be_cancelled(self):
         """Override with order-specific logic"""
         return self.status not in [self.RECEIVED, self.CANCELLED, self.CLOSED]
+
+    def needs_approval(self, amount=None):
+        """
+        CRITICAL NEW METHOD: Check if order needs approval
+
+        This respects DocumentType configuration and business rules
+        """
+        # Check DocumentType configuration first
+        if not self.document_type or not self.document_type.requires_approval:
+            return False
+
+        # Get amount to check
+        if amount is None:
+            # Try multiple ways to get the total amount
+            amount = (
+                    getattr(self, 'grand_total', None) or
+                    getattr(self, 'total_amount', None) or
+                    self.get_estimated_total() or
+                    Decimal('0.00')
+            )
+
+        # Use DocumentType approval limit if configured
+        if self.document_type.approval_limit:
+            return amount > self.document_type.approval_limit
+
+        # BUSINESS RULE: Default approval thresholds
+        # These can be overridden by DocumentType configuration
+        if self.is_urgent:
+            # Urgent orders have lower threshold
+            default_threshold = Decimal('500.00')
+        else:
+            # Regular orders
+            default_threshold = Decimal('1000.00')
+
+        return amount > default_threshold
+
+    def get_estimated_total(self):
+        """
+        Get total amount for approval calculations
+        This method should return the best available estimate of the order total
+        """
+        # If we already have calculated totals, use them
+        if hasattr(self, 'grand_total') and self.grand_total:
+            return self.grand_total
+
+        if hasattr(self, 'total_amount') and self.total_amount:
+            return self.total_amount
+
+        # Calculate from lines if no totals exist yet
+        if self.lines.exists():
+            total = Decimal('0.00')
+            for line in self.lines.all():
+                line_total = (line.ordered_quantity or 0) * (line.unit_price or 0)
+                total += line_total
+            return total
+
+        return Decimal('0.00')
 
     # =====================
     # PROPERTIES

@@ -365,11 +365,13 @@ class BaseDocument(models.Model):
                 'supplier': _('Supplier is required for this document type')
             })
 
+    # purchases/models/base.py - ENHANCED save() method
+
     def save(self, *args, **kwargs):
         """
-        Enhanced save with DocumentType integration - CLEAN VERSION
+        Enhanced save with DocumentType integration + AUTO_CONFIRM support
 
-        🎯 БЕЗ auto_transitions логика - само основни функции
+        🎯 Добавена auto_confirm логика за пропускане на draft статус
         """
 
         user = getattr(self, '_current_user', None)
@@ -378,9 +380,30 @@ class BaseDocument(models.Model):
                 self.created_by = user
             self.updated_by = user
 
-        # Set default status from DocumentType (само за нови документи)
+        # ENHANCED: Set default status from DocumentType with auto_confirm support
         if not self.status and self.document_type:
-            self.status = self.document_type.default_status
+            if self.document_type.auto_confirm:
+                # AUTO-CONFIRM: Пропускаме draft, отиваме директно към submit/confirm статус
+
+                # Намираме първия non-draft статус от allowed_statuses
+                allowed_statuses = self.document_type.allowed_statuses
+                non_draft_statuses = [s for s in allowed_statuses if s not in ['draft', 'cancelled']]
+
+                if non_draft_statuses:
+                    auto_status = non_draft_statuses[0]  # Първия достъпен статус
+                    self.status = auto_status
+
+                    # Логваме за debugging
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(
+                        f"AUTO-CONFIRM: {self.__class__.__name__} {self.document_number} starts with status '{auto_status}' (skipped draft)")
+                else:
+                    # Fallback към default ако няма други статуси
+                    self.status = self.document_type.default_status
+            else:
+                # Normal: Start with default status (usually draft)
+                self.status = self.document_type.default_status
 
         # Generate document number if needed
         if not self.document_number and self.document_type and self.document_type.auto_number:
