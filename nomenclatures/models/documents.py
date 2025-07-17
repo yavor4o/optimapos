@@ -141,11 +141,7 @@ class DocumentType(BaseNomenclature):
         help_text=_('Allowed transitions: {"draft": ["submitted", "cancelled"]}')
     )
 
-    auto_transitions = models.JSONField(
-        _('Auto Transitions'),
-        default=dict,
-        help_text=_('Automatic status changes: {"received": "processed"}')
-    )
+
 
     final_statuses = models.JSONField(
         _('Final Statuses'),

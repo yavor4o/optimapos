@@ -366,7 +366,11 @@ class BaseDocument(models.Model):
             })
 
     def save(self, *args, **kwargs):
-        """Enhanced save with DocumentType integration"""
+        """
+        Enhanced save with DocumentType integration - CLEAN VERSION
+
+        🎯 БЕЗ auto_transitions логика - само основни функции
+        """
 
         user = getattr(self, '_current_user', None)
         if user and user.is_authenticated:
@@ -374,7 +378,7 @@ class BaseDocument(models.Model):
                 self.created_by = user
             self.updated_by = user
 
-        # Set default status from DocumentType
+        # Set default status from DocumentType (само за нови документи)
         if not self.status and self.document_type:
             self.status = self.document_type.default_status
 
@@ -382,29 +386,14 @@ class BaseDocument(models.Model):
         if not self.document_number and self.document_type and self.document_type.auto_number:
             self.document_number = self.generate_document_number()
 
-        # Full clean before saving
+        # Full clean before saving (включва DocumentType validation)
         self.full_clean()
 
-        # Check for auto-transitions
-        is_new = not self.pk
-        old_status = None
-
-        if not is_new:
-            old_instance = self.__class__.objects.get(pk=self.pk)
-            old_status = old_instance.status
-
+        # 🎯 SAVE - ТОЛКОВА!
         super().save(*args, **kwargs)
 
-        # Handle auto-transitions after save
-        if (self.document_type and
-                self.document_type.auto_transitions and
-                old_status != self.status):
-
-            auto_next_status = self.document_type.auto_transitions.get(self.status)
-            if auto_next_status and self.can_transition_to(auto_next_status):
-                # Schedule auto-transition (можем да го направим веднага или с Celery task)
-                self.status = auto_next_status
-                self.__class__.objects.filter(pk=self.pk).update(status=auto_next_status)
+        # 🚫 МАХНАТО: Цялата auto_transitions логика
+        # ApprovalService ще управлява всички status промени
 
     # =====================
     # UTILITY METHODS

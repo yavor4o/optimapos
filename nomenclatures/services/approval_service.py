@@ -138,16 +138,13 @@ class ApprovalService:
             with transaction.atomic():
                 from_status = document.status
 
-                # ВАЖНО: Маркираме че ApprovalService прави промяната
-                document._approval_service_transition = True
-
-                # Ъпдейтваме статуса
+                # Ъпдейтваме статуса (вече НЕ се налага flag за BaseDocument)
                 document.status = to_status
 
                 # Ъпдейтваме други полета според правилото
                 ApprovalService._update_document_fields(document, rule, user)
 
-                # Запазваме документа
+                # Запазваме документа (BaseDocument няма да прави auto-transitions)
                 document.save()
 
                 # Логваме действието
@@ -163,9 +160,6 @@ class ApprovalService:
 
                 # Изпращаме нотификации
                 ApprovalService._send_notifications(document, rule, user, 'approved')
-
-                # НОВА ЛОГИКА: Проверяваме за DocumentType auto-transitions
-                ApprovalService._check_document_type_auto_transitions(document, user)
 
                 # Проверяваме за ApprovalRule auto-transitions
                 ApprovalService._check_approval_rule_auto_transitions(document, user)
@@ -285,7 +279,8 @@ class ApprovalService:
                 'message': f'Error during ApprovalRule validation: {str(e)}'
             }
 
-    @staticmethod
+    staticmethod
+
     def _check_document_type_auto_transitions(document, user):
         """
         НОВ МЕТОД: Проверява за DocumentType auto-transitions
@@ -318,7 +313,6 @@ class ApprovalService:
         except Exception as e:
             logger.error(f"Error in DocumentType auto-transitions: {e}")
 
-    @staticmethod
     def _check_approval_rule_auto_transitions(document, user):
         """
         ОБНОВЕН МЕТОД: Проверява за ApprovalRule auto-transitions
