@@ -1,77 +1,119 @@
-# purchases/services/request_service.py
+# purchases/services/request_service.py - ПОЧИСТЕН
 
 from typing import Dict, List, Optional
 from decimal import Decimal
 from django.db import transaction
-from django.core.exceptions import ValidationError, PermissionDenied
 from django.utils import timezone
-from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
-from ..models.requests import PurchaseRequest, PurchaseRequestLine
-from ..models.orders import PurchaseOrder, PurchaseOrderLine
-from .notification_service import NotificationService
-from .analytics_service import AnalyticsService
-
-User = get_user_model()
+from purchases.models.requests import PurchaseRequest, PurchaseRequestLine
 
 
 class RequestService:
-    """Service for Purchase Request operations"""
+    """Service for Purchase Request business operations (NO WORKFLOW)"""
 
     # =====================
-    # CREATION & EDITING
+    # REQUEST CREATION
     # =====================
 
     @staticmethod
+    @transaction.atomic
     def create_request(
+            requested_by,
             supplier,
             location,
-            user,
-            request_type='regular',
-            urgency_level='normal',
-            business_justification='',
-            expected_usage='',
+            request_type: str = 'regular',
+            urgency_level: str = 'normal',
+            business_justification: str = '',
+            expected_usage: str = '',
+            lines_data: Optional[List[Dict]] = None,
             **kwargs
-    ) -> Dict:
-        """Create new purchase request"""
+    ) -> PurchaseRequest:
+        """Create new purchase request with optional lines"""
 
         try:
-            with transaction.atomic():
-                request = PurchaseRequest.objects.create(
-                    supplier=supplier,
-                    location=location,
-                    request_type=request_type,
-                    urgency_level=urgency_level,
-                    business_justification=business_justification,
-                    expected_usage=expected_usage,
-                    requested_by=user,
-                    created_by=user,
-                    document_date=timezone.now().date(),
-                    **kwargs
-                )
+            # Create the request
+            request = PurchaseRequest.objects.create(
+                requested_by=requested_by,
+                supplier=supplier,
+                location=location,
+                request_type=request_type,
+                urgency_level=urgency_level,
+                business_justification=business_justification,
+                expected_usage=expected_usage,
+                status='draft',
+                **kwargs
+            )
 
-                # Log creation
-                AnalyticsService.log_request_action(request, 'created', user)
+            # Add lines if provided
+            if lines_data:
+                for line_data in lines_data:
+                    RequestService.add_line_to_request(
+                        request=request,
+                        product=line_data['product'],
+                        requested_quantity=line_data['requested_quantity'],
+                        estimated_price=line_data.get('estimated_price'),
+                        usage_description=line_data.get('usage_description', ''),
+                        suggested_supplier=line_data.get('suggested_supplier'),
+                        user=requested_by
+                    )
 
-                return {
-                    'success': True,
-                    'message': f'Request {request.document_number} created successfully',
-                    'request': request
-                }
+            return request
 
         except Exception as e:
-            return {
-                'success': False,
-                'message': f'Error creating request: {str(e)}',
-                'request': None
-            }
+            raise ValidationError(f'Error creating request: {str(e)}')
 
     @staticmethod
+    @transaction.atomic
+    def duplicate_request(
+            original_request: PurchaseRequest,
+            requested_by,
+            modifications: Optional[Dict] = None
+    ) -> PurchaseRequest:
+        """Create copy of existing request"""
+
+        try:
+            # Copy basic fields
+            new_request = PurchaseRequest.objects.create(
+                requested_by=requested_by,
+                supplier=original_request.supplier,
+                location=original_request.location,
+                request_type=original_request.request_type,
+                urgency_level=modifications.get('urgency_level', original_request.urgency_level),
+                business_justification=modifications.get('business_justification',
+                                                         original_request.business_justification),
+                expected_usage=modifications.get('expected_usage', original_request.expected_usage),
+                status='draft'
+            )
+
+            # Copy lines
+            for original_line in original_request.lines.all():
+                RequestService.add_line_to_request(
+                    request=new_request,
+                    product=original_line.product,
+                    requested_quantity=original_line.requested_quantity,
+                    estimated_price=original_line.estimated_price,
+                    usage_description=original_line.usage_description,
+                    suggested_supplier=original_line.suggested_supplier,
+                    user=requested_by
+                )
+
+            return new_request
+
+        except Exception as e:
+            raise ValidationError(f'Error duplicating request: {str(e)}')
+
+    # =====================
+    # LINE MANAGEMENT
+    # =====================
+
+    @staticmethod
+    @transaction.atomic
     def add_line_to_request(
             request: PurchaseRequest,
             product,
             requested_quantity: Decimal,
-            estimated_price: Optional[Decimal] = None,
+            estimated_price: Decimal = None,
             usage_description: str = '',
             suggested_supplier=None,
             user=None
@@ -82,13 +124,18 @@ class RequestService:
             raise ValidationError("Cannot modify non-draft requests")
 
         try:
+            # Автоматично генерираме line_number
+            next_line_number = (request.lines.count() + 1)
+
             line = PurchaseRequestLine.objects.create(
                 document=request,
+                line_number=next_line_number,
                 product=product,
                 requested_quantity=requested_quantity,
                 estimated_price=estimated_price,
                 usage_description=usage_description,
-                suggested_supplier=suggested_supplier
+                suggested_supplier=suggested_supplier,
+                unit=product.default_purchase_unit  # Вземи от продукта
             )
 
             return {
@@ -104,286 +151,76 @@ class RequestService:
                 'line': None
             }
 
-    # =====================
-    # WORKFLOW OPERATIONS
-    # =====================
-
     @staticmethod
-    def submit_for_approval(request: PurchaseRequest, user=None) -> Dict:
-        """Submit request for approval"""
-
-        # Validation
-        if request.status != 'draft':
-            raise ValidationError("Can only submit draft requests")
-
-        if not request.lines.exists():
-            raise ValidationError("Cannot submit request without lines")
-
-        # Business rules validation
-        if request.urgency_level == 'critical' and not request.business_justification:
-            raise ValidationError("Critical requests must have business justification")
-
-        try:
-            with transaction.atomic():
-                request.status = 'submitted'
-                request.updated_by = user
-                request.save()
-
-                # Notify approvers
-                NotificationService.notify_request_approvers(request)
-
-                # Log action
-                AnalyticsService.log_request_action(request, 'submitted', user)
-
-                return {
-                    'success': True,
-                    'message': f'Request {request.document_number} submitted for approval',
-                    'request': request
-                }
-
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Error submitting request: {str(e)}',
-                'request': request
-            }
-
-    @staticmethod
-    def approve_request(request: PurchaseRequest, user, notes: str = '') -> Dict:
-        """Approve purchase request"""
-
-        # Validation
-        if request.status != 'submitted':
-            raise ValidationError("Can only approve submitted requests")
-
-        if not user.has_perm('purchases.approve_requests'):
-            raise PermissionDenied("User cannot approve requests")
-
-        # Check approval limits
-        estimated_total = request.get_estimated_total()
-        if estimated_total and not RequestService._can_approve_amount(user, estimated_total):
-            raise PermissionDenied(f"User cannot approve amounts over {user.approval_limit}")
-
-        try:
-            with transaction.atomic():
-                request.status = 'approved'
-                request.approved_by = user
-                request.approved_at = timezone.now()
-                request.updated_by = user
-
-                if notes:
-                    request.notes = (request.notes + '\n' + notes).strip()
-
-                request.save()
-
-                # Notify requester
-                NotificationService.notify_request_approved(request)
-
-                # Log action
-                AnalyticsService.log_request_action(request, 'approved', user, {
-                    'estimated_total': estimated_total,
-                    'approval_notes': notes
-                })
-
-                return {
-                    'success': True,
-                    'message': f'Request {request.document_number} approved',
-                    'request': request
-                }
-
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Error approving request: {str(e)}',
-                'request': request
-            }
-
-    @staticmethod
-    def reject_request(request: PurchaseRequest, user, reason: str) -> Dict:
-        """Reject purchase request"""
-
-        if request.status != 'submitted':
-            raise ValidationError("Can only reject submitted requests")
-
-        if not user.has_perm('purchases.approve_requests'):
-            raise PermissionDenied("User cannot reject requests")
-
-        if not reason:
-            raise ValidationError("Rejection reason is required")
-
-        try:
-            with transaction.atomic():
-                request.status = 'rejected'
-                request.rejection_reason = reason
-                request.updated_by = user
-                request.save()
-
-                # Notify requester
-                NotificationService.notify_request_rejected(request, reason)
-
-                # Log action
-                AnalyticsService.log_request_action(request, 'rejected', user, {
-                    'rejection_reason': reason
-                })
-
-                return {
-                    'success': True,
-                    'message': f'Request {request.document_number} rejected',
-                    'request': request
-                }
-
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Error rejecting request: {str(e)}',
-                'request': request
-            }
-
-    # =====================
-    # CONVERSION TO ORDER
-    # =====================
-
-    @staticmethod
-    def convert_to_order(
-            request: PurchaseRequest,
-            user,
-            expected_delivery_date=None,
-            order_notes: str = '',
-            line_modifications: Optional[Dict] = None
+    @transaction.atomic
+    def update_line_quantity(
+            line: PurchaseRequestLine,
+            new_quantity: Decimal,
+            user=None
     ) -> Dict:
-        """Convert approved request to purchase order"""
+        """Update line quantity"""
 
-        if request.status != 'approved':
-            raise ValidationError("Can only convert approved requests")
-
-        if request.converted_to_order:
-            raise ValidationError("Request already converted to order")
+        if line.document.status != 'draft':
+            raise ValidationError("Cannot modify non-draft requests")
 
         try:
-            with transaction.atomic():
-                # Create order
-                order = PurchaseOrder.objects.create(
-                    supplier=request.supplier,
-                    location=request.location,
-                    source_request=request,
-                    document_date=timezone.now().date(),
-                    expected_delivery_date=expected_delivery_date,
-                    is_urgent=(request.urgency_level in ['high', 'critical']),
-                    created_by=user,
-                    notes=f"Converted from request {request.document_number}\n{order_notes}".strip()
-                )
+            old_quantity = line.requested_quantity
+            line.requested_quantity = new_quantity
+            line.save()
 
-                # Convert lines
-                converted_lines = []
-                for req_line in request.lines.all():
-                    # Apply modifications if provided
-                    quantity = req_line.requested_quantity
-                    unit_price = req_line.estimated_price
-
-                    if line_modifications and req_line.id in line_modifications:
-                        modifications = line_modifications[req_line.id]
-                        quantity = modifications.get('quantity', quantity)
-                        unit_price = modifications.get('unit_price', unit_price)
-
-                    order_line = PurchaseOrderLine.objects.create(
-                        document=order,
-                        product=req_line.product,
-                        quantity=quantity,
-                        unit_price=unit_price or Decimal('0.00'),
-                        notes=req_line.usage_description
-                    )
-                    converted_lines.append(order_line)
-
-                # Update request status
-                request.status = 'converted'
-                request.converted_to_order = order
-                request.converted_at = timezone.now()
-                request.converted_by = user
-                request.save()
-
-                # Recalculate order totals
-                order.recalculate_totals()
-
-                # Notifications
-                NotificationService.notify_request_converted(request, order)
-
-                # Analytics
-                AnalyticsService.log_request_action(request, 'converted', user, {
-                    'order_number': order.document_number,
-                    'lines_converted': len(converted_lines),
-                    'order_total': order.grand_total
-                })
-
-                return {
-                    'success': True,
-                    'message': f'Request {request.document_number} converted to order {order.document_number}',
-                    'request': request,
-                    'order': order,
-                    'converted_lines': converted_lines
-                }
+            return {
+                'success': True,
+                'message': f'Quantity updated: {old_quantity} → {new_quantity}',
+                'line': line
+            }
 
         except Exception as e:
             return {
                 'success': False,
-                'message': f'Error converting request: {str(e)}',
-                'request': request,
-                'order': None
+                'message': f'Error updating quantity: {str(e)}',
+                'line': line
             }
 
-    # =====================
-    # BULK OPERATIONS
-    # =====================
+    @staticmethod
+    @transaction.atomic
+    def remove_line_from_request(
+            line: PurchaseRequestLine,
+            user=None
+    ) -> Dict:
+        """Remove line from request"""
+
+        if line.document.status != 'draft':
+            raise ValidationError("Cannot modify non-draft requests")
+
+        try:
+            request = line.document
+            product_name = line.product.name
+            line.delete()
+
+            # Reorder line numbers
+            RequestService._reorder_line_numbers(request)
+
+            return {
+                'success': True,
+                'message': f'Line removed: {product_name}',
+                'request': request
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error removing line: {str(e)}',
+                'line': line
+            }
 
     @staticmethod
-    def bulk_approve_requests(requests: List[PurchaseRequest], user, notes: str = '') -> Dict:
-        """Bulk approve multiple requests"""
-
-        approved = []
-        failed = []
-
-        for request in requests:
-            try:
-                result = RequestService.approve_request(request, user, notes)
-                if result['success']:
-                    approved.append(request)
-                else:
-                    failed.append({'request': request, 'error': result['message']})
-            except Exception as e:
-                failed.append({'request': request, 'error': str(e)})
-
-        return {
-            'approved_count': len(approved),
-            'failed_count': len(failed),
-            'approved_requests': approved,
-            'failed_requests': failed
-        }
-
-    @staticmethod
-    def bulk_convert_to_orders(requests: List[PurchaseRequest], user, **kwargs) -> Dict:
-        """Bulk convert multiple requests to orders"""
-
-        converted = []
-        failed = []
-
-        for request in requests:
-            try:
-                result = RequestService.convert_to_order(request, user, **kwargs)
-                if result['success']:
-                    converted.append({
-                        'request': request,
-                        'order': result['order']
-                    })
-                else:
-                    failed.append({'request': request, 'error': result['message']})
-            except Exception as e:
-                failed.append({'request': request, 'error': str(e)})
-
-        return {
-            'converted_count': len(converted),
-            'failed_count': len(failed),
-            'converted_orders': converted,
-            'failed_requests': failed
-        }
+    def _reorder_line_numbers(request: PurchaseRequest):
+        """Reorder line numbers after deletion"""
+        lines = request.lines.order_by('line_number')
+        for idx, line in enumerate(lines, 1):
+            if line.line_number != idx:
+                line.line_number = idx
+                line.save(update_fields=['line_number'])
 
     # =====================
     # ANALYTICS & REPORTING
@@ -391,7 +228,7 @@ class RequestService:
 
     @staticmethod
     def get_request_analytics(request: PurchaseRequest) -> Dict:
-        """Get analytics for specific request"""
+        """Get comprehensive analytics for specific request"""
 
         return {
             'basic_info': {
@@ -409,17 +246,75 @@ class RequestService:
                 'total_processing_time': RequestService._calculate_total_processing_time(request)
             },
             'content_analysis': {
-                'lines_count': request.lines.count(),
-                'estimated_total': request.get_estimated_total(),
-                'has_estimated_prices': request.lines.filter(estimated_price__isnull=False).count(),
-                'missing_estimated_prices': request.lines.filter(estimated_price__isnull=True).count()
+                'total_lines': request.lines.count(),
+                'total_items': sum(line.requested_quantity for line in request.lines.all()),
+                'estimated_total': RequestService._calculate_estimated_total(request),
+                'lines_with_estimates': request.lines.filter(estimated_price__isnull=False).count(),
+                'lines_with_suppliers': request.lines.filter(suggested_supplier__isnull=False).count(),
+                'high_priority_lines': request.lines.filter(priority__gt=0).count(),
             },
-            'approval_info': {
-                'requires_approval': request.approval_required,
-                'approved_by': request.approved_by.get_full_name() if request.approved_by else None,
-                'approved_at': request.approved_at,
-                'approval_notes': request.notes
-            }
+            'supplier_analysis': RequestService._analyze_suppliers(request),
+            'product_categories': RequestService._analyze_product_categories(request)
+        }
+
+    # =====================
+    # BUSINESS CALCULATIONS
+    # =====================
+
+    @staticmethod
+    def calculate_request_totals(request: PurchaseRequest) -> Dict:
+        """Calculate various totals for the request"""
+
+        lines = request.lines.all()
+
+        total_items = sum(line.requested_quantity for line in lines)
+        estimated_total = sum(
+            line.estimated_price * line.requested_quantity
+            for line in lines
+            if line.estimated_price
+        ) or Decimal('0.00')
+
+        lines_with_estimates = lines.filter(estimated_price__isnull=False).count()
+        estimate_coverage = (lines_with_estimates / lines.count() * 100) if lines.count() > 0 else 0
+
+        return {
+            'total_lines': lines.count(),
+            'total_items': total_items,
+            'estimated_total': estimated_total,
+            'lines_with_estimates': lines_with_estimates,
+            'estimate_coverage_percent': round(estimate_coverage, 1),
+            'average_item_value': (estimated_total / total_items) if total_items > 0 else Decimal('0.00')
+        }
+
+    @staticmethod
+    def validate_request_completeness(request: PurchaseRequest) -> Dict:
+        """Validate if request is complete enough for submission"""
+
+        issues = []
+        warnings = []
+
+        # Check lines
+        if not request.lines.exists():
+            issues.append("Request has no lines")
+
+        # Check justification
+        if not request.business_justification:
+            issues.append("Business justification is required")
+
+        # Check estimates for high-value requests
+        lines_without_estimates = request.lines.filter(estimated_price__isnull=True).count()
+        if lines_without_estimates > 0:
+            warnings.append(f"{lines_without_estimates} lines missing price estimates")
+
+        # Check urgency justification
+        if request.urgency_level in ['high', 'critical'] and not request.expected_usage:
+            warnings.append("High/critical requests should have detailed usage description")
+
+        return {
+            'is_valid': len(issues) == 0,
+            'issues': issues,
+            'warnings': warnings,
+            'completeness_score': RequestService._calculate_completeness_score(request)
         }
 
     # =====================
@@ -427,41 +322,129 @@ class RequestService:
     # =====================
 
     @staticmethod
-    def _can_approve_amount(user, amount: Decimal) -> bool:
-        """Check if user can approve given amount"""
-        if hasattr(user, 'approval_limit'):
-            return user.approval_limit >= amount
-        return True  # No limit set
-
-    @staticmethod
     def _calculate_time_to_submit(request: PurchaseRequest) -> Optional[int]:
-        """Calculate hours from creation to submission"""
-        if request.status in ['submitted', 'approved', 'rejected', 'converted']:
-            # Would need to track submission timestamp
-            # For now, return None - implement with workflow tracking
-            return None
+        """Calculate days from creation to submission"""
+        if request.status in ['submitted', 'approved', 'converted', 'rejected']:
+            # Approximate submit time as creation time if not tracked separately
+            return 0  # Same day submission assumed
         return None
 
     @staticmethod
     def _calculate_time_to_approve(request: PurchaseRequest) -> Optional[int]:
-        """Calculate hours from submission to approval"""
-        if request.approved_at:
-            # Would need submission timestamp
-            return None
+        """Calculate days from submission to approval"""
+        if request.approved_at and request.created_at:
+            return (request.approved_at.date() - request.created_at.date()).days
         return None
 
     @staticmethod
     def _calculate_time_to_convert(request: PurchaseRequest) -> Optional[int]:
-        """Calculate hours from approval to conversion"""
+        """Calculate days from approval to conversion"""
         if request.converted_at and request.approved_at:
-            delta = request.converted_at - request.approved_at
-            return int(delta.total_seconds() / 3600)
+            return (request.converted_at.date() - request.approved_at.date()).days
         return None
 
     @staticmethod
     def _calculate_total_processing_time(request: PurchaseRequest) -> Optional[int]:
         """Calculate total processing time"""
-        if request.status == 'converted' and request.converted_at:
-            delta = request.converted_at - request.created_at
-            return int(delta.total_seconds() / 3600)
+        if request.converted_at and request.created_at:
+            return (request.converted_at.date() - request.created_at.date()).days
+        elif request.approved_at and request.created_at:
+            return (request.approved_at.date() - request.created_at.date()).days
         return None
+
+    @staticmethod
+    def _calculate_estimated_total(request: PurchaseRequest) -> Decimal:
+        """Calculate estimated total value"""
+        return sum(
+            line.estimated_price * line.requested_quantity
+            for line in request.lines.all()
+            if line.estimated_price
+        ) or Decimal('0.00')
+
+    @staticmethod
+    def _analyze_suppliers(request: PurchaseRequest) -> Dict:
+        """Analyze suggested suppliers"""
+        lines_with_suppliers = request.lines.filter(suggested_supplier__isnull=False)
+
+        supplier_breakdown = {}
+        for line in lines_with_suppliers:
+            supplier_name = line.suggested_supplier.name
+            if supplier_name not in supplier_breakdown:
+                supplier_breakdown[supplier_name] = {
+                    'lines': 0,
+                    'total_quantity': Decimal('0'),
+                    'estimated_value': Decimal('0')
+                }
+
+            supplier_breakdown[supplier_name]['lines'] += 1
+            supplier_breakdown[supplier_name]['total_quantity'] += line.requested_quantity
+            if line.estimated_price:
+                supplier_breakdown[supplier_name]['estimated_value'] += (
+                        line.estimated_price * line.requested_quantity
+                )
+
+        return {
+            'total_suppliers': len(supplier_breakdown),
+            'lines_with_suppliers': lines_with_suppliers.count(),
+            'supplier_breakdown': supplier_breakdown
+        }
+
+    @staticmethod
+    def _analyze_product_categories(request: PurchaseRequest) -> Dict:
+        """Analyze product categories in request"""
+        lines = request.lines.select_related('product', 'product__group')
+
+        category_breakdown = {}
+        for line in lines:
+            category = line.product.group.name if line.product.group else 'Uncategorized'
+            if category not in category_breakdown:
+                category_breakdown[category] = {
+                    'lines': 0,
+                    'total_quantity': Decimal('0'),
+                    'estimated_value': Decimal('0')
+                }
+
+            category_breakdown[category]['lines'] += 1
+            category_breakdown[category]['total_quantity'] += line.requested_quantity
+            if line.estimated_price:
+                category_breakdown[category]['estimated_value'] += (
+                        line.estimated_price * line.requested_quantity
+                )
+
+        return {
+            'total_categories': len(category_breakdown),
+            'category_breakdown': category_breakdown
+        }
+
+    @staticmethod
+    def _calculate_completeness_score(request: PurchaseRequest) -> int:
+        """Calculate completeness score (0-100)"""
+        score = 0
+
+        # Basic info (40 points)
+        if request.lines.exists():
+            score += 20
+        if request.business_justification:
+            score += 20
+
+        # Detail completeness (30 points)
+        total_lines = request.lines.count()
+        if total_lines > 0:
+            lines_with_estimates = request.lines.filter(estimated_price__isnull=False).count()
+            lines_with_suppliers = request.lines.filter(suggested_supplier__isnull=False).count()
+
+            score += int((lines_with_estimates / total_lines) * 15)
+            score += int((lines_with_suppliers / total_lines) * 15)
+
+        # Additional details (30 points)
+        if request.expected_usage:
+            score += 15
+        if request.urgency_level != 'normal':
+            if request.expected_usage:  # Justified urgency
+                score += 15
+            else:
+                score += 5  # Unjustified urgency
+        else:
+            score += 10  # Normal urgency
+
+        return min(score, 100)

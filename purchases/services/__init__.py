@@ -13,14 +13,13 @@ NEW Services:
 from .request_service import RequestService
 from .order_service import OrderService
 from .delivery_service import DeliveryService
-from .workflow_service import WorkflowService
+
 from .analytics_service import AnalyticsService
 
 __all__ = [
     'RequestService',
     'OrderService',
     'DeliveryService',
-    'WorkflowService',
     'AnalyticsService',  # NEW - replaces old PurchaseService
 ]
 
