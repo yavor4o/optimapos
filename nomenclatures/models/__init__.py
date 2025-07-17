@@ -1,16 +1,20 @@
+# nomenclatures/models/__init__.py
 """
 Nomenclatures models package
 
 Организация:
 - base.py: Базови класове и managers
+- documents.py: DocumentType и workflow система
+- approvals.py: ApprovalRule и ApprovalLog (NEW)
 - product.py: ProductGroup, Brand, ProductType
 - financial.py: Currency, ExchangeRate, TaxGroup
 - operational.py: UnitOfMeasure, PaymentType, POSLocation
 """
-
+from .аpprovals import ApprovalRule, ApprovalLog
 # Base imports
 from .base import BaseNomenclature, ActiveManager
 from .documents import DocumentType, DocumentTypeManager
+
 
 # Product related
 from .product import (
@@ -32,13 +36,18 @@ from .financial import (
 from .operational import (
     UnitOfMeasure,
     PaymentType,
-
 )
 
 __all__ = [
     # Base
     'BaseNomenclature',
     'ActiveManager',
+
+    # Documents & Workflow
+    'DocumentType',
+    'DocumentTypeManager',
+    'ApprovalRule',    # NEW
+    'ApprovalLog',     # NEW
 
     # Product
     'ProductGroup',
@@ -55,16 +64,13 @@ __all__ = [
     # Operational
     'UnitOfMeasure',
     'PaymentType',
-
-    # Documents
-    'DocumentType',
-    'DocumentTypeManager',
-
 ]
 
 # Version info
-__version__ = '1.0.0'
+__version__ = '2.0.0'  # APPROVAL SYSTEM VERSION
 __author__ = 'Your Company'
+
+
 
 # Module configuration
 default_app_config = 'nomenclatures.apps.NomenclaturesConfig'

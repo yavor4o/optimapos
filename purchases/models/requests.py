@@ -410,6 +410,18 @@ class PurchaseRequest(BaseDocument):
             if line.estimated_price
         )
 
+    def get_estimated_total(self):
+        """Get total estimated cost for this request"""
+        from decimal import Decimal
+
+        total = sum(
+            line.estimated_price * line.requested_quantity
+            for line in self.lines.all()
+            if line.estimated_price
+        )
+
+        return Decimal(str(total)) if total else Decimal('0.00')
+
     # =====================
     # STATUS DISPLAY METHODS
     # =====================

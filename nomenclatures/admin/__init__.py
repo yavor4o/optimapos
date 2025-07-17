@@ -1,7 +1,7 @@
 """
 Nomenclatures admin configuration
 """
-
+from .approvals import ApprovalRuleAdmin, ApprovalLogAdmin
 # Import all admin classes to register them
 from .product import ProductGroupAdmin, BrandAdmin, ProductTypeAdmin
 from .financial import CurrencyAdmin, ExchangeRateAdmin, TaxGroupAdmin, PriceGroupAdmin
@@ -27,4 +27,6 @@ __all__ = [
     # Documents
 
     'DocumentTypeAdmin',
+    'ApprovalRuleAdmin',
+    'ApprovalLogAdmin',
 ]
