@@ -204,10 +204,10 @@ class PurchaseRequest(BaseDocument):
     # ЗАЯВКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Request-specific validation"""
-        super().clean()
+        """Request-specific validation - БЕЗ workflow validation"""
+        super().clean()  # BaseDocument ще прави DocumentType validation
 
-        # Approval validation
+        # ЗАПАЗВАМЕ: Business logic validation
         if self.status == 'approved':
             if not self.approved_by:
                 raise ValidationError({
@@ -216,14 +216,12 @@ class PurchaseRequest(BaseDocument):
             if not self.approved_at:
                 self.approved_at = timezone.now()
 
-        # Rejection validation
         if self.status == 'rejected':
             if not self.rejection_reason:
                 raise ValidationError({
                     'rejection_reason': _('Rejection reason is required when status is rejected')
                 })
 
-        # Conversion validation
         if self.status == 'converted':
             if not self.converted_to_order:
                 raise ValidationError({
@@ -234,90 +232,30 @@ class PurchaseRequest(BaseDocument):
     # WORKFLOW METHODS - DOCUMENTTYPE DRIVEN
     # =====================
     def submit_for_approval(self, user=None):
-        """Submit request for approval"""
-        if not self.can_transition_to('submitted'):
-            raise ValidationError("Cannot submit request in current status")
+        """
+        ЕДИНСТВЕН workflow метод - submit за approval
+        Останалите операции се правят през ApprovalService
+        """
+        from nomenclatures.services.approval_service import ApprovalService
 
+        # Business validation
         if not self.lines.exists():
             raise ValidationError("Cannot submit request without lines")
 
-        self.status = 'submitted'
-        self.updated_by = user
-        self.save()
-
-        return True
-
-    def approve(self, user, notes=''):
-        """Approve the request"""
-        if not self.can_transition_to('approved'):
-            raise ValidationError("Cannot approve request in current status")
-
-        self.status = 'approved'
-        self.approved_by = user
-        self.approved_at = timezone.now()
-        if notes:
-            self.notes = (self.notes + '\n' + notes).strip()
-        self.updated_by = user
-        self.save()
-
-        return True
-
-    def reject(self, user, reason):
-        """Reject the request"""
-        if not self.can_transition_to('rejected'):
-            raise ValidationError("Cannot reject request in current status")
-
-        self.status = 'rejected'
-        self.rejection_reason = reason
-        self.updated_by = user
-        self.save()
-
-        return True
-
-    def convert_to_order(self, user=None):
-        """Convert approved request to purchase order"""
-        if not self.can_transition_to('converted'):
-            raise ValidationError("Cannot convert request in current status")
-
-        # Import here to avoid circular imports
-        from .orders import PurchaseOrder, PurchaseOrderLine
-
-        # Create the order
-        order = PurchaseOrder.objects.create(
-            supplier=self.supplier,
-            location=self.location,
-            expected_delivery_date=timezone.now().date() + timezone.timedelta(days=7),
-            external_reference=self.external_reference,
-            notes=f"Created from request {self.document_number}\n{self.notes}".strip(),
-            source_request=self,
-            created_by=user or self.updated_by,
-            updated_by=user or self.updated_by,
+        # Използваме ApprovalService за прехода
+        result = ApprovalService.execute_transition(
+            document=self,
+            to_status='submitted',
+            user=user,
+            comments="Submitted for approval"
         )
 
-        # Copy lines
-        for req_line in self.lines.all():
-            PurchaseOrderLine.objects.create(
-                document=order,
-                line_number=req_line.line_number,
-                product=req_line.product,
-                quantity=req_line.requested_quantity,
-                unit=req_line.unit,
-                ordered_quantity=req_line.requested_quantity,
-                unit_price=req_line.estimated_price or Decimal('0.0000'),
-                source_request_line=req_line,
-            )
+        if not result['success']:
+            raise ValidationError(result['message'])
 
-        # Update request status
-        self.status = 'converted'
-        self.converted_to_order = order
-        self.converted_at = timezone.now()
-        self.converted_by = user
-        self.save()
+        return True
 
-        # Recalculate order totals
-        order.recalculate_totals()
 
-        return order
 
     def cancel(self, user=None, reason=''):
         """Cancel the request"""
@@ -532,7 +470,98 @@ class PurchaseRequest(BaseDocument):
 
         return sorted(history, key=lambda x: x['timestamp'])
 
+    def get_available_workflow_actions(self, user):
+        """
+        НОВ HELPER: Wrapper around ApprovalService за convenience
+        """
+        from nomenclatures.services.approval_service import ApprovalService
 
+        transitions = ApprovalService.get_available_transitions(self, user)
+
+        # Превръщаме в по-простa структура
+        actions = []
+        for transition in transitions:
+            actions.append({
+                'action': f"transition_to_{transition['to_status']}",
+                'display_name': transition['name'],
+                'target_status': transition['to_status'],
+                'description': transition['description'],
+                'level': transition['level']
+            })
+
+        return actions
+
+    def execute_workflow_action(self, action, user, **kwargs):
+        """
+        НОВ HELPER: Unified method за workflow actions
+        """
+        from nomenclatures.services.approval_service import ApprovalService
+
+        # Мапваме action към target status
+        if action.startswith('transition_to_'):
+            target_status = action.replace('transition_to_', '')
+
+            if target_status == 'rejected':
+                reason = kwargs.get('reason', 'No reason provided')
+                return ApprovalService.reject_document(self, user, reason)
+            else:
+                comments = kwargs.get('comments', f'Action: {action}')
+                return ApprovalService.execute_transition(self, target_status, user, comments)
+
+        elif action == 'submit_for_approval':
+            return self.submit_for_approval(user)
+
+        else:
+            raise ValidationError(f"Unknown workflow action: {action}")
+
+    def approve_via_service(self, user, notes=''):
+        """
+        LEGACY WRAPPER: За код който още вика request.approve()
+        """
+        import warnings
+        warnings.warn(
+            "approve_via_service() is deprecated. Use ApprovalService.execute_transition() directly",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        from nomenclatures.services.approval_service import ApprovalService
+
+        # Намираме най-подходящия approval status
+        available_transitions = ApprovalService.get_available_transitions(self, user)
+        approval_transitions = [t for t in available_transitions if 'approv' in t['to_status']]
+
+        if not approval_transitions:
+            raise ValidationError("No approval transitions available for this user")
+
+        target_status = approval_transitions[0]['to_status']
+
+        result = ApprovalService.execute_transition(self, target_status, user, notes)
+
+        if not result['success']:
+            raise ValidationError(result['message'])
+
+        return True
+
+    def reject_via_service(self, user, reason):
+        """
+        LEGACY WRAPPER: За код който още вика request.reject()
+        """
+        import warnings
+        warnings.warn(
+            "reject_via_service() is deprecated. Use ApprovalService.reject_document() directly",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
+        from nomenclatures.services.approval_service import ApprovalService
+
+        result = ApprovalService.reject_document(self, user, reason)
+
+        if not result['success']:
+            raise ValidationError(result['message'])
+
+        return True
 # =====================
 # REQUEST LINE MODEL
 # =====================
