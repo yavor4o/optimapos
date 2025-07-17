@@ -1,4 +1,3 @@
-
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
@@ -205,9 +204,9 @@ class PurchaseRequest(BaseDocument):
     # =====================
     def clean(self):
         """Request-specific validation - БЕЗ workflow validation"""
-        super().clean()  # BaseDocument ще прави DocumentType validation
+        super().clean()
 
-        # ЗАПАЗВАМЕ: Business logic validation
+
         if self.status == 'approved':
             if not self.approved_by:
                 raise ValidationError({

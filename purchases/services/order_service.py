@@ -71,7 +71,6 @@ class OrderService:
                 document=order,
                 line_number=i,
                 product=line_data['product'],
-                quantity=line_data['quantity'],
                 ordered_quantity=line_data['quantity'],
                 unit=line_data['unit'],
                 unit_price=line_data['unit_price'],

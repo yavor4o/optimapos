@@ -129,7 +129,6 @@ class DeliveryService:
                 document=delivery,
                 line_number=i,
                 product=line_data['product'],
-                quantity=line_data['received_quantity'],
                 received_quantity=line_data['received_quantity'],
                 unit=line_data['unit'],
                 unit_price=line_data['unit_price'],

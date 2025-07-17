@@ -431,13 +431,19 @@ class CustomWorkflowUrlsMixin:
 # =====================
 # MAIN ADMIN CLASSES
 # =====================
+class PurchaseRequestLineInline(admin.TabularInline):
+    model = PurchaseRequestLine
+    extra = 0
+    fields = ('line_number', 'product', 'unit', 'requested_quantity', 'estimated_price')
+    readonly_fields = ()
+    show_change_link = True
 
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(ApprovalActionMixin, CustomWorkflowUrlsMixin, admin.ModelAdmin):
     """Enhanced Purchase Request Admin с професионален ApprovalService"""
-
+    inlines = [PurchaseRequestLineInline]
     list_display = [
-        'document_number', 'supplier', 'status_display', 'urgency_display',
+       'document_type', 'document_number', 'supplier', 'status_display', 'urgency_display',
         'requested_by', 'lines_count', 'estimated_total_display',
         'workflow_status_display', 'available_actions_display', 'document_date'
     ]
@@ -462,7 +468,7 @@ class PurchaseRequestAdmin(ApprovalActionMixin, CustomWorkflowUrlsMixin, admin.M
     fieldsets = (
         (_('Basic Information'), {
             'fields': (
-                'document_number', 'supplier', 'location', 'status',
+               'document_type', 'document_number', 'supplier', 'location', 'status',
                 'document_date'
             )
         }),
@@ -485,6 +491,12 @@ class PurchaseRequestAdmin(ApprovalActionMixin, CustomWorkflowUrlsMixin, admin.M
             'classes': ('collapse',)
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+            obj.requested_by = request.user  # <-- добави това
+        super().save_model(request, obj, form, change)
 
     # =====================
     # DISPLAY METHODS

@@ -549,9 +549,7 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         """Order line specific validation"""
         super().clean()
 
-        # Set quantity from ordered_quantity for base validation
-        if self.ordered_quantity and not self.quantity:
-            self.quantity = self.ordered_quantity
+
 
         # Ordered quantity must be positive
         if self.ordered_quantity <= 0:
@@ -578,9 +576,7 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
 
     def save(self, *args, **kwargs):
         """Enhanced save with delivery calculations"""
-        # Sync quantity with ordered_quantity
-        if self.ordered_quantity:
-            self.quantity = self.ordered_quantity
+
 
         # Calculate remaining quantity
         if self.ordered_quantity and self.delivered_quantity:

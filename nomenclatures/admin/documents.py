@@ -36,7 +36,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
         ('Workflow Configuration', {
             'fields': [
                 'allowed_statuses', 'default_status', 'status_transitions',
-                'auto_transitions', 'final_statuses'
+                 'final_statuses'
             ],
             'description': 'Configure status workflow for this document type'
         }),

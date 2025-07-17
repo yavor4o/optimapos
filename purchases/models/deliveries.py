@@ -601,9 +601,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
 
     def save(self, *args, **kwargs):
         """Enhanced save with variance calculation"""
-        # Sync quantity with received_quantity
-        if self.received_quantity:
-            self.quantity = self.received_quantity
+
 
         # Calculate variance if we have both quantities
         if self.ordered_quantity and self.received_quantity:

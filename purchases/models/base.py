@@ -445,12 +445,7 @@ class BaseDocumentLine(models.Model):
         help_text=_('Product being purchased')
     )
 
-    quantity = models.DecimalField(
-        _('Quantity'),
-        max_digits=10,
-        decimal_places=3,
-        help_text=_('Quantity in specified unit')
-    )
+
 
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
@@ -541,11 +536,7 @@ class BaseDocumentLine(models.Model):
                         'quality_notes': _('Quality notes required when not approved')
                     })
 
-        # Quantity must be positive
-        if self.quantity is not None and self.quantity <= 0:
-            raise ValidationError({
-                'quantity': _('Quantity must be positive')
-            })
+
 
 
 # =================================================================

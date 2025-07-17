@@ -180,7 +180,7 @@ class AnalyticsService:
             document__delivery_date__gte=cutoff_date
         )
         total_lines = delivery_lines.count()
-        variance_lines = delivery_lines.exclude(variance_quantity=0).count()
+        variance_lines = delivery_lines.exclude(variance_=0).count()
         accuracy_rate = ((total_lines - variance_lines) / total_lines * 100) if total_lines > 0 else 100
 
         return {
