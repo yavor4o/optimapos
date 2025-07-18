@@ -1,26 +1,25 @@
-# purchases/services/__init__.py - NEW CLEAN STRUCTURE
+# purchases/services/__init__.py - FINAL CORRECT VERSION
 
 """
-Purchases services package - Refactored for separate document workflows
+Purchases services package - Правилна структура
 
-NEW Services:
-- RequestService: Purchase Request operations
-- OrderService: Purchase Order operations
-- DeliveryService: Delivery Receipt operations
-- WorkflowService: Cross-document workflow management
+Services:
+- RequestService: Purchase Request operations (заявки)
+- OrderService: Purchase Order operations (поръчки)
+- DeliveryService: Delivery Receipt operations (доставки)
+- AnalyticsService: Analytics and reporting
 """
 
 from .request_service import RequestService
 from .order_service import OrderService
 from .delivery_service import DeliveryService
-
 from .analytics_service import AnalyticsService
 
 __all__ = [
     'RequestService',
     'OrderService',
     'DeliveryService',
-    'AnalyticsService',  # NEW - replaces old PurchaseService
+    'AnalyticsService',
 ]
 
 # Version info

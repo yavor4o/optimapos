@@ -71,8 +71,6 @@ class OrderService:
         """
 
         # VALIDATION PHASE 1: Request state validation
-        if request.status != 'approved':
-            raise ValidationError("Can only convert approved requests")
 
         if request.converted_to_order:
             raise ValidationError(f"Request already converted to order {request.converted_to_order.document_number}")

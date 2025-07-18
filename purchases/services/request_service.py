@@ -1,198 +1,107 @@
-# purchases/services/order_service.py - ENHANCED
+# purchases/services/request_service.py - ПОЧИСТЕН
 
 from typing import Dict, List, Optional
 from decimal import Decimal
-from django.db import transaction, models
+from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-from purchases.models.orders import PurchaseOrder, PurchaseOrderLine
-from purchases.models.requests import PurchaseRequest
+from purchases.models.requests import PurchaseRequest, PurchaseRequestLine
 
 
-class OrderService:
-    """Service for Purchase Order business operations"""
+class RequestService:
+    """Service for Purchase Request business operations (NO WORKFLOW)"""
 
     # =====================
-    # ORDER CREATION
+    # REQUEST CREATION
     # =====================
 
     @staticmethod
     @transaction.atomic
-    def create_order(
+    def create_request(
+            requested_by,
             supplier,
             location,
-            lines_data: List[Dict],
-            expected_delivery_date=None,
-            source_request: Optional[PurchaseRequest] = None,
-            is_urgent=False,
-            order_method='',
+            request_type: str = 'regular',
+            urgency_level: str = 'normal',
+            business_justification: str = '',
+            expected_usage: str = '',
+            lines_data: Optional[List[Dict]] = None,
             **kwargs
-    ) -> PurchaseOrder:
-        """Create new purchase order"""
-
-        # Default delivery date
-        if not expected_delivery_date:
-            expected_delivery_date = timezone.now().date() + timezone.timedelta(days=3)
-
-        # Create order
-        order = PurchaseOrder.objects.create(
-            supplier=supplier,
-            location=location,
-            expected_delivery_date=expected_delivery_date,
-            source_request=source_request,
-            is_urgent=is_urgent,
-            order_method=order_method,
-            status='draft',
-            **kwargs
-        )
-
-        # Add lines
-        OrderService.add_lines_to_order(order, lines_data)
-
-        return order
-
-    @staticmethod
-    @transaction.atomic
-    def create_from_request(
-            request: PurchaseRequest,
-            user,
-            expected_delivery_date=None,
-            order_notes: str = '',
-            line_modifications: Optional[Dict] = None,
-            **kwargs
-    ) -> Dict:
-        """
-        Create order from approved request
-        ПЕРЕНЕСЕНО от RequestService.convert_to_order()
-        """
-
-        if request.status != 'approved':
-            raise ValidationError("Can only convert approved requests")
-
-        if request.converted_to_order:
-            raise ValidationError("Request already converted to order")
+    ) -> PurchaseRequest:
+        """Create new purchase request with optional lines"""
 
         try:
-            # Determine delivery date
-            if not expected_delivery_date:
-                # Default to 3-7 days based on urgency
-                days_offset = 3 if request.urgency_level in ['high', 'critical'] else 7
-                expected_delivery_date = timezone.now().date() + timezone.timedelta(days=days_offset)
-
-            # Create order
-            order = PurchaseOrder.objects.create(
-                supplier=request.supplier,
-                location=request.location,
-                source_request=request,
-                document_date=timezone.now().date(),
-                expected_delivery_date=expected_delivery_date,
-                is_urgent=(request.urgency_level in ['high', 'critical']),
-                order_method='converted_from_request',
-                created_by=user,
-                notes=f"Converted from request {request.document_number}\n{order_notes}".strip(),
-                status='draft'
+            # Create the request
+            request = PurchaseRequest.objects.create(
+                requested_by=requested_by,
+                supplier=supplier,
+                location=location,
+                request_type=request_type,
+                urgency_level=urgency_level,
+                business_justification=business_justification,
+                expected_usage=expected_usage,
+                status='draft',
+                **kwargs
             )
 
-            # Convert lines
-            converted_lines = []
-            for req_line in request.lines.all():
-                # Apply modifications if provided
-                quantity = req_line.requested_quantity
-                unit_price = req_line.estimated_price or Decimal('0.00')
+            # Add lines if provided
+            if lines_data:
+                for line_data in lines_data:
+                    RequestService.add_line_to_request(
+                        request=request,
+                        product=line_data['product'],
+                        requested_quantity=line_data['requested_quantity'],
+                        estimated_price=line_data.get('estimated_price'),
+                        usage_description=line_data.get('usage_description', ''),
+                        suggested_supplier=line_data.get('suggested_supplier'),
+                        user=requested_by
+                    )
 
-                if line_modifications and req_line.id in line_modifications:
-                    modifications = line_modifications[req_line.id]
-                    quantity = modifications.get('quantity', quantity)
-                    unit_price = modifications.get('unit_price', unit_price)
-
-                order_line = PurchaseOrderLine.objects.create(
-                    document=order,
-                    line_number=len(converted_lines) + 1,
-                    product=req_line.product,
-                    ordered_quantity=quantity,
-                    unit=req_line.unit,
-                    unit_price=unit_price,
-                    source_request_line=req_line,
-                    supplier_product_code=kwargs.get('supplier_product_codes', {}).get(req_line.product.id, ''),
-                    notes=req_line.usage_description
-                )
-                converted_lines.append(order_line)
-
-            # Update request status and link
-            request.status = 'converted'
-            request.converted_to_order = order
-            request.converted_at = timezone.now()
-            request.converted_by = user
-            request.save()
-
-            # Recalculate order totals
-            order.recalculate_totals()
-
-            # TODO: Notifications (was in RequestService)
-            # NotificationService.notify_request_converted(request, order)
-
-            # TODO: Analytics (was in RequestService)
-            # AnalyticsService.log_request_action(request, 'converted', user, {...})
-
-            return {
-                'success': True,
-                'message': f'Request {request.document_number} converted to order {order.document_number}',
-                'request': request,
-                'order': order,
-                'converted_lines': converted_lines
-            }
+            return request
 
         except Exception as e:
-            return {
-                'success': False,
-                'message': f'Error converting request: {str(e)}',
-                'request': request,
-                'order': None
-            }
+            raise ValidationError(f'Error creating request: {str(e)}')
 
     @staticmethod
     @transaction.atomic
-    def duplicate_order(
-            original_order: PurchaseOrder,
-            user,
+    def duplicate_request(
+            original_request: PurchaseRequest,
+            requested_by,
             modifications: Optional[Dict] = None
-    ) -> PurchaseOrder:
-        """Create copy of existing order"""
+    ) -> PurchaseRequest:
+        """Create copy of existing request"""
 
         try:
             # Copy basic fields
-            new_order = PurchaseOrder.objects.create(
-                supplier=original_order.supplier,
-                location=original_order.location,
-                expected_delivery_date=modifications.get('expected_delivery_date',
-                                                         timezone.now().date() + timezone.timedelta(days=7)),
-                is_urgent=modifications.get('is_urgent', original_order.is_urgent),
-                order_method=modifications.get('order_method', original_order.order_method),
-                delivery_terms=original_order.delivery_terms,
-                payment_terms=original_order.payment_terms,
-                special_conditions=original_order.special_conditions,
-                created_by=user,
-                notes=f"Duplicated from order {original_order.document_number}",
+            new_request = PurchaseRequest.objects.create(
+                requested_by=requested_by,
+                supplier=original_request.supplier,
+                location=original_request.location,
+                request_type=original_request.request_type,
+                urgency_level=modifications.get('urgency_level', original_request.urgency_level),
+                business_justification=modifications.get('business_justification',
+                                                         original_request.business_justification),
+                expected_usage=modifications.get('expected_usage', original_request.expected_usage),
                 status='draft'
             )
 
             # Copy lines
-            for original_line in original_order.lines.all():
-                OrderService.add_line_to_order(
-                    order=new_order,
+            for original_line in original_request.lines.all():
+                RequestService.add_line_to_request(
+                    request=new_request,
                     product=original_line.product,
-                    ordered_quantity=original_line.ordered_quantity,
-                    unit_price=original_line.unit_price,
-                    discount_percent=original_line.discount_percent,
-                    notes=original_line.notes,
-                    user=user
+                    requested_quantity=original_line.requested_quantity,
+                    estimated_price=original_line.estimated_price,
+                    usage_description=original_line.usage_description,
+                    suggested_supplier=original_line.suggested_supplier,
+                    user=requested_by
                 )
 
-            return new_order
+            return new_request
 
         except Exception as e:
-            raise ValidationError(f'Error duplicating order: {str(e)}')
+            raise ValidationError(f'Error duplicating request: {str(e)}')
 
     # =====================
     # LINE MANAGEMENT
@@ -200,69 +109,34 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def add_lines_to_order(order: PurchaseOrder, lines_data: List[Dict]) -> List[PurchaseOrderLine]:
-        """Add multiple lines to purchase order"""
-
-        if not order.can_be_edited():
-            raise ValidationError("Cannot modify order in current state")
-
-        lines = []
-        starting_line_number = order.lines.count()
-
-        for i, line_data in enumerate(lines_data, starting_line_number + 1):
-            line = PurchaseOrderLine.objects.create(
-                document=order,
-                line_number=i,
-                product=line_data['product'],
-                ordered_quantity=line_data['quantity'],
-                unit=line_data['unit'],
-                unit_price=line_data['unit_price'],
-                discount_percent=line_data.get('discount_percent', Decimal('0.00')),
-                source_request_line=line_data.get('source_request_line'),
-                supplier_product_code=line_data.get('supplier_product_code', ''),
-                notes=line_data.get('notes', ''),
-                **line_data.get('extra_fields', {})
-            )
-            lines.append(line)
-
-        # Recalculate totals
-        order.recalculate_totals()
-
-        return lines
-
-    @staticmethod
-    @transaction.atomic
-    def add_line_to_order(
-            order: PurchaseOrder,
+    def add_line_to_request(
+            request: PurchaseRequest,
             product,
-            ordered_quantity: Decimal,
-            unit_price: Decimal,
-            discount_percent: Decimal = Decimal('0.00'),
-            notes: str = '',
+            requested_quantity: Decimal,
+            estimated_price: Decimal = None,
+            usage_description: str = '',
+            suggested_supplier=None,
             user=None
     ) -> Dict:
-        """Add single line to order"""
+        """Add line to purchase request"""
 
-        if not order.can_be_edited():
-            raise ValidationError("Cannot modify order in current state")
+        if request.status != 'draft':
+            raise ValidationError("Cannot modify non-draft requests")
 
         try:
-            # Get next line number
-            next_line_number = order.lines.count() + 1
+            # Автоматично генерираме line_number
+            next_line_number = (request.lines.count() + 1)
 
-            line = PurchaseOrderLine.objects.create(
-                document=order,
+            line = PurchaseRequestLine.objects.create(
+                document=request,
                 line_number=next_line_number,
                 product=product,
-                ordered_quantity=ordered_quantity,
-                unit=product.default_purchase_unit,
-                unit_price=unit_price,
-                discount_percent=discount_percent,
-                notes=notes
+                requested_quantity=requested_quantity,
+                estimated_price=estimated_price,
+                usage_description=usage_description,
+                suggested_supplier=suggested_supplier,
+                unit=product.default_purchase_unit  # Вземи от продукта
             )
-
-            # Recalculate totals
-            order.recalculate_totals()
 
             return {
                 'success': True,
@@ -280,22 +154,19 @@ class OrderService:
     @staticmethod
     @transaction.atomic
     def update_line_quantity(
-            line: PurchaseOrderLine,
+            line: PurchaseRequestLine,
             new_quantity: Decimal,
             user=None
     ) -> Dict:
         """Update line quantity"""
 
-        if not line.document.can_be_edited():
-            raise ValidationError("Cannot modify order in current state")
+        if line.document.status != 'draft':
+            raise ValidationError("Cannot modify non-draft requests")
 
         try:
-            old_quantity = line.ordered_quantity
-            line.ordered_quantity = new_quantity
+            old_quantity = line.requested_quantity
+            line.requested_quantity = new_quantity
             line.save()
-
-            # Recalculate order totals
-            line.document.recalculate_totals()
 
             return {
                 'success': True,
@@ -312,30 +183,27 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
-    def remove_line_from_order(
-            line: PurchaseOrderLine,
+    def remove_line_from_request(
+            line: PurchaseRequestLine,
             user=None
     ) -> Dict:
-        """Remove line from order"""
+        """Remove line from request"""
 
-        if not line.document.can_be_edited():
-            raise ValidationError("Cannot modify order in current state")
+        if line.document.status != 'draft':
+            raise ValidationError("Cannot modify non-draft requests")
 
         try:
-            order = line.document
+            request = line.document
             product_name = line.product.name
             line.delete()
 
             # Reorder line numbers
-            OrderService._reorder_line_numbers(order)
-
-            # Recalculate totals
-            order.recalculate_totals()
+            RequestService._reorder_line_numbers(request)
 
             return {
                 'success': True,
                 'message': f'Line removed: {product_name}',
-                'order': order
+                'request': request
             }
 
         except Exception as e:
@@ -346,154 +214,185 @@ class OrderService:
             }
 
     @staticmethod
-    def _reorder_line_numbers(order: PurchaseOrder):
+    def _reorder_line_numbers(request: PurchaseRequest):
         """Reorder line numbers after deletion"""
-        lines = order.lines.order_by('line_number')
+        lines = request.lines.order_by('line_number')
         for idx, line in enumerate(lines, 1):
             if line.line_number != idx:
                 line.line_number = idx
                 line.save(update_fields=['line_number'])
 
     # =====================
+    # ANALYTICS & REPORTING
+    # =====================
+
+    @staticmethod
+    def get_request_analytics(request: PurchaseRequest) -> Dict:
+        """Get comprehensive analytics for specific request"""
+
+        return {
+            'basic_info': {
+                'document_number': request.document_number,
+                'status': request.status,
+                'request_type': request.request_type,
+                'urgency_level': request.urgency_level,
+                'created_at': request.created_at,
+                'requested_by': request.requested_by.get_full_name() if request.requested_by else None
+            },
+            'workflow_timing': {
+                'time_to_submit': RequestService._calculate_time_to_submit(request),
+                'time_to_approve': RequestService._calculate_time_to_approve(request),
+                'time_to_convert': RequestService._calculate_time_to_convert(request),
+                'total_processing_time': RequestService._calculate_total_processing_time(request)
+            },
+            'content_analysis': {
+                'total_lines': request.lines.count(),
+                'total_items': sum(line.requested_quantity for line in request.lines.all()),
+                'estimated_total': RequestService._calculate_estimated_total(request),
+                'lines_with_estimates': request.lines.filter(estimated_price__isnull=False).count(),
+                'lines_with_suppliers': request.lines.filter(suggested_supplier__isnull=False).count(),
+                'high_priority_lines': request.lines.filter(priority__gt=0).count(),
+            },
+            'supplier_analysis': RequestService._analyze_suppliers(request),
+            'product_categories': RequestService._analyze_product_categories(request)
+        }
+
+    # =====================
     # BUSINESS CALCULATIONS
     # =====================
 
     @staticmethod
-    def calculate_order_totals(order: PurchaseOrder) -> Dict:
-        """Calculate various totals for the order"""
+    def calculate_request_totals(request: PurchaseRequest) -> Dict:
+        """Calculate various totals for the request"""
 
-        lines = order.lines.all()
+        lines = request.lines.all()
 
-        subtotal = sum(line.line_total for line in lines)
-        total_discount = sum(
-            (line.unit_price * line.ordered_quantity * line.discount_percent / 100)
+        total_items = sum(line.requested_quantity for line in lines)
+        estimated_total = sum(
+            line.estimated_price * line.requested_quantity
             for line in lines
-        )
+            if line.estimated_price
+        ) or Decimal('0.00')
 
-        # VAT calculation would go here
-        vat_total = subtotal * Decimal('0.20')  # 20% VAT assumption
-        grand_total = subtotal - total_discount + vat_total
+        lines_with_estimates = lines.filter(estimated_price__isnull=False).count()
+        estimate_coverage = (lines_with_estimates / lines.count() * 100) if lines.count() > 0 else 0
 
         return {
             'total_lines': lines.count(),
-            'total_items': sum(line.ordered_quantity for line in lines),
-            'subtotal': subtotal,
-            'total_discount': total_discount,
-            'vat_total': vat_total,
-            'grand_total': grand_total,
-            'average_line_value': (subtotal / lines.count()) if lines.count() > 0 else Decimal('0.00')
+            'total_items': total_items,
+            'estimated_total': estimated_total,
+            'lines_with_estimates': lines_with_estimates,
+            'estimate_coverage_percent': round(estimate_coverage, 1),
+            'average_item_value': (estimated_total / total_items) if total_items > 0 else Decimal('0.00')
         }
 
     @staticmethod
-    def validate_order_completeness(order: PurchaseOrder) -> Dict:
-        """Validate if order is complete enough for sending"""
+    def validate_request_completeness(request: PurchaseRequest) -> Dict:
+        """Validate if request is complete enough for submission"""
 
         issues = []
         warnings = []
 
         # Check lines
-        if not order.lines.exists():
-            issues.append("Order has no lines")
+        if not request.lines.exists():
+            issues.append("Request has no lines")
 
-        # Check delivery date
-        if not order.expected_delivery_date:
-            issues.append("Expected delivery date is required")
-        elif order.expected_delivery_date < timezone.now().date():
-            warnings.append("Delivery date is in the past")
+        # Check justification
+        if not request.business_justification:
+            issues.append("Business justification is required")
 
-        # Check payment terms
-        if not order.payment_terms:
-            warnings.append("Payment terms not specified")
+        # Check estimates for high-value requests
+        lines_without_estimates = request.lines.filter(estimated_price__isnull=True).count()
+        if lines_without_estimates > 0:
+            warnings.append(f"{lines_without_estimates} lines missing price estimates")
 
-        # Check prices
-        lines_without_prices = order.lines.filter(unit_price=0).count()
-        if lines_without_prices > 0:
-            issues.append(f"{lines_without_prices} lines have zero prices")
+        # Check urgency justification
+        if request.urgency_level in ['high', 'critical'] and not request.expected_usage:
+            warnings.append("High/critical requests should have detailed usage description")
 
         return {
             'is_valid': len(issues) == 0,
             'issues': issues,
             'warnings': warnings,
-            'completeness_score': OrderService._calculate_completeness_score(order)
+            'completeness_score': RequestService._calculate_completeness_score(request)
         }
-
-    # =====================
-    # ANALYTICS & REPORTING
-    # =====================
-
-    @staticmethod
-    def get_order_analytics(order: PurchaseOrder) -> Dict:
-        """Get comprehensive analytics for specific order"""
-
-        return {
-            'basic_info': {
-                'document_number': order.document_number,
-                'status': order.status,
-                'delivery_status': order.delivery_status,
-                'is_urgent': order.is_urgent,
-                'created_at': order.created_at,
-                'expected_delivery_date': order.expected_delivery_date,
-                'supplier': order.supplier.name
-            },
-            'financial_summary': OrderService.calculate_order_totals(order),
-            'source_analysis': {
-                'source_request': order.source_request.document_number if order.source_request else None,
-                'creation_method': 'converted' if order.source_request else 'direct',
-                'conversion_time': OrderService._calculate_conversion_time(order) if order.source_request else None
-            },
-            'delivery_analysis': {
-                'days_until_delivery': (
-                            order.expected_delivery_date - timezone.now().date()).days if order.expected_delivery_date else None,
-                'delivery_status': order.delivery_status,
-                'supplier_confirmed': order.supplier_confirmed,
-                'confirmation_date': order.supplier_confirmed_date
-            },
-            'line_analysis': OrderService._analyze_order_lines(order)
-        }
-
-    @staticmethod
-    def get_orders_ready_for_delivery(supplier=None, location=None) -> List[PurchaseOrder]:
-        """Get orders ready for delivery creation"""
-
-        queryset = PurchaseOrder.objects.filter(
-            status='confirmed',
-            delivery_status__in=['pending', 'partial']
-        )
-
-        if supplier:
-            queryset = queryset.filter(supplier=supplier)
-        if location:
-            queryset = queryset.filter(location=location)
-
-        return list(queryset.select_related('supplier', 'location'))
-
-    @staticmethod
-    def get_overdue_orders(days_overdue=0) -> List[PurchaseOrder]:
-        """Get orders that are overdue for delivery"""
-
-        cutoff_date = timezone.now().date() - timezone.timedelta(days=days_overdue)
-
-        return list(PurchaseOrder.objects.filter(
-            status='confirmed',
-            expected_delivery_date__lte=cutoff_date,
-            delivery_status__in=['pending', 'partial']
-        ).select_related('supplier'))
 
     # =====================
     # HELPER METHODS
     # =====================
 
     @staticmethod
-    def _calculate_conversion_time(order: PurchaseOrder) -> Optional[int]:
-        """Calculate days from request approval to order creation"""
-        if order.source_request and order.source_request.approved_at:
-            return (order.created_at.date() - order.source_request.approved_at.date()).days
+    def _calculate_time_to_submit(request: PurchaseRequest) -> Optional[int]:
+        """Calculate days from creation to submission"""
+        if request.status in ['submitted', 'approved', 'converted', 'rejected']:
+            # Approximate submit time as creation time if not tracked separately
+            return 0  # Same day submission assumed
         return None
 
     @staticmethod
-    def _analyze_order_lines(order: PurchaseOrder) -> Dict:
-        """Analyze order lines breakdown"""
-        lines = order.lines.select_related('product', 'product__group')
+    def _calculate_time_to_approve(request: PurchaseRequest) -> Optional[int]:
+        """Calculate days from submission to approval"""
+        if request.approved_at and request.created_at:
+            return (request.approved_at.date() - request.created_at.date()).days
+        return None
+
+    @staticmethod
+    def _calculate_time_to_convert(request: PurchaseRequest) -> Optional[int]:
+        """Calculate days from approval to conversion"""
+        if request.converted_at and request.approved_at:
+            return (request.converted_at.date() - request.approved_at.date()).days
+        return None
+
+    @staticmethod
+    def _calculate_total_processing_time(request: PurchaseRequest) -> Optional[int]:
+        """Calculate total processing time"""
+        if request.converted_at and request.created_at:
+            return (request.converted_at.date() - request.created_at.date()).days
+        elif request.approved_at and request.created_at:
+            return (request.approved_at.date() - request.created_at.date()).days
+        return None
+
+    @staticmethod
+    def _calculate_estimated_total(request: PurchaseRequest) -> Decimal:
+        """Calculate estimated total value"""
+        return sum(
+            line.estimated_price * line.requested_quantity
+            for line in request.lines.all()
+            if line.estimated_price
+        ) or Decimal('0.00')
+
+    @staticmethod
+    def _analyze_suppliers(request: PurchaseRequest) -> Dict:
+        """Analyze suggested suppliers"""
+        lines_with_suppliers = request.lines.filter(suggested_supplier__isnull=False)
+
+        supplier_breakdown = {}
+        for line in lines_with_suppliers:
+            supplier_name = line.suggested_supplier.name
+            if supplier_name not in supplier_breakdown:
+                supplier_breakdown[supplier_name] = {
+                    'lines': 0,
+                    'total_quantity': Decimal('0'),
+                    'estimated_value': Decimal('0')
+                }
+
+            supplier_breakdown[supplier_name]['lines'] += 1
+            supplier_breakdown[supplier_name]['total_quantity'] += line.requested_quantity
+            if line.estimated_price:
+                supplier_breakdown[supplier_name]['estimated_value'] += (
+                        line.estimated_price * line.requested_quantity
+                )
+
+        return {
+            'total_suppliers': len(supplier_breakdown),
+            'lines_with_suppliers': lines_with_suppliers.count(),
+            'supplier_breakdown': supplier_breakdown
+        }
+
+    @staticmethod
+    def _analyze_product_categories(request: PurchaseRequest) -> Dict:
+        """Analyze product categories in request"""
+        lines = request.lines.select_related('product', 'product__group')
 
         category_breakdown = {}
         for line in lines:
@@ -502,84 +401,50 @@ class OrderService:
                 category_breakdown[category] = {
                     'lines': 0,
                     'total_quantity': Decimal('0'),
-                    'total_value': Decimal('0')
+                    'estimated_value': Decimal('0')
                 }
 
             category_breakdown[category]['lines'] += 1
-            category_breakdown[category]['total_quantity'] += line.ordered_quantity
-            category_breakdown[category]['total_value'] += line.line_total
+            category_breakdown[category]['total_quantity'] += line.requested_quantity
+            if line.estimated_price:
+                category_breakdown[category]['estimated_value'] += (
+                        line.estimated_price * line.requested_quantity
+                )
 
         return {
             'total_categories': len(category_breakdown),
-            'category_breakdown': category_breakdown,
-            'highest_value_line': max(lines, key=lambda l: l.line_total) if lines else None,
-            'lines_with_discounts': lines.filter(discount_percent__gt=0).count()
+            'category_breakdown': category_breakdown
         }
 
     @staticmethod
-    def _calculate_completeness_score(order: PurchaseOrder) -> int:
+    def _calculate_completeness_score(request: PurchaseRequest) -> int:
         """Calculate completeness score (0-100)"""
         score = 0
 
         # Basic info (40 points)
-        if order.lines.exists():
+        if request.lines.exists():
             score += 20
-        if order.expected_delivery_date:
+        if request.business_justification:
             score += 20
 
         # Detail completeness (30 points)
-        if order.payment_terms:
-            score += 10
-        if order.delivery_terms:
-            score += 10
-        if order.supplier_contact_person:
-            score += 10
-
-        # Line quality (30 points)
-        total_lines = order.lines.count()
+        total_lines = request.lines.count()
         if total_lines > 0:
-            lines_with_prices = order.lines.filter(unit_price__gt=0).count()
-            lines_with_discounts = order.lines.filter(discount_percent__gt=0).count()
+            lines_with_estimates = request.lines.filter(estimated_price__isnull=False).count()
+            lines_with_suppliers = request.lines.filter(suggested_supplier__isnull=False).count()
 
-            score += int((lines_with_prices / total_lines) * 20)
-            if lines_with_discounts > 0:
-                score += 10  # Bonus for negotiated discounts
+            score += int((lines_with_estimates / total_lines) * 15)
+            score += int((lines_with_suppliers / total_lines) * 15)
+
+        # Additional details (30 points)
+        if request.expected_usage:
+            score += 15
+        if request.urgency_level != 'normal':
+            if request.expected_usage:  # Justified urgency
+                score += 15
+            else:
+                score += 5  # Unjustified urgency
+        else:
+            score += 10  # Normal urgency
 
         return min(score, 100)
-
-    # =====================
-    # BUSINESS QUERIES (NO WORKFLOW)
-    # =====================
-
-    @staticmethod
-    def get_aggregated_analytics(date_from=None, date_to=None) -> Dict:
-        """Get aggregated order analytics and statistics"""
-
-        queryset = PurchaseOrder.objects.all()
-
-        if date_from:
-            queryset = queryset.filter(created_at__gte=date_from)
-        if date_to:
-            queryset = queryset.filter(created_at__lte=date_to)
-
-        return {
-            'totals': {
-                'total_orders': queryset.count(),
-                'confirmed_orders': queryset.filter(status='confirmed').count(),
-                'sent_orders': queryset.filter(status='sent').count(),
-                'draft_orders': queryset.filter(status='draft').count(),
-            },
-            'sources': {
-                'direct_orders': queryset.filter(source_request__isnull=True).count(),
-                'from_requests': queryset.filter(source_request__isnull=False).count(),
-            },
-            'urgency': {
-                'urgent_orders': queryset.filter(is_urgent=True).count(),
-                'normal_orders': queryset.filter(is_urgent=False).count(),
-            },
-            'delivery': {
-                'pending_delivery': queryset.filter(delivery_status='pending').count(),
-                'partial_delivery': queryset.filter(delivery_status='partial').count(),
-                'completed_delivery': queryset.filter(delivery_status='completed').count(),
-            }
-        }

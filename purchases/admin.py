@@ -80,6 +80,13 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
     НИКАКВИ хардкодирани статуси!
     """
 
+    actions = [
+        'submit_for_approval_action',
+        'smart_workflow_action',
+        'convert_final_approved_action',
+        # DynamicApprovalMixin действията се добавят автоматично от миксина
+    ]
+
     list_display = [
         'document_number', 'requested_by', 'supplier', 'status_display',
         'urgency_display', 'lines_count', 'estimated_total', 'workflow_status_display'
@@ -132,32 +139,16 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
     # ДИНАМИЧНИ ACTIONS - БЕЗ ХАРДКОДИНГ
     # =====================
 
-    def get_actions(self, request):
-        """
-        ДИНАМИЧНО генериране на actions на база ApprovalService
-
-        РЕШЕНИЕ 1: Просто присвояване на методите
-        """
-        actions = super().get_actions(request)
-
-        # Просто присвояваме методите - Django ще се погрижи за параметрите
-        actions['submit_for_approval'] = self.submit_for_approval_action
-        actions['smart_workflow'] = self.smart_workflow_action
-        actions['convert_final_approved'] = self.convert_final_approved_action
-
-        return actions
-
     def submit_for_approval_action(self, request, queryset):
-        """
-        ПРОСТ ACTION: draft → submitted БЕЗ ApprovalService
-        """
+        """ПРОСТ ACTION: draft → submitted БЕЗ ApprovalService"""
         updated = 0
 
         for document in queryset.filter(status='draft'):
             if not document.lines.exists():
-                messages.warning(
+                self.message_user(
                     request,
-                    f'{document.document_number} has no lines - cannot submit'
+                    f'{document.document_number} has no lines - cannot submit',
+                    messages.WARNING
                 )
                 continue
 
@@ -166,17 +157,16 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
             updated += 1
 
         if updated:
-            messages.success(
+            self.message_user(
                 request,
-                f'Successfully submitted {updated} request(s) for approval'
+                f'Successfully submitted {updated} request(s) for approval',
+                messages.SUCCESS
             )
 
-    submit_for_approval_action.short_description = _('Submit for approval')
+    submit_for_approval_action.short_description = 'Submit for approval'
 
     def smart_workflow_action(self, request, queryset):
-        """
-        УМЕН ACTION: Използва ApprovalService за всички преходи
-        """
+        """УМЕН ACTION: Използва ApprovalService за всички преходи"""
         user = request.user
         processed = 0
 
@@ -184,18 +174,20 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
             # За draft документи - прост submit
             if document.status == 'draft':
                 if not document.lines.exists():
-                    messages.warning(
+                    self.message_user(
                         request,
-                        f'{document.document_number} has no lines - cannot submit'
+                        f'{document.document_number} has no lines - cannot submit',
+                        messages.WARNING
                     )
                     continue
 
                 document.status = 'submitted'
                 document.save()
                 processed += 1
-                messages.info(
+                self.message_user(
                     request,
-                    f'{document.document_number}: submitted for approval'
+                    f'{document.document_number}: submitted for approval',
+                    messages.INFO
                 )
                 continue
 
@@ -203,9 +195,10 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
             transitions = ApprovalService.get_available_transitions(document, user)
 
             if not transitions:
-                messages.warning(
+                self.message_user(
                     request,
-                    f'{document.document_number}: No available transitions'
+                    f'{document.document_number}: No available transitions',
+                    messages.WARNING
                 )
                 continue
 
@@ -220,28 +213,29 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
 
             if result['success']:
                 processed += 1
-                messages.success(
+                self.message_user(
                     request,
-                    f'{document.document_number}: {result["message"]}'
+                    f'{document.document_number}: {result["message"]}',
+                    messages.SUCCESS
                 )
             else:
-                messages.error(
+                self.message_user(
                     request,
-                    f'{document.document_number}: {result["message"]}'
+                    f'{document.document_number}: {result["message"]}',
+                    messages.ERROR
                 )
 
         if processed:
-            messages.info(
+            self.message_user(
                 request,
-                f'Processed {processed} document(s) successfully'
+                f'Processed {processed} document(s) successfully',
+                messages.INFO
             )
 
-    smart_workflow_action.short_description = _('Smart workflow transition')
+    smart_workflow_action.short_description = 'Smart workflow transition'
 
     def convert_final_approved_action(self, request, queryset):
-        """
-        ДИНАМИЧНО ОТКРИВАНЕ на final approved статус за conversion
-        """
+        """ДИНАМИЧНО ОТКРИВАНЕ на final approved статус за conversion"""
         success_count = 0
         failed_count = 0
 
@@ -263,30 +257,48 @@ class PurchaseRequestAdmin(DynamicApprovalMixin, admin.ModelAdmin):
                         order = result['order']
                         approval_info = " (needs approval)" if result.get(
                             'order_requires_approval') else " (auto-confirmed)"
-                        messages.info(
+                        self.message_user(
                             request,
-                            f"{document.document_number} → Order {order.document_number}{approval_info}"
+                            f"{document.document_number} → Order {order.document_number}{approval_info}",
+                            messages.INFO
                         )
                     else:
-                        messages.error(request, f"Failed to convert {document.document_number}: {result['message']}")
+                        self.message_user(
+                            request,
+                            f"Failed to convert {document.document_number}: {result['message']}",
+                            messages.ERROR
+                        )
                         failed_count += 1
                 else:
-                    messages.warning(
+                    self.message_user(
                         request,
-                        f"{document.document_number}: Not ready for conversion (status: {document.status})"
+                        f"{document.document_number}: Not ready for conversion (status: {document.status})",
+                        messages.WARNING
                     )
                     failed_count += 1
 
             except Exception as e:
-                messages.error(request, f"Error converting {document.document_number}: {str(e)}")
+                self.message_user(
+                    request,
+                    f"Error converting {document.document_number}: {str(e)}",
+                    messages.ERROR
+                )
                 failed_count += 1
 
         if success_count:
-            messages.success(request, f'Successfully converted {success_count} requests to orders.')
+            self.message_user(
+                request,
+                f'Successfully converted {success_count} requests to orders.',
+                messages.SUCCESS
+            )
         if failed_count:
-            messages.warning(request, f'{failed_count} requests could not be converted.')
+            self.message_user(
+                request,
+                f'{failed_count} requests could not be converted.',
+                messages.WARNING
+            )
 
-    convert_final_approved_action.short_description = _('Convert to orders (final approved)')
+    convert_final_approved_action.short_description = 'Convert to orders (final approved)'
 
     def _is_ready_for_conversion(self, document):
         """
