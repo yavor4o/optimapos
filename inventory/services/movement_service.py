@@ -1,4 +1,5 @@
 # inventory/services/movement_service.py
+import logging
 
 from django.db import transaction
 from django.utils import timezone
@@ -7,6 +8,7 @@ from decimal import Decimal
 
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
 
+logger = logging.getLogger(__name__)
 
 class MovementService:
     """
@@ -405,3 +407,207 @@ class MovementService:
                 )
 
         return len(errors) == 0, errors
+
+    # inventory/services/movement_service.py - Добави този метод в класа MovementService
+
+    @staticmethod
+    @transaction.atomic
+    def create_from_document(document) -> List[InventoryMovement]:
+        """
+        Универсален метод за създаване на inventory движения от документ
+
+        Чете DocumentType конфигурацията и създава съответните движения
+        според affects_inventory, inventory_timing и типа на документа
+
+        Args:
+            document: Всеки документ с DocumentType (DeliveryReceipt, PurchaseOrder, etc.)
+
+        Returns:
+            List[InventoryMovement]: Създадените движения
+        """
+        movements = []
+
+        # 1. Валидация - има ли DocumentType
+        if not hasattr(document, 'document_type') or not document.document_type:
+            logger.warning(f"Document {document} has no DocumentType configured")
+            return movements
+
+        # 2. Проверка affects_inventory
+        if not document.document_type.affects_inventory:
+            logger.debug(f"Document type {document.document_type.code} does not affect inventory")
+            return movements
+
+        # 3. Проверка inventory_timing
+        timing = document.document_type.inventory_timing
+        should_create = False
+
+        if timing == 'immediate':
+            should_create = True
+        elif timing == 'on_confirm' and document.status == 'confirmed':
+            should_create = True
+        elif timing == 'on_complete' and document.status == 'completed':
+            should_create = True
+        elif timing == 'on_process' and document.status == 'processed':
+            should_create = True
+        elif timing == 'manual':
+            # За manual timing, този метод трябва да се извика експлицитно
+            should_create = True
+
+        if not should_create:
+            logger.debug(
+                f"Document {document.document_number} with status '{document.status}' "
+                f"does not meet timing requirement '{timing}'"
+            )
+            return movements
+
+        # 4. Определяне на типа документ и делегиране към специфичен handler
+        model_name = document._meta.model_name.lower()
+
+        try:
+            if model_name == 'deliveryreceipt':
+                movements = MovementService._create_from_delivery(document)
+            elif model_name == 'purchaseorder':
+                movements = MovementService._create_from_purchase_order(document)
+            elif model_name == 'salesinvoice':
+                movements = MovementService._create_from_sales_invoice(document)
+            elif model_name == 'stocktransfer':
+                movements = MovementService._create_from_stock_transfer(document)
+            elif model_name == 'stockadjustment':
+                movements = MovementService._create_from_stock_adjustment(document)
+            else:
+                logger.warning(f"No inventory handler for document type: {model_name}")
+
+            if movements:
+                logger.info(
+                    f"Created {len(movements)} inventory movements for "
+                    f"{document.document_number} ({model_name})"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error creating inventory movements for {document.document_number}: {e}",
+                exc_info=True
+            )
+            # Re-raise за да се rollback транзакцията
+            raise
+
+        return movements
+
+    @staticmethod
+    def _create_from_delivery(delivery) -> List[InventoryMovement]:
+        """
+        Създава IN движения от доставка
+
+        За всеки ред от доставката създава входящо движение
+        """
+        movements = []
+
+        # Валидация
+        if not hasattr(delivery, 'lines'):
+            logger.error(f"Delivery {delivery.document_number} has no lines")
+            return movements
+
+        # За всеки ред от доставката
+        for line in delivery.lines.all():
+            # Пропускаме редове без количество
+            if not line.received_quantity or line.received_quantity <= 0:
+                continue
+
+            try:
+                movement = MovementService.create_incoming_movement(
+                    location=delivery.location,
+                    product=line.product,
+                    quantity=line.received_quantity,
+                    cost_price=line.unit_price or Decimal('0.00'),
+                    source_document_type='PURCHASE',
+                    source_document_number=delivery.document_number,
+                    movement_date=delivery.delivery_date or timezone.now().date(),
+                    batch_number=getattr(line, 'batch_number', None),
+                    expiry_date=getattr(line, 'expiry_date', None),
+                    reason=f"Delivery receipt {delivery.document_number}",
+                    created_by=delivery.updated_by or delivery.created_by
+                )
+                movements.append(movement)
+
+            except Exception as e:
+                logger.error(
+                    f"Error creating movement for line {line.line_number} "
+                    f"of delivery {delivery.document_number}: {e}"
+                )
+                # Продължаваме с другите редове
+                continue
+
+        return movements
+
+    @staticmethod
+    def _create_from_purchase_order(order) -> List[InventoryMovement]:
+        """
+        Създава движения от поръчка (рядко използвано)
+
+        Обикновено движенията се създават от доставката, не от поръчката
+        Но може да се използва за auto-receive сценарии
+        """
+        movements = []
+
+        # Проверка дали има auto-receive настройка
+        if not getattr(order.document_type, 'auto_receive', False):
+            logger.debug(f"Order {order.document_number} does not have auto-receive enabled")
+            return movements
+
+        # Логика подобна на delivery
+        for line in order.lines.all():
+            if not line.ordered_quantity or line.ordered_quantity <= 0:
+                continue
+
+            try:
+                movement = MovementService.create_incoming_movement(
+                    location=order.location,
+                    product=line.product,
+                    quantity=line.ordered_quantity,
+                    cost_price=line.unit_price or Decimal('0.00'),
+                    source_document_type='PURCHASE',
+                    source_document_number=order.document_number,
+                    movement_date=order.expected_delivery_date or timezone.now().date(),
+                    reason=f"Auto-receive from order {order.document_number}",
+                    created_by=order.updated_by or order.created_by
+                )
+                movements.append(movement)
+
+            except Exception as e:
+                logger.error(f"Error creating movement for order line: {e}")
+                continue
+
+        return movements
+
+    @staticmethod
+    def _create_from_sales_invoice(invoice) -> List[InventoryMovement]:
+        """
+        Създава OUT движения от продажба
+
+        Placeholder - ще се имплементира когато добавим sales модула
+        """
+        # TODO: Implement when sales module is added
+        logger.warning("Sales invoice inventory integration not yet implemented")
+        return []
+
+    @staticmethod
+    def _create_from_stock_transfer(transfer) -> List[InventoryMovement]:
+        """
+        Създава TRANSFER движения
+
+        Placeholder - ще се имплементира когато добавим transfers
+        """
+        # TODO: Implement when transfer module is added
+        logger.warning("Stock transfer inventory integration not yet implemented")
+        return []
+
+    @staticmethod
+    def _create_from_stock_adjustment(adjustment) -> List[InventoryMovement]:
+        """
+        Създава ADJUSTMENT движения
+
+        Placeholder - ще се имплементира когато добавим adjustments
+        """
+        # TODO: Implement when adjustment module is added
+        logger.warning("Stock adjustment inventory integration not yet implemented")
+        return []

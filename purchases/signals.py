@@ -1,4 +1,5 @@
 # purchases/signals.py - ПЪЛЕН ФУНКЦИОНАЛЕН ФАЙЛ С ПОПРАВКА
+from decimal import Decimal
 
 from django.db.models.signals import post_save, post_delete, pre_delete, m2m_changed, pre_save
 from django.dispatch import receiver
@@ -261,7 +262,11 @@ def _handle_order_sent(order):
 
 
 def _handle_order_confirmed(order):
-    """Handle order confirmation by supplier"""
+    """
+    Handle order confirmation by supplier
+
+    ОБНОВЕНО: Добавена проверка за auto-receive
+    """
     try:
         _log_document_action(order, 'confirmed_by_supplier', {
             'supplier_confirmed': getattr(order, 'supplier_confirmed', None),
@@ -269,11 +274,39 @@ def _handle_order_confirmed(order):
             'expected_delivery': getattr(order, 'expected_delivery_date', None)
         })
 
+        # НОВО: Проверка за auto-receive
+        if (hasattr(order.document_type, 'auto_receive') and
+                order.document_type.auto_receive and
+                order.document_type.affects_inventory):
+
+            try:
+                from inventory.services import MovementService
+
+                movements = MovementService.create_from_document(order)
+
+                if movements:
+                    logger.info(
+                        f"Auto-receive: Created {len(movements)} inventory movements "
+                        f"for confirmed order {order.document_number}"
+                    )
+
+                    # Маркираме поръчката като доставена
+                    order.delivery_status = 'completed'
+                    order.save(update_fields=['delivery_status'])
+
+            except Exception as e:
+                logger.error(
+                    f"Error in auto-receive for order {order.document_number}: {e}"
+                )
+
         # Update delivery planning
         # TODO: Integrate with delivery scheduling system
 
     except Exception as e:
         logger.error(f"Error handling order confirmation for {order.document_number}: {e}")
+
+
+
 
 
 def _handle_delivery_received(delivery):
@@ -311,20 +344,140 @@ def _handle_delivery_received(delivery):
 
 
 def _handle_delivery_completed(delivery):
-    """Handle delivery processing completion"""
+    """
+    Handle delivery completion and inventory updates
+
+    ОБНОВЕНО: Добавена интеграция с inventory система
+    """
     try:
+        # Логване на действието
         _log_document_action(delivery, 'completed', {
-            'processed_by': delivery.updated_by.username if delivery.updated_by else None,
-            'processing_time': getattr(delivery, 'processed_at', None),
-            'total_amount': str(getattr(delivery, 'grand_total', 0))
+            'completed_by': getattr(delivery, 'processed_by', None),
+            'completion_time': timezone.now().isoformat(),
+            'lines_count': delivery.lines.count(),
+            'has_variances': delivery.has_variances,
+            'has_quality_issues': delivery.has_quality_issues
         })
 
-        # Final integrations
-        # TODO: Update financial records
-        # TODO: Supplier performance tracking
+        # НОВО: Създаване на inventory движения
+        try:
+            from inventory.services import MovementService
+
+            # MovementService.create_from_document проверява:
+            # - affects_inventory
+            # - inventory_timing
+            # - текущия статус
+            movements = MovementService.create_from_document(delivery)
+
+            if movements:
+                logger.info(
+                    f"Successfully created {len(movements)} inventory movements "
+                    f"for delivery {delivery.document_number}"
+                )
+
+                # Логване на детайли за движенията
+                movement_summary = {}
+                for movement in movements:
+                    key = f"{movement.product.code}_{movement.movement_type}"
+                    if key not in movement_summary:
+                        movement_summary[key] = {
+                            'product': movement.product.name,
+                            'type': movement.movement_type,
+                            'total_qty': Decimal('0'),
+                            'locations': set()
+                        }
+                    movement_summary[key]['total_qty'] += movement.quantity
+                    movement_summary[key]['locations'].add(movement.location.code)
+
+                for key, data in movement_summary.items():
+                    logger.info(
+                        f"  - {data['product']}: {data['total_qty']} units "
+                        f"({data['type']}) in {', '.join(data['locations'])}"
+                    )
+
+            else:
+                logger.debug(
+                    f"No inventory movements created for delivery {delivery.document_number} "
+                    f"(may not affect inventory or wrong timing)"
+                )
+
+        except ImportError:
+            logger.error(
+                "Could not import MovementService. "
+                "Is the inventory app installed and configured?"
+            )
+        except Exception as e:
+            # Логваме грешката, но не спираме целия процес
+            logger.error(
+                f"Error creating inventory movements for delivery "
+                f"{delivery.document_number}: {e}",
+                exc_info=True
+            )
+
+            # Може да искаме да известим админите
+            _notify_inventory_error(delivery, str(e))
+
+        # Актуализация на свързаните поръчки
+        if hasattr(delivery, 'update_source_orders'):
+            try:
+                delivery.update_source_orders()
+                logger.info(
+                    f"Updated delivery status for source orders of "
+                    f"delivery {delivery.document_number}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error updating source orders for delivery "
+                    f"{delivery.document_number}: {e}"
+                )
+
+        # Известяване на заинтересованите страни
+        _notify_delivery_completed(delivery)
 
     except Exception as e:
-        logger.error(f"Error handling delivery completion for {delivery.document_number}: {e}")
+        logger.error(
+            f"Error handling delivery completion for {delivery.document_number}: {e}",
+            exc_info=True
+        )
+
+
+def _notify_inventory_error(delivery, error_message):
+    """
+    Известява админите за грешки при създаване на inventory движения
+
+    НОВО: Helper функция за error notifications
+    """
+    try:
+        # TODO: Implement actual notification
+        # За сега само логваме
+        logger.critical(
+            f"INVENTORY ERROR for delivery {delivery.document_number}: {error_message}"
+        )
+
+        # Може да добавим:
+        # - Email до админи
+        # - Slack notification
+        # - Създаване на error ticket
+
+    except Exception as e:
+        logger.error(f"Could not send inventory error notification: {e}")
+
+
+def _notify_delivery_completed(delivery):
+    """
+    Известява заинтересованите страни за завършена доставка
+
+    Съществуваща функция - може да се разшири
+    """
+    try:
+        # TODO: Implement notifications
+        # - Email до warehouse manager
+        # - Update на dashboard
+        # - Trigger за следващи процеси
+        pass
+
+    except Exception as e:
+        logger.error(f"Error sending delivery notifications: {e}")
 
 
 # =================================================================
