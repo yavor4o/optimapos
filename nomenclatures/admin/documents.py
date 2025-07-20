@@ -42,7 +42,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
         }),
         ('Approval Settings', {
             'fields': [
-                'requires_approval', 'approval_limit', 'approval_levels',
+                'requires_approval', 'approval_limit',
                 'auto_approve_conditions'
             ]
         }),
@@ -50,20 +50,11 @@ class DocumentTypeAdmin(admin.ModelAdmin):
             'fields': [
                 'affects_inventory', 'inventory_direction', 'inventory_timing',
                 'is_fiscal', 'requires_vat_calculation', 'requires_payment',
-                'supports_foreign_currency'
+
             ]
         }),
-        ('Customer/Supplier Requirements', {
-            'fields': [
-                'requires_customer', 'requires_supplier', 'allows_anonymous'
-            ]
-        }),
-        ('Document Relationships', {
-            'fields': [
-                'can_be_source', 'can_reference_multiple_sources',
-                'allowed_source_types'
-            ]
-        }),
+
+
         ('Quality & Compliance', {
             'fields': [
                 'requires_batch_tracking', 'requires_expiry_dates',
@@ -71,14 +62,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
                 'requires_certificates'
             ]
         }),
-        ('Advanced Features', {
-            'fields': [
-                'handles_returns', 'reverses_original',
-                'allows_partial_delivery', 'delivery_tolerance_percent',
-                'supports_landed_cost', 'handles_price_variances'
-            ],
-            'classes': ['collapse']
-        }),
+
         ('POS Integration', {
             'fields': [
                 'pos_document', 'prints_receipt', 'opens_cash_drawer'
@@ -92,7 +76,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
         }),
         ('Validation Rules', {
             'fields': [
-                'min_total_amount', 'max_total_amount', 'custom_validation_rules'
+                'min_total_amount', 'max_total_amount'
             ],
             'classes': ['collapse']
         })

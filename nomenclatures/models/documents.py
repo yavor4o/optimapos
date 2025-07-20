@@ -235,54 +235,10 @@ class DocumentType(BaseNomenclature):
         help_text=_('Payment must be processed')
     )
 
-    supports_foreign_currency = models.BooleanField(
-        _('Foreign Currency'),
-        default=False,
-        help_text=_('Supports non-BGN currencies')
-    )
 
-    # Customer/Supplier Requirements
-    requires_customer = models.BooleanField(
-        _('Requires Customer'),
-        default=False,
-        help_text=_('Customer must be specified')
-    )
 
-    requires_supplier = models.BooleanField(
-        _('Requires Supplier'),
-        default=False,
-        help_text=_('Supplier must be specified')
-    )
 
-    allows_anonymous = models.BooleanField(
-        _('Allow Anonymous'),
-        default=True,
-        help_text=_('Allows documents without customer/supplier')
-    )
 
-    # =====================
-    # DOCUMENT RELATIONSHIPS
-    # =====================
-
-    can_be_source = models.BooleanField(
-        _('Can Be Source'),
-        default=False,
-        help_text=_('Can create other documents from this type')
-    )
-
-    can_reference_multiple_sources = models.BooleanField(
-        _('Multiple Sources'),
-        default=False,
-        help_text=_('Can be created from multiple source documents')
-    )
-
-    allowed_source_types = models.ManyToManyField(
-        'self',
-        blank=True,
-        symmetrical=False,
-        related_name='allowed_target_types',
-        help_text=_('Document types that can be sources for this type')
-    )
 
     # =====================
     # QUALITY & COMPLIANCE
@@ -322,34 +278,7 @@ class DocumentType(BaseNomenclature):
     # ADVANCED FEATURES
     # =====================
 
-    # Returns & Reversals
-    handles_returns = models.BooleanField(
-        _('Handles Returns'),
-        default=False,
-        help_text=_('Document type for returns/reversals')
-    )
 
-    reverses_original = models.BooleanField(
-        _('Reverses Original'),
-        default=False,
-        help_text=_('Reverses effects of original document')
-    )
-
-    # Delivery Management
-    allows_partial_delivery = models.BooleanField(
-        _('Partial Delivery'),
-        default=True,
-        help_text=_('Allows multiple partial deliveries')
-    )
-
-    delivery_tolerance_percent = models.DecimalField(
-        _('Delivery Tolerance %'),
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text=_('Allowed variance in delivery quantity')
-    )
 
     # Cost Management
     supports_landed_cost = models.BooleanField(
@@ -430,13 +359,7 @@ class DocumentType(BaseNomenclature):
         help_text=_('Maximum allowed total amount')
     )
 
-    custom_validation_rules = models.JSONField(
-        _('Custom Validation Rules'),
-        default=dict,
-        blank=True,
-        null=True,
-        help_text=_('Additional validation rules in JSON format')
-    )
+
 
     # =====================
     # MANAGERS
