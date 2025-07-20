@@ -189,7 +189,7 @@ class ApprovalService:
     @staticmethod
     def _validate_document_type_transition(document, to_status: str) -> Dict:
         """
-        НОВ МЕТОД: Валидира дали DocumentType позволява прехода
+        Enhanced DocumentType validation with pure configuration approach
 
         Returns:
             Dict: {'valid': bool, 'message': str}
@@ -201,27 +201,42 @@ class ApprovalService:
                     'message': 'Document has no DocumentType configured'
                 }
 
-            # Проверяваме дали to_status е в allowed_statuses
-            allowed_statuses = document.get_allowed_statuses()
+            # Check if to_status is in allowed_statuses
+            allowed_statuses = document.document_type.allowed_statuses or []
             if to_status not in allowed_statuses:
                 return {
                     'valid': False,
-                    'message': f"Status '{to_status}' is not in DocumentType allowed statuses: {allowed_statuses}"
+                    'message': f'Status "{to_status}" is not in DocumentType allowed statuses: {allowed_statuses}. Please check DocumentType configuration.'
                 }
 
-            # Проверяваме дали преходът е разрешен
-            if not document.can_transition_to(to_status):
-                next_statuses = document.get_next_statuses()
+            # Check if transitions are configured
+            allowed_transitions = document.document_type.get_allowed_transitions()
+            if not allowed_transitions:
                 return {
                     'valid': False,
-                    'message': f"DocumentType '{document.document_type.name}' doesn't allow transition from '{document.status}' to '{to_status}'. Allowed next statuses: {next_statuses}"
+                    'message': f'No status_transitions configured in DocumentType "{document.document_type.name}". Please configure status_transitions in DocumentType admin.'
                 }
 
-            # Проверяваме дали статусът не е final
-            if document.is_final_status():
+            # Check if current status has any configured transitions
+            if document.status not in allowed_transitions:
                 return {
                     'valid': False,
-                    'message': f"Document is in final status '{document.status}' and cannot be changed"
+                    'message': f'No transitions configured for current status "{document.status}" in DocumentType "{document.document_type.name}". Please configure status_transitions.'
+                }
+
+            # Check if specific transition is allowed
+            available_transitions = allowed_transitions.get(document.status, [])
+            if to_status not in available_transitions:
+                return {
+                    'valid': False,
+                    'message': f'Transition "{document.status}" → "{to_status}" not configured in DocumentType "{document.document_type.name}". Available transitions: {available_transitions}'
+                }
+
+            # Check if current status is final
+            if document.document_type.is_final_status(document.status):
+                return {
+                    'valid': False,
+                    'message': f'Document is in final status "{document.status}" and cannot be changed'
                 }
 
             return {

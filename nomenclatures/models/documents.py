@@ -401,28 +401,20 @@ class DocumentType(BaseNomenclature):
     # WORKFLOW METHODS
     # =====================
 
-    def get_allowed_transitions(self) -> dict:
-        """Get allowed status transitions"""
+    def get_allowed_transitions(self):
+        """
+        Get allowed status transitions - PURE CONFIGURATION VERSION
+
+        НЕ прави auto-generation! Всичко трябва да е конфигурирано explicit.
+        """
+
+        # СТЪПКА 1: Ако има explicit status_transitions - използвай ги
         if self.status_transitions:
             return self.status_transitions
 
-        # Default transitions if not configured
-        if len(self.allowed_statuses) <= 2:
-            # Simple workflow
-            return {
-                'draft': ['confirmed', 'cancelled'],
-                'confirmed': ['completed', 'cancelled']
-            }
-        else:
-            # Standard workflow
-            statuses = self.allowed_statuses
-            transitions = {}
-            for i, status in enumerate(statuses[:-1]):
-                next_statuses = [statuses[i + 1]]
-                if 'cancelled' in statuses:
-                    next_statuses.append('cancelled')
-                transitions[status] = next_statuses
-            return transitions
+        # СТЪПКА 2: Няма auto-generation! Връщаме празно
+        # Администраторът трябва да настрои status_transitions
+        return {}
 
     def can_transition_to(self, from_status: str, to_status: str) -> bool:
         """Check if status transition is allowed"""

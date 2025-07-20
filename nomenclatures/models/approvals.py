@@ -298,6 +298,11 @@ class ApprovalRule(models.Model):
     # =====================
     # VALIDATION
     # =====================
+    # В nomenclatures/models/approvals.py
+    # Заменяме clean() метода в ApprovalRule класа:
+
+    import decimal
+
     def clean(self):
         """Enhanced validation with DocumentType sync and conflict detection"""
         super().clean()
@@ -373,22 +378,26 @@ class ApprovalRule(models.Model):
 
             if self.from_status not in allowed_statuses:
                 raise ValidationError({
-                    'from_status': _(
-                        f'Status "{self.from_status}" is not in DocumentType allowed statuses: {allowed_statuses}')
+                    'from_status': f'Status "{self.from_status}" is not in DocumentType allowed statuses: {allowed_statuses}'
                 })
 
             if self.to_status not in allowed_statuses:
                 raise ValidationError({
-                    'to_status': _(
-                        f'Status "{self.to_status}" is not in DocumentType allowed statuses: {allowed_statuses}')
+                    'to_status': f'Status "{self.to_status}" is not in DocumentType allowed statuses: {allowed_statuses}'
                 })
 
-            # Check if transition is allowed by DocumentType
-            if not self.document_type.can_transition_to(self.from_status, self.to_status):
-                next_statuses = self.document_type.get_next_statuses(self.from_status)
+            # Check if transition is configured in DocumentType
+            allowed_transitions = self.document_type.get_allowed_transitions()
+
+            if self.from_status not in allowed_transitions:
                 raise ValidationError({
-                    '__all__': _(
-                        f'DocumentType "{self.document_type.name}" does not allow transition from "{self.from_status}" to "{self.to_status}". Allowed next statuses: {next_statuses}')
+                    'from_status': f'No transitions configured for status "{self.from_status}" in DocumentType "{self.document_type.name}". Please configure status_transitions in DocumentType admin.'
+                })
+
+            if self.to_status not in allowed_transitions.get(self.from_status, []):
+                available = allowed_transitions.get(self.from_status, [])
+                raise ValidationError({
+                    'to_status': f'Transition "{self.from_status}" → "{self.to_status}" not configured in DocumentType "{self.document_type.name}". Available transitions: {available}'
                 })
 
         # =====================
@@ -434,7 +443,7 @@ class ApprovalRule(models.Model):
                 conflict_details.append(f"'{rule.name}' ({range_str})")
 
             raise ValidationError({
-                '__all__': _(f'Conflicting rules with overlapping amount ranges: {", ".join(conflict_details)}')
+                '__all__': f'Conflicting rules with overlapping amount ranges: {", ".join(conflict_details)}'
             })
 
         # =====================
@@ -453,7 +462,7 @@ class ApprovalRule(models.Model):
 
             if not previous_level_exists:
                 raise ValidationError({
-                    'approval_level': _(f'No active rule exists for previous level {self.approval_level - 1}')
+                    'approval_level': f'No active rule exists for previous level {self.approval_level - 1}'
                 })
 
         # Escalation validation
@@ -472,29 +481,8 @@ class ApprovalRule(models.Model):
         # Check for overlap: ranges overlap if one starts before the other ends
         return not (self_max < other_rule.min_amount or self.min_amount > other_max)
 
-    # =====================
-    # BUSINESS METHODS
-    # =====================
-    def can_approve(self, user, document=None):
-        """Check if user can approve using this rule"""
-        if not self.is_active:
-            return False
-
-        if self.approver_type == 'user':
-            return user == self.approver_user
-        elif self.approver_type == 'role':
-            return user.groups.filter(id=self.approver_role.id).exists()
-        elif self.approver_type == 'permission':
-            return user.has_perm(
-                f"{self.approver_permission.content_type.app_label}.{self.approver_permission.codename}")
-        elif self.approver_type == 'dynamic':
-            # Implement dynamic logic based on document
-            return self._evaluate_dynamic_approval(user, document)
-
-        return False
-
     def applies_to_document(self, document):
-        """Check if this rule applies to given document"""
+        """Check if this rule applies to given document - ENHANCED"""
 
         # Document type check
         if self.document_type and document.document_type != self.document_type:
@@ -525,6 +513,31 @@ class ApprovalRule(models.Model):
                 pass
 
         return True
+
+
+
+    # =====================
+    # BUSINESS METHODS
+    # =====================
+    def can_approve(self, user, document=None):
+        """Check if user can approve using this rule"""
+        if not self.is_active:
+            return False
+
+        if self.approver_type == 'user':
+            return user == self.approver_user
+        elif self.approver_type == 'role':
+            return user.groups.filter(id=self.approver_role.id).exists()
+        elif self.approver_type == 'permission':
+            return user.has_perm(
+                f"{self.approver_permission.content_type.app_label}.{self.approver_permission.codename}")
+        elif self.approver_type == 'dynamic':
+            # Implement dynamic logic based on document
+            return self._evaluate_dynamic_approval(user, document)
+
+        return False
+
+
 
     def _evaluate_dynamic_approval(self, user, document):
         """Evaluate dynamic approval logic"""
