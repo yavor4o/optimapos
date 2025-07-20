@@ -6,10 +6,10 @@ from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from decimal import Decimal
-from .base import BaseNomenclature, ActiveManager
+from .base import BaseNomenclature, ActiveManager, BaseNomenclatureManager
 
 
-class DocumentTypeManager(ActiveManager):
+class DocumentTypeManager(BaseNomenclatureManager):
     """Manager for document types"""
 
     def for_app(self, app_name):
@@ -637,4 +637,6 @@ class DocumentType(BaseNomenclature):
                 raise ValidationError({
                     'number_prefix': _('Number prefix must be unique within app_name')
                 })
+        print(
+            f"🛠 DEBUG CLEAN for {self.code}: min_total_amount = {self.min_total_amount} ({type(self.min_total_amount)})")
 

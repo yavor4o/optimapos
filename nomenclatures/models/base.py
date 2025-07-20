@@ -184,7 +184,7 @@ class BaseNomenclature(models.Model):
     # VALIDATION
     # =====================
     def clean(self):
-        """Enhanced validation with cross-model checks"""
+        """Enhanced validation with cross-model checks - FIXED"""
         super().clean()
         errors = {}
 
@@ -207,9 +207,9 @@ class BaseNomenclature(models.Model):
             if self.code in reserved_codes:
                 errors['code'] = _(f'Code "{self.code}" is reserved and cannot be used')
 
-            # Check cross-model uniqueness
+            # Check cross-model uniqueness - FIXED: використовуємо клас, не instance
             if not errors.get('code'):  # Only if format is valid
-                is_unique, conflicts = self.objects.validate_code_uniqueness_across_nomenclatures(
+                is_unique, conflicts = self.__class__.objects.validate_code_uniqueness_across_nomenclatures(
                     self.code, exclude_pk=self.pk
                 )
                 if not is_unique:
@@ -223,13 +223,11 @@ class BaseNomenclature(models.Model):
             errors['code'] = _('Code is required')
 
         # =====================
-        # 2. NAME VALIDATION
+        # 2. NAME VALIDATION - същото
         # =====================
         if self.name:
-            # Normalize name
-            self.name = ' '.join(self.name.split())  # Remove extra whitespace
+            self.name = ' '.join(self.name.split())
 
-            # Length check
             if len(self.name) < 2:
                 errors['name'] = _('Name must be at least 2 characters long')
             elif len(self.name) > 100:
@@ -238,10 +236,9 @@ class BaseNomenclature(models.Model):
             errors['name'] = _('Name is required')
 
         # =====================
-        # 3. BUSINESS RULES
+        # 3. BUSINESS RULES - същото
         # =====================
 
-        # Cannot deactivate if used in other records
         if hasattr(self, 'pk') and self.pk and not self.is_active:
             usage_count = self._get_usage_count()
             if usage_count > 0:
@@ -249,7 +246,6 @@ class BaseNomenclature(models.Model):
                     f'Cannot deactivate: this nomenclature is used in {usage_count} records'
                 )
 
-        # System nomenclatures cannot be deactivated
         if self.is_system and not self.is_active:
             errors['is_active'] = _('System nomenclatures cannot be deactivated')
 
@@ -320,8 +316,3 @@ class BaseNomenclature(models.Model):
         }
 
 
-class ActiveManager(models.Manager):
-    """Manager за филтриране само на активни записи"""
-
-    def get_queryset(self):
-        return super().get_queryset().filter(is_active=True)
