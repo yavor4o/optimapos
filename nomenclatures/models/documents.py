@@ -159,24 +159,6 @@ class DocumentType(BaseNomenclature):
         help_text=_('Document needs approval before processing')
     )
 
-    approval_limit = models.DecimalField(
-        _('Approval Limit'),
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text=_('Amount above which approval is required (BGN)')
-    )
-
-
-
-    auto_approve_conditions = models.JSONField(
-        _('Auto Approve Conditions'),
-        default=dict,
-        blank=True,
-        null=True,
-        help_text=_('Conditions for automatic approval')
-    )
 
     # =====================
     # BUSINESS BEHAVIOR
@@ -234,11 +216,6 @@ class DocumentType(BaseNomenclature):
         default=False,
         help_text=_('Payment must be processed')
     )
-
-
-
-
-
 
     # =====================
     # QUALITY & COMPLIANCE
@@ -379,7 +356,7 @@ class DocumentType(BaseNomenclature):
             models.Index(fields=['app_name', 'type_key']),
             models.Index(fields=['affects_inventory', 'is_active']),
             models.Index(fields=['is_fiscal', 'pos_document']),
-            models.Index(fields=['requires_approval', 'approval_limit']),
+            models.Index(fields=['requires_approval']),
         ]
 
     def __str__(self):
@@ -615,63 +592,3 @@ class DocumentType(BaseNomenclature):
                 'is_fiscal': 'POS documents must be fiscal'
             })
 
-    # =====================
-    # SYSTEM METHODS
-    # =====================
-
-    @classmethod
-    def create_purchases_defaults(cls):
-        """Create default document types for purchases app"""
-        defaults = [
-            {
-                'code': 'REQ',
-                'name': 'Purchase Request',
-                'type_key': 'request',
-                'app_name': 'purchases',
-                'number_prefix': 'REQ',
-                'allowed_statuses': ['draft', 'submitted', 'approved', 'rejected', 'converted', 'cancelled'],
-                'requires_approval': True,
-                'approval_limit': Decimal('500.00'),
-                'can_be_source': True,
-                'affects_inventory': False,
-            },
-            {
-                'code': 'ORD',
-                'name': 'Purchase Order',
-                'type_key': 'order',
-                'app_name': 'purchases',
-                'number_prefix': 'ORD',
-                'allowed_statuses': ['draft', 'sent', 'confirmed', 'receiving', 'completed', 'cancelled'],
-                'requires_approval': True,
-                'approval_limit': Decimal('1000.00'),
-                'can_be_source': True,
-                'affects_inventory': False,
-                'requires_supplier': True,
-            },
-            {
-                'code': 'DEL',
-                'name': 'Delivery Receipt',
-                'type_key': 'delivery',
-                'app_name': 'purchases',
-                'number_prefix': 'DEL',
-                'allowed_statuses': ['scheduled', 'received', 'quality_check', 'processed', 'cancelled'],
-                'affects_inventory': True,
-                'inventory_direction': 'in',
-                'inventory_timing': 'on_process',
-                'requires_quality_check': True,
-                'can_reference_multiple_sources': True,
-                'requires_supplier': True,
-            }
-        ]
-
-        created_types = []
-        for data in defaults:
-            doc_type, created = cls.objects.get_or_create(
-                app_name=data['app_name'],
-                type_key=data['type_key'],
-                defaults=data
-            )
-            if created:
-                created_types.append(doc_type)
-
-        return created_types

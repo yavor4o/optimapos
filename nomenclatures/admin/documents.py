@@ -42,8 +42,8 @@ class DocumentTypeAdmin(admin.ModelAdmin):
         }),
         ('Approval Settings', {
             'fields': [
-                'requires_approval', 'approval_limit',
-                'auto_approve_conditions'
+                'requires_approval',
+
             ]
         }),
         ('Business Behavior', {
