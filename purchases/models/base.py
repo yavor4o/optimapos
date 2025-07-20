@@ -222,12 +222,10 @@ class BaseDocument(models.Model):
 
         return {
             'requires_approval': self.document_type.requires_approval,
-            'approval_limit': self.document_type.approval_limit,
             'auto_confirm': self.document_type.auto_confirm,
             'affects_inventory': self.document_type.affects_inventory,
             'inventory_direction': self.document_type.inventory_direction,
             'inventory_timing': self.document_type.inventory_timing,
-            'auto_transitions': self.document_type.auto_transitions,
         }
 
     def needs_approval(self, amount=None):
@@ -252,45 +250,6 @@ class BaseDocument(models.Model):
         if not self.document_type:
             return None
         return self.document_type.get_inventory_movement_type()
-
-    # =====================
-    # DOCUMENT NUMBER GENERATION
-    # =====================
-
-    def generate_document_number(self):
-        """Generate unique document number using DocumentType configuration"""
-        if not self.document_type:
-            # Fallback if no DocumentType
-            prefix = self.get_document_prefix()
-            year = timezone.now().year
-
-            last_doc = self.__class__.objects.filter(
-                document_number__startswith=f"{prefix}-{year}-"
-            ).order_by('-document_number').first()
-
-            if last_doc:
-                try:
-                    last_number = int(last_doc.document_number.split('-')[-1])
-                    new_number = last_number + 1
-                except (ValueError, IndexError):
-                    new_number = 1
-            else:
-                new_number = 1
-
-            return f"{prefix}-{year}-{new_number:04d}"
-
-        # Use DocumentType numbering
-        return self.document_type.get_next_number()
-
-    def get_document_prefix(self):
-        """Get document prefix - override in subclasses or use DocumentType"""
-        if self.document_type:
-            return self.document_type.number_prefix
-        return "DOC"  # Fallback
-
-    # =====================
-    # BUSINESS LOGIC METHODS
-    # =====================
 
     def can_be_edited(self):
         """Check if document can be edited based on DocumentType and status"""
@@ -327,10 +286,6 @@ class BaseDocument(models.Model):
         """Check if document can be confirmed"""
         return 'confirmed' in self.get_next_statuses()
 
-    # =====================
-    # VALIDATION METHODS
-    # =====================
-
     def clean(self):
         """Enhanced validation with DocumentType integration"""
         super().clean()
@@ -346,91 +301,57 @@ class BaseDocument(models.Model):
                 'status': f'Status "{self.status}" not allowed for document type "{self.document_type.name}"'
             })
 
-        # Validate business rules from DocumentType
+        # Validate business rules from DocumentType (ОПРОСТЕНО)
         if hasattr(self, 'grand_total'):
             total = getattr(self, 'grand_total', 0)
             validation_errors = self.document_type.validate_document_data({
                 'total': total,
-                'supplier': self.supplier,
-                'customer': getattr(self, 'customer', None),
                 'lines': hasattr(self, 'lines') and self.lines.exists()
             })
 
             if validation_errors:
                 raise ValidationError({'__all__': validation_errors})
 
-        # Supplier validation based on DocumentType
-        if self.document_type.requires_supplier and not self.supplier:
-            raise ValidationError({
-                'supplier': _('Supplier is required for this document type')
-            })
-
-    # purchases/models/base.py - ENHANCED save() method
+        # ПРЕМАХНИ тази проверка - requires_supplier не съществува:
+        # if self.document_type.requires_supplier and not self.supplier:
+        #     raise ValidationError({
+        #         'supplier': _('Supplier is required for this document type')
+        #     })
 
     def save(self, *args, **kwargs):
-        """
-        Enhanced save with DocumentType integration
+        """Enhanced save with DocumentType integration"""
 
-        🎯 Добавена auto_confirm логика за пропускане на draft статус
-        🎯 Добавена _skip_validation флаг за пропускане на validation при създаване
-        """
-
+        # Set user tracking
         user = getattr(self, '_current_user', None)
         if user and user.is_authenticated:
             if not self.pk:  # New record
                 self.created_by = user
             self.updated_by = user
 
-        # ENHANCED: Set default status from DocumentType with auto_confirm support
+        # Set default status
         if not self.status and self.document_type:
-            if self.document_type.auto_confirm:
-                # AUTO-CONFIRM: Пропускаме draft, отиваме директно към submit/confirm статус
-                allowed_statuses = self.document_type.allowed_statuses
-                non_draft_statuses = [s for s in allowed_statuses if s not in ['draft', 'cancelled']]
+            self.status = self.document_type.default_status
 
-                if non_draft_statuses:
-                    auto_status = non_draft_statuses[0]  # Първия достъпен статус
-                    self.status = auto_status
-
-                    # Логваме за debugging
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.info(
-                        f"AUTO-CONFIRM: {self.__class__.__name__} {self.document_number} starts with status '{auto_status}' (skipped draft)")
-                else:
-                    # Fallback към default ако няма други статуси
-                    self.status = self.document_type.default_status
-            else:
-                # Normal: Start with default status (usually draft)
-                self.status = self.document_type.default_status
-
-        # Generate document number if needed
+        # Generate document number ДИРЕКТНО - БЕЗ wrapper!
         if not self.document_number and self.document_type and self.document_type.auto_number:
-            self.document_number = self.generate_document_number()
+            self.document_number = self.document_type.get_next_number()
 
-        # ✅ SKIP full_clean ако е flag-нато
+        # Validation
         skip_validation = getattr(self, '_skip_validation', False)
-
         if not skip_validation:
-            # Full clean before saving (включва DocumentType validation)
             self.full_clean()
 
-        # ✅ SAVE
+        # Save
         super().save(*args, **kwargs)
 
-        # ✅ Ако сме пропуснали validation, правим я СЛЕД save (когато order има ID)
+        # Post-save validation if needed
         if skip_validation and self.pk:
             try:
                 self.full_clean()
             except ValidationError as e:
-                # Ако validation се провали СЛЕД save, логваме предупреждение
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Post-save validation failed for {self}: {e}")
-
-    # =====================
-    # UTILITY METHODS
-    # =====================
 
     def get_workflow_info(self):
         """Get complete workflow information for this document"""

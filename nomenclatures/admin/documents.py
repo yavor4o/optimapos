@@ -96,14 +96,15 @@ class DocumentTypeAdmin(admin.ModelAdmin):
 
     def requires_approval_display(self, obj):
         if obj.requires_approval:
-            limit = f" (>{obj.approval_limit} BGN)" if obj.approval_limit else ""
+            # ПРЕМАХНИ approval_limit референцията
             return format_html(
-                '<span style="color: orange;">⚠️ Yes{}</span>',
-                limit
+                '<span style="color: orange;">⚠️ Yes</span>'
             )
         return format_html('<span style="color: green;">✅ No</span>')
 
     requires_approval_display.short_description = _('Approval Required')
+
+
 
     # Actions
     actions = ['reset_numbering', 'activate_types', 'deactivate_types']
