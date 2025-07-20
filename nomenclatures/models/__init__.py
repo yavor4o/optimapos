@@ -1,20 +1,28 @@
-# nomenclatures/models/__init__.py
+# nomenclatures/models/__init__.py - FIXED VERSION
 """
 Nomenclatures models package
 
-Организация:
+Архитектура:
 - base.py: Базови класове и managers
 - documents.py: DocumentType и workflow система
-- approvals.py: ApprovalRule и ApprovalLog (NEW)
+- approvals.py: ApprovalRule и ApprovalLog
 - product.py: ProductGroup, Brand, ProductType
 - financial.py: Currency, ExchangeRate, TaxGroup
-- operational.py: UnitOfMeasure, PaymentType, POSLocation
+- operational.py: UnitOfMeasure, PaymentType
 """
-from .approvals import ApprovalRule, ApprovalLog
+
+# =====================
+# IMPORT ORDER FIXED - всички импорти преди __all__
+# =====================
+
 # Base imports
 from .base import BaseNomenclature, ActiveManager
+
+# Documents & Workflow
 from .documents import DocumentType, DocumentTypeManager
 
+# Approvals - FIXED: импорт преди __all__
+from .approvals import ApprovalRule, ApprovalLog
 
 # Product related
 from .product import (
@@ -38,6 +46,9 @@ from .operational import (
     PaymentType,
 )
 
+# =====================
+# EXPORT DEFINITION - след всички импорти
+# =====================
 __all__ = [
     # Base
     'BaseNomenclature',
@@ -46,8 +57,8 @@ __all__ = [
     # Documents & Workflow
     'DocumentType',
     'DocumentTypeManager',
-    'ApprovalRule',    # NEW
-    'ApprovalLog',     # NEW
+    'ApprovalRule',  # ✅ Вече импортиран отгоре
+    'ApprovalLog',  # ✅ Вече импортиран отгоре
 
     # Product
     'ProductGroup',
@@ -66,11 +77,26 @@ __all__ = [
     'PaymentType',
 ]
 
-# Version info
-__version__ = '2.0.0'  # APPROVAL SYSTEM VERSION
+# =====================
+# METADATA - в края
+# =====================
+__version__ = '2.1.0'  # FIXED VERSION - increment
 __author__ = 'Your Company'
+__description__ = 'Nomenclatures models for enterprise management system'
 
+# =====================
+# PACKAGE VALIDATION - DEBUG РЕЖИМ
+# =====================
+import sys
 
+if 'runserver' in sys.argv or 'test' in sys.argv:
+    # Валидираме че всички импорти в __all__ наистина съществуват
+    _missing_imports = []
+    for name in __all__:
+        if name not in globals():
+            _missing_imports.append(name)
 
-# Module configuration
-default_app_config = 'nomenclatures.apps.NomenclaturesConfig'
+    if _missing_imports:
+        raise ImportError(
+            f"nomenclatures.models.__init__.py: Missing imports in __all__: {_missing_imports}"
+        )
