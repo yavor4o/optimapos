@@ -55,24 +55,13 @@ class ProductGroup(MPTTModel):
         return ' / '.join([a.name for a in self.get_ancestors(include_self=True)])
 
     def save(self, *args, **kwargs):
-        # Автоматично генерираме код ако липсва
-        if not self.code and self.name:
-            # Вземаме първите 3 букви от всяка дума
-            words = self.name.upper().split()
-            if len(words) == 1:
-                self.code = words[0][:6]
-            else:
-                self.code = ''.join([w[0] for w in words[:6]])
-
-            # Добавяме число ако кодът съществува
-            base_code = self.code
-            counter = 1
-            while ProductGroup.objects.filter(code=self.code).exclude(pk=self.pk).exists():
-                self.code = f"{base_code}{counter}"
-                counter += 1
-
-        self.code = self.code.upper().strip()
+        """FIXED: Simple save without complex generation logic"""
+        # Само основна нормализация - BaseNomenclature.save() прави останалото
         super().save(*args, **kwargs)
+
+    def _get_usage_count(self):
+        """Override от BaseNomenclature - брой продукти в групата"""
+        return getattr(self, 'product_set', self.product).count() if hasattr(self, 'product') else 0
 
 
 class Brand(BaseNomenclature):
