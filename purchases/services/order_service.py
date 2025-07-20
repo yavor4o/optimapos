@@ -65,12 +65,11 @@ class OrderService:
             **kwargs
     ) -> Dict:
         """
-        FIXED: Create order from approved request with proper workflow
-
-        This is the main conversion logic that respects DocumentType rules
+        Create PurchaseOrder from approved PurchaseRequest with full validation,
+        automatic document_type resolution and workflow handling.
         """
 
-        # VALIDATION PHASE 1: Request state validation
+        from nomenclatures.models import DocumentType
 
         if request.converted_to_order:
             raise ValidationError(f"Request already converted to order {request.converted_to_order.document_number}")
@@ -78,166 +77,146 @@ class OrderService:
         if not request.lines.exists():
             raise ValidationError("Cannot convert request without lines")
 
-        try:
-            # VALIDATION PHASE 2: DocumentType conversion validation
-            if not request.can_transition_to('converted'):
-                raise ValidationError(
-                    f"DocumentType '{request.document_type.name}' doesn't allow transition from "
-                    f"'{request.status}' to 'converted'"
-                )
-
-            # PHASE 3: Order creation with business logic
-            if not expected_delivery_date:
-                # Calculate delivery date based on urgency
-                days_offset = 3 if request.urgency_level in ['high', 'critical'] else 7
-                expected_delivery_date = timezone.now().date() + timezone.timedelta(days=days_offset)
-
-            # Create order (status will be determined below)
-            order = PurchaseOrder.objects.create(
-                supplier=request.supplier,
-                location=request.location,
-                source_request=request,
-                document_date=timezone.now().date(),
-                expected_delivery_date=expected_delivery_date,
-                is_urgent=(request.urgency_level in ['high', 'critical']),
-                order_method='converted_from_request',
-                created_by=user,
-                notes=f"Converted from request {request.document_number}\n{order_notes}".strip(),
-                # ⚠️  NO STATUS SET YET - will be determined below
+        if not request.can_transition_to('converted'):
+            raise ValidationError(
+                f"DocumentType '{request.document_type}' doesn't allow transition from "
+                f"'{request.status}' to 'converted'"
             )
 
-            # PHASE 4: Convert lines and calculate total
-            converted_lines = []
-            total_amount = Decimal('0.00')
+        if not expected_delivery_date:
+            days_offset = 3 if request.urgency_level in ['high', 'critical'] else 7
+            expected_delivery_date = timezone.now().date() + timezone.timedelta(days=days_offset)
 
-            for req_line in request.lines.all():
-                # Apply modifications if provided
-                quantity = req_line.requested_quantity
-                unit_price = req_line.estimated_price or Decimal('0.00')
+        # 🔍 Find compatible DocumentType for order based on source request type
+        order_document_type = DocumentType.objects.filter(
+            app_name='purchases',
+            type_key='order',
+            allowed_source_types__type_key=request.document_type.type_key
+        ).first()
 
-                if line_modifications and req_line.id in line_modifications:
-                    modifications = line_modifications[req_line.id]
-                    quantity = modifications.get('quantity', quantity)
-                    unit_price = modifications.get('unit_price', unit_price)
+        if not order_document_type:
+            raise ValidationError(
+                f"No target DocumentType configured to convert from type '{request.document_type.code}'"
+            )
 
-                order_line = PurchaseOrderLine.objects.create(
-                    document=order,
-                    line_number=len(converted_lines) + 1,
-                    product=req_line.product,
-                    ordered_quantity=quantity,
-                    unit=req_line.unit,
-                    unit_price=unit_price,
-                    source_request_line=req_line,
-                    supplier_product_code=kwargs.get('supplier_product_codes', {}).get(req_line.product.id, ''),
-                    notes=req_line.usage_description or req_line.item_justification
-                )
-                converted_lines.append(order_line)
+        # ✅ Create order with document_type
+        order = PurchaseOrder.objects.create(
+            supplier=request.supplier,
+            location=request.location,
+            source_request=request,
+            document_date=timezone.now().date(),
+            expected_delivery_date=expected_delivery_date,
+            is_urgent=(request.urgency_level in ['high', 'critical']),
+            order_method='converted_from_request',
+            created_by=user,
+            notes=f"Converted from request {request.document_number}\n{order_notes}".strip(),
+            document_type=order_document_type
+        )
 
-                # Calculate line total for approval check
-                line_total = quantity * unit_price
-                total_amount += line_total
+        # Convert lines
+        converted_lines = []
+        total_amount = Decimal('0.00')
 
-            # PHASE 5: CRITICAL FIX - Determine correct order initial status
-            force_bypass = kwargs.get('force_approval_bypass', False)
+        for req_line in request.lines.all():
+            quantity = req_line.requested_quantity
+            unit_price = req_line.estimated_price or Decimal('0.00')
 
-            if force_bypass:
-                # Skip approval workflow entirely (for special cases)
-                order.status = 'confirmed'
-                order.save()
-                logger.info(f"Order {order.document_number} bypassed approval (forced)")
+            if line_modifications and req_line.id in line_modifications:
+                modifications = line_modifications[req_line.id]
+                quantity = modifications.get('quantity', quantity)
+                unit_price = modifications.get('unit_price', unit_price)
 
-            elif order.needs_approval(total_amount):
-                # Order needs approval - set proper status and trigger workflow
-                order.status = 'pending_approval'
-                order.save()
+            order_line = PurchaseOrderLine.objects.create(
+                document=order,
+                line_number=len(converted_lines) + 1,
+                product=req_line.product,
+                ordered_quantity=quantity,
+                unit=req_line.unit,
+                unit_price=unit_price,
+                source_request_line=req_line,
+                supplier_product_code=kwargs.get('supplier_product_codes', {}).get(req_line.product.id, ''),
+                notes=req_line.usage_description or req_line.item_justification
+            )
 
-                # NEW: Automatically submit for approval via ApprovalService
-                try:
-                    from nomenclatures.services.approval_service import ApprovalService
-                    approval_result = ApprovalService.execute_transition(
-                        document=order,
-                        to_status='pending_approval',
-                        user=user,
-                        comments=f"Auto-submitted for approval after conversion from request {request.document_number} (amount: {total_amount} BGN)"
-                    )
+            converted_lines.append(order_line)
+            total_amount += quantity * unit_price
 
-                    if not approval_result['success']:
-                        logger.warning(
-                            f"Failed to submit order {order.document_number} for approval: {approval_result['message']}")
+        # Determine and set order status
+        force_bypass = kwargs.get('force_approval_bypass', False)
 
-                except Exception as e:
-                    logger.error(f"Error submitting order for approval: {e}")
-                    # Continue without approval submission
+        if force_bypass:
+            order.status = 'confirmed'
+            order.save()
+            logger.info(f"Order {order.document_number} bypassed approval (forced)")
 
-                logger.info(
-                    f"Order {order.document_number} created and submitted for approval (amount: {total_amount})")
+        elif order.needs_approval(total_amount):
+            order.status = 'pending_approval'
+            order.save()
 
-            else:
-                # No approval needed - directly confirm
-                order.status = 'confirmed'
-                order.save()
-                logger.info(f"Order {order.document_number} auto-confirmed (amount: {total_amount})")
-
-            # PHASE 6: Update request status via ApprovalService (FIXED)
             try:
                 from nomenclatures.services.approval_service import ApprovalService
-
-                conversion_result = ApprovalService.execute_transition(
-                    document=request,
-                    to_status='converted',
+                approval_result = ApprovalService.execute_transition(
+                    document=order,
+                    to_status='pending_approval',
                     user=user,
-                    comments=f"Converted to order {order.document_number}"
+                    comments=f"Auto-submitted for approval from request {request.document_number} (total: {total_amount} BGN)"
                 )
-
-                if not conversion_result['success']:
-                    # Fallback to direct update if ApprovalService fails
-                    logger.warning(f"ApprovalService conversion failed: {conversion_result['message']}")
-                    request.status = 'converted'
-                    request.save()
-
+                if not approval_result['success']:
+                    logger.warning(f"Approval submission failed: {approval_result['message']}")
             except Exception as e:
-                logger.error(f"Error updating request status via ApprovalService: {e}")
-                # Fallback to direct update
+                logger.error(f"Approval workflow error: {e}")
+        else:
+            order.status = 'confirmed'
+            order.save()
+            logger.info(f"Order {order.document_number} auto-confirmed (amount: {total_amount})")
+
+        # Update request status
+        try:
+            from nomenclatures.services.approval_service import ApprovalService
+            result = ApprovalService.execute_transition(
+                document=request,
+                to_status='converted',
+                user=user,
+                comments=f"Converted to order {order.document_number}"
+            )
+            if not result['success']:
+                logger.warning(f"ApprovalService failed: {result['message']}")
                 request.status = 'converted'
                 request.save()
-
-            # PHASE 7: Link documents and finalize
-            request.converted_to_order = order
-            request.converted_at = timezone.now()
-            request.converted_by = user
+        except Exception as e:
+            logger.error(f"Error updating request status: {e}")
+            request.status = 'converted'
             request.save()
 
-            # Recalculate order totals
-            order.recalculate_totals()
+        # Link request to created order
+        request.converted_to_order = order
+        request.converted_at = timezone.now()
+        request.converted_by = user
+        request.save()
 
-            logger.info(f"Successfully converted request {request.document_number} to order {order.document_number}")
+        # 🔒 Ensure order has pk and recalculate totals
+        if not order.pk:
+            order.save()
+        order.refresh_from_db()
+        order.recalculate_totals()
 
-            return {
-                'success': True,
-                'message': f'Request {request.document_number} converted to order {order.document_number}',
-                'request': request,
-                'order': order,
-                'converted_lines_count': len(converted_lines),
+        logger.info(f"Successfully converted request {request.document_number} to order {order.document_number}")
+
+        return {
+            'success': True,
+            'message': f'Request {request.document_number} converted to order {order.document_number}',
+            'request': request,
+            'order': order,
+            'converted_lines_count': len(converted_lines),
+            'total_amount': total_amount,
+            'order_requires_approval': order.status == 'pending_approval',
+            'conversion_summary': {
+                'lines_converted': len(converted_lines),
                 'total_amount': total_amount,
-                'order_requires_approval': order.status == 'pending_approval',
-                'conversion_summary': {
-                    'lines_converted': len(converted_lines),
-                    'total_amount': total_amount,
-                    'order_status': order.status,
-                    'approval_required': order.status == 'pending_approval'
-                }
+                'order_status': order.status,
+                'approval_required': order.status == 'pending_approval'
             }
-
-        except Exception as e:
-            logger.error(f"Failed to convert request {request.document_number}: {str(e)}")
-            # Transaction will rollback automatically due to @transaction.atomic
-            return {
-                'success': False,
-                'message': f'Error converting request: {str(e)}',
-                'request': request,
-                'order': None,
-                'error': str(e)
-            }
+        }
 
     @staticmethod
     @transaction.atomic
