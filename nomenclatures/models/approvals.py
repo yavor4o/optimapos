@@ -1,4 +1,5 @@
 # nomenclatures/models/approvals.py
+import decimal
 
 from django.db import models
 from django.contrib.contenttypes.models import ContentType
@@ -298,8 +299,12 @@ class ApprovalRule(models.Model):
     # VALIDATION
     # =====================
     def clean(self):
-        """Validate approval rule configuration"""
+        """Enhanced validation with DocumentType sync and conflict detection"""
         super().clean()
+
+        # =====================
+        # 1. BASIC CONFIGURATION VALIDATION
+        # =====================
 
         # Must have either document_type or content_type
         if not self.document_type and not self.content_type:
@@ -313,19 +318,159 @@ class ApprovalRule(models.Model):
                 'max_amount': _('Maximum amount must be greater than minimum amount')
             })
 
-        # Approver validation based on type
-        if self.approver_type == 'user' and not self.approver_user:
+        # =====================
+        # 2. APPROVER CONFIGURATION VALIDATION
+        # =====================
+
+        # Validate approver fields based on type
+        if self.approver_type == 'user':
+            if not self.approver_user:
+                raise ValidationError({
+                    'approver_user': _('Approver user is required when type is "user"')
+                })
+            # Clear conflicting fields
+            if self.approver_role or self.approver_permission:
+                raise ValidationError({
+                    '__all__': _('Only approver_user should be set when type is "user"')
+                })
+
+        elif self.approver_type == 'role':
+            if not self.approver_role:
+                raise ValidationError({
+                    'approver_role': _('Approver role is required when type is "role"')
+                })
+            # Clear conflicting fields
+            if self.approver_user or self.approver_permission:
+                raise ValidationError({
+                    '__all__': _('Only approver_role should be set when type is "role"')
+                })
+
+        elif self.approver_type == 'permission':
+            if not self.approver_permission:
+                raise ValidationError({
+                    'approver_permission': _('Approver permission is required when type is "permission"')
+                })
+            # Clear conflicting fields
+            if self.approver_user or self.approver_role:
+                raise ValidationError({
+                    '__all__': _('Only approver_permission should be set when type is "permission"')
+                })
+
+        elif self.approver_type == 'dynamic':
+            # Dynamic type shouldn't have any approver fields set
+            if self.approver_user or self.approver_role or self.approver_permission:
+                raise ValidationError({
+                    '__all__': _('No approver fields should be set when type is "dynamic"')
+                })
+
+        # =====================
+        # 3. DOCUMENTTYPE SYNCHRONIZATION VALIDATION
+        # =====================
+
+        if self.document_type:
+            # Check if statuses exist in DocumentType
+            allowed_statuses = self.document_type.allowed_statuses or []
+
+            if self.from_status not in allowed_statuses:
+                raise ValidationError({
+                    'from_status': _(
+                        f'Status "{self.from_status}" is not in DocumentType allowed statuses: {allowed_statuses}')
+                })
+
+            if self.to_status not in allowed_statuses:
+                raise ValidationError({
+                    'to_status': _(
+                        f'Status "{self.to_status}" is not in DocumentType allowed statuses: {allowed_statuses}')
+                })
+
+            # Check if transition is allowed by DocumentType
+            if not self.document_type.can_transition_to(self.from_status, self.to_status):
+                next_statuses = self.document_type.get_next_statuses(self.from_status)
+                raise ValidationError({
+                    '__all__': _(
+                        f'DocumentType "{self.document_type.name}" does not allow transition from "{self.from_status}" to "{self.to_status}". Allowed next statuses: {next_statuses}')
+                })
+
+        # =====================
+        # 4. OVERLAPPING RULES DETECTION
+        # =====================
+
+        # Find potentially conflicting rules
+        base_query = ApprovalRule.objects.filter(
+            is_active=True
+        ).exclude(pk=self.pk if self.pk else None)
+
+        # Filter by document scope
+        if self.document_type:
+            base_query = base_query.filter(document_type=self.document_type)
+        elif self.content_type:
+            base_query = base_query.filter(content_type=self.content_type)
+
+        # Filter by transition and level
+        conflicting_rules = base_query.filter(
+            from_status=self.from_status,
+            to_status=self.to_status,
+            approval_level=self.approval_level
+        )
+
+        # Check for approver conflicts
+        approver_conflicts = []
+
+        for rule in conflicting_rules:
+            # Same approver type and same approver
+            if (self.approver_type == rule.approver_type and
+                    self.approver_user == rule.approver_user and
+                    self.approver_role == rule.approver_role and
+                    self.approver_permission == rule.approver_permission):
+
+                # Check for amount range overlap
+                if self._amount_ranges_overlap(rule):
+                    approver_conflicts.append(rule)
+
+        if approver_conflicts:
+            conflict_details = []
+            for rule in approver_conflicts:
+                range_str = f"{rule.min_amount}-{rule.max_amount or '∞'} {rule.currency}"
+                conflict_details.append(f"'{rule.name}' ({range_str})")
+
             raise ValidationError({
-                'approver_user': _('Approver user is required when type is "user"')
+                '__all__': _(f'Conflicting rules with overlapping amount ranges: {", ".join(conflict_details)}')
             })
-        elif self.approver_type == 'role' and not self.approver_role:
+
+        # =====================
+        # 5. BUSINESS LOGIC VALIDATION
+        # =====================
+
+        # Level sequence validation
+        if self.approval_level > 1 and self.requires_previous_level:
+            # Check if previous level exists
+            previous_level_exists = ApprovalRule.objects.filter(
+                document_type=self.document_type,
+                from_status=self.from_status,
+                approval_level=self.approval_level - 1,
+                is_active=True
+            ).exists()
+
+            if not previous_level_exists:
+                raise ValidationError({
+                    'approval_level': _(f'No active rule exists for previous level {self.approval_level - 1}')
+                })
+
+        # Escalation validation
+        if self.escalation_days is not None and self.escalation_days <= 0:
             raise ValidationError({
-                'approver_role': _('Approver role is required when type is "role"')
+                'escalation_days': _('Escalation days must be positive if specified')
             })
-        elif self.approver_type == 'permission' and not self.approver_permission:
-            raise ValidationError({
-                'approver_permission': _('Approver permission is required when type is "permission"')
-            })
+
+    def _amount_ranges_overlap(self, other_rule):
+        """Check if amount ranges overlap with another rule"""
+
+        # Handle None values (unlimited max_amount)
+        self_max = self.max_amount if self.max_amount is not None else float('inf')
+        other_max = other_rule.max_amount if other_rule.max_amount is not None else float('inf')
+
+        # Check for overlap: ranges overlap if one starts before the other ends
+        return not (self_max < other_rule.min_amount or self.min_amount > other_max)
 
     # =====================
     # BUSINESS METHODS
@@ -350,6 +495,7 @@ class ApprovalRule(models.Model):
 
     def applies_to_document(self, document):
         """Check if this rule applies to given document"""
+
         # Document type check
         if self.document_type and document.document_type != self.document_type:
             return False
@@ -363,20 +509,25 @@ class ApprovalRule(models.Model):
         if document.status != self.from_status:
             return False
 
-        # Amount check
+        # Amount check - ENHANCED with safe handling
         if hasattr(document, 'get_estimated_total'):
-            amount = document.get_estimated_total()
-            if amount < self.min_amount:
-                return False
-            if self.max_amount and amount > self.max_amount:
-                return False
+            try:
+                amount = document.get_estimated_total()
+                # Only validate amount if we got a valid numeric value
+                if amount is not None and amount >= 0:
+                    if amount < self.min_amount:
+                        return False
+                    if self.max_amount and amount > self.max_amount:
+                        return False
+            except (AttributeError, TypeError, ValueError, decimal.InvalidOperation):
+                # If amount calculation fails, skip amount validation
+                # Rule applies based on other criteria (document_type, status, etc.)
+                pass
 
         return True
 
     def _evaluate_dynamic_approval(self, user, document):
         """Evaluate dynamic approval logic"""
-        # Implement custom logic based on document properties
-        # Example: manager of the location, department head, etc.
         if hasattr(document, 'location') and hasattr(user, 'managed_locations'):
             return document.location in user.managed_locations.all()
 
