@@ -168,11 +168,7 @@ class DocumentType(BaseNomenclature):
         help_text=_('Amount above which approval is required (BGN)')
     )
 
-    approval_levels = models.PositiveIntegerField(
-        _('Approval Levels'),
-        default=1,
-        help_text=_('Number of approval levels required')
-    )
+
 
     auto_approve_conditions = models.JSONField(
         _('Auto Approve Conditions'),

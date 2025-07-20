@@ -56,15 +56,7 @@ class OrderService:
 
         return order
 
-    @staticmethod
-    @transaction.atomic
-    # purchases/services/order_service.py - FINAL create_from_request
 
-    # purchases/services/order_service.py - FINAL create_from_request
-
-    # purchases/services/order_service.py - FINAL create_from_request
-
-    # purchases/services/order_service.py - FINAL create_from_request
 
     @staticmethod
     @transaction.atomic
