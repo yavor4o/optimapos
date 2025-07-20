@@ -87,11 +87,12 @@ class BaseDocument(models.Model):
     document_type = models.ForeignKey(
         'nomenclatures.DocumentType',
         on_delete=models.PROTECT,
+        null=True,  # ← ДОБАВИ
+        blank=True,  # ← ДОБАВИ
         verbose_name=_('Document Type'),
-        help_text=_('Type defines workflow, numbering and business rules'),
-        limit_choices_to={'app_name': 'purchases', 'is_active': True}
+        help_text=_('Auto-detected from model name, or manually override'),
+        limit_choices_to={'is_active': True}  # ← ПРЕМАХНИ app_name ограничението
     )
-
     # =====================
     # CORE FIELDS
     # =====================
@@ -744,3 +745,137 @@ class FinancialLineMixin(models.Model):
         """Auto-calculate totals before saving"""
         self.calculate_totals()
         super().save(*args, **kwargs)
+
+
+class SmartDocumentTypeMixin(models.Model):
+    """
+    SMART миксин за автоматично присвояване на DocumentType
+
+    Логика:
+    1. Търси DocumentType с model_name = точното име на класа
+    2. Ако няма, търси по app_name + smart matching на type_key
+    3. ValidationError ако не намери подходящ
+    """
+
+    class Meta:
+        abstract = True
+
+    def auto_detect_document_type(self):
+        """Автоматично открива и присвоява DocumentType"""
+
+        # Ако вече има document_type, не прави нищо
+        if self.document_type:
+            return
+
+        from nomenclatures.models import DocumentType
+
+        # СТЪПКА 1: Търси по точно съвпадение на model_name
+        model_class_name = self.__class__.__name__  # 'PurchaseRequest'
+
+        document_type = DocumentType.objects.filter(
+            model_name=model_class_name,
+            is_active=True
+        ).first()
+
+        if document_type:
+            self.document_type = document_type
+            return
+
+        # СТЪПКА 2: Smart matching по app_name + type_key
+        app_name = self._meta.app_label  # 'purchases'
+
+        possible_types = DocumentType.objects.filter(
+            app_name=app_name,
+            is_active=True
+        )
+
+        for doc_type in possible_types:
+            if self._smart_match_type_key(doc_type.type_key):
+                self.document_type = doc_type
+                return
+
+        # СТЪПКА 3: Няма намерен DocumentType
+        self._raise_no_document_type_error(model_class_name, app_name)
+
+    def _smart_match_type_key(self, type_key):
+        """
+        Smart matching между model name и type_key
+
+        Examples:
+        - PurchaseRequest matches 'purchase_request'
+        - PurchaseOrder matches 'purchase_order'
+        - DeliveryReceipt matches 'delivery_receipt'
+        """
+        model_name = self.__class__.__name__.lower()  # 'purchaserequest'
+        type_key_clean = type_key.lower().replace('_', '')  # 'purchaserequest'
+
+        # Директно съвпадение
+        if model_name == type_key_clean:
+            return True
+
+        # Съвпадение с префикси (purchase, sales, delivery, etc.)
+        prefixes = ['purchase', 'sales', 'delivery', 'inventory', 'hr', 'pos']
+
+        for prefix in prefixes:
+            if model_name.startswith(prefix):
+                model_suffix = model_name[len(prefix):]  # 'request' от 'purchaserequest'
+                type_suffix = type_key_clean.replace(prefix, '')  # 'request' от 'purchaserequest'
+
+                if model_suffix == type_suffix:
+                    return True
+
+        return False
+
+    def _raise_no_document_type_error(self, model_class_name, app_name):
+        """Подробно съобщение за грешка"""
+        raise ValidationError(
+            f"No DocumentType found for model '{model_class_name}'. "
+            f"Please create a DocumentType with:\n"
+            f"- model_name='{model_class_name}' OR\n"
+            f"- app_name='{app_name}' with matching type_key.\n\n"
+            f"Example: DocumentType(code='REQ001', model_name='{model_class_name}', "
+            f"app_name='{app_name}', type_key='purchase_request')"
+        )
+
+    def save(self, *args, **kwargs):
+        """Auto-detect document type преди save"""
+        self.auto_detect_document_type()
+        super().save(*args, **kwargs)
+
+    # DEBUG/UTILITY METHODS
+
+    @classmethod
+    def get_matching_document_types(cls):
+        """DEBUG: Покажи всички DocumentTypes които могат да match-нат"""
+        from nomenclatures.models import DocumentType
+
+        model_name = cls.__name__
+        app_name = cls._meta.app_label
+
+        # Точни съвпадения
+        exact_matches = DocumentType.objects.filter(
+            model_name=model_name,
+            is_active=True
+        )
+
+        # Възможни съвпадения
+        possible_matches = DocumentType.objects.filter(
+            app_name=app_name,
+            is_active=True
+        )
+
+        return {
+            'exact_matches': list(exact_matches),
+            'possible_matches': list(possible_matches),
+            'model_name': model_name,
+            'app_name': app_name
+        }
+
+    def get_detection_info(self):
+        """DEBUG: Информация за detection процеса"""
+        return {
+            'model_class': self.__class__.__name__,
+            'app_label': self._meta.app_label,
+            'current_document_type': self.document_type,
+            'would_auto_detect': not bool(self.document_type)
+        }

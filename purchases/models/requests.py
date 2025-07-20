@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
-from .base import BaseDocument, BaseDocumentLine
+from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class PurchaseRequestManager(models.Manager):
         )
 
 
-class PurchaseRequest(BaseDocument):
+class PurchaseRequest(SmartDocumentTypeMixin,BaseDocument):
     """
     Purchase Request - Заявка за покупка
 
