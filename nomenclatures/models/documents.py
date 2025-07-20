@@ -470,20 +470,23 @@ class DocumentType(BaseNomenclature):
             return 'IN'
         elif self.inventory_direction == 'out':
             return 'OUT'
-        elif self.handles_returns and self.reverses_original:
-            return 'ADJUSTMENT'  # Reversal
-
-        return 'ADJUSTMENT'
+        else:
+            # ПОПРАВЕНО: Премахнахме handles_returns и reverses_original
+            # За всички други случаи връщаме ADJUSTMENT
+            return 'ADJUSTMENT'
 
     def needs_approval(self, amount: Decimal = None) -> bool:
         """Check if document needs approval based on amount"""
         if not self.requires_approval:
             return False
 
-        if not amount or not self.approval_limit:
-            return self.requires_approval
+        # ПРЕМАХНИ тази логика - approval_limit не съществува:
+        # if not amount or not self.approval_limit:
+        #     return self.requires_approval
+        # return amount >= self.approval_limit
 
-        return amount >= self.approval_limit
+        # НОВА ЛОГИКА: Винаги изисква approval ако requires_approval=True
+        return True
 
     def validate_document_data(self, data: dict) -> list:
         """Validate document data against this document type rules"""
@@ -497,12 +500,11 @@ class DocumentType(BaseNomenclature):
         if self.max_total_amount and total > self.max_total_amount:
             errors.append(f'Total amount cannot exceed {self.max_total_amount}')
 
-        # Customer/Supplier validation
-        if self.requires_customer and not data.get('customer'):
-            errors.append('Customer is required for this document type')
-
-        if self.requires_supplier and not data.get('supplier'):
-            errors.append('Supplier is required for this document type')
+        # ПРЕМАХНИ тези проверки - полетата не съществуват:
+        # if self.requires_customer and not data.get('customer'):
+        #     errors.append('Customer is required for this document type')
+        # if self.requires_supplier and not data.get('supplier'):
+        #     errors.append('Supplier is required for this document type')
 
         # Lines validation
         if self.requires_lines and not data.get('lines'):
@@ -510,29 +512,14 @@ class DocumentType(BaseNomenclature):
 
         return errors
 
-    # =====================
-    # RELATIONSHIP METHODS
-    # =====================
-
-    def can_create_from_source(self, source_document_type) -> bool:
-        """Check if this document type can be created from source type"""
-        return source_document_type in self.allowed_source_types.all()
-
-    def get_possible_source_types(self):
-        """Get document types that can be sources for this type"""
-        return self.allowed_source_types.filter(is_active=True)
-
-    def get_possible_target_types(self):
-        """Get document types that can be created from this type"""
-        return self.allowed_target_types.filter(is_active=True)
-
-    # =====================
-    # VALIDATION
-    # =====================
 
     def clean(self):
-        """Validate document type configuration"""
+        """Enhanced validation for DocumentType configuration"""
         super().clean()
+
+        # =====================
+        # 1. BASIC FIELD NORMALIZATION
+        # =====================
 
         # Code should be uppercase
         if self.code:
@@ -549,6 +536,10 @@ class DocumentType(BaseNomenclature):
         if self.app_name:
             self.app_name = self.app_name.lower()
 
+        # =====================
+        # 2. APP EXISTENCE VALIDATION
+        # =====================
+
         # Validate app exists
         try:
             from django.apps import apps
@@ -557,6 +548,10 @@ class DocumentType(BaseNomenclature):
             raise ValidationError({
                 'app_name': f'App "{self.app_name}" does not exist'
             })
+
+        # =====================
+        # 3. WORKFLOW VALIDATION
+        # =====================
 
         # Validate allowed_statuses is not empty
         if not self.allowed_statuses:
@@ -568,27 +563,86 @@ class DocumentType(BaseNomenclature):
                 'default_status': f'Default status "{self.default_status}" must be in allowed statuses'
             })
 
-        # Inventory validation
+        # =====================
+        # 4. INVENTORY LOGIC VALIDATION
+        # =====================
+
+        # ПРАВИЛО 1: Ако не влияе на inventory → inventory настройки трябва да са празни
+        if not self.affects_inventory:
+            errors = {}
+
+            if self.inventory_direction:
+                errors['inventory_direction'] = _('inventory_direction трябва да е празно ако affects_inventory=False')
+
+            if self.requires_batch_tracking:
+                errors['requires_batch_tracking'] = _(
+                    'requires_batch_tracking може да е True само ако affects_inventory=True')
+
+            if self.requires_expiry_dates:
+                errors['requires_expiry_dates'] = _(
+                    'requires_expiry_dates може да е True само ако affects_inventory=True')
+
+            if self.requires_serial_numbers:
+                errors['requires_serial_numbers'] = _(
+                    'requires_serial_numbers може да е True само ако affects_inventory=True')
+
+            # Auto-clear inventory_timing ако не влияе на inventory
+            if self.inventory_timing and self.inventory_timing != 'manual':
+                self.inventory_timing = 'manual'
+
+            if errors:
+                raise ValidationError(errors)
+
+        # ПРАВИЛО 2: Ако влияе на inventory → inventory_direction е задължително
         if self.affects_inventory and not self.inventory_direction:
             raise ValidationError({
-                'inventory_direction': 'Inventory direction required when affects_inventory is True'
+                'inventory_direction': _('Inventory direction required when affects_inventory is True')
             })
 
-        # Approval validation
-        if self.approval_limit and not self.requires_approval:
-            raise ValidationError({
-                'approval_limit': 'Approval limit can only be set when requires_approval is True'
-            })
+        # =====================
+        # 5. FINANCIAL LOGIC VALIDATION
+        # =====================
+
+        # ПРАВИЛО 1: min_total_amount <= max_total_amount
+        if (self.min_total_amount is not None and
+                self.max_total_amount is not None):
+            if self.min_total_amount > self.max_total_amount:
+                raise ValidationError({
+                    'min_total_amount': _('min_total_amount не може да е по-голямо от max_total_amount'),
+                    'max_total_amount': _('max_total_amount не може да е по-малко от min_total_amount')
+                })
+
+        # =====================
+        # 6. BUSINESS RULES VALIDATION
+        # =====================
 
         # Numbering validation
         if not self.number_prefix:
             raise ValidationError({
-                'number_prefix': 'Number prefix is required'
+                'number_prefix': _('Number prefix is required')
             })
 
-        # POS validation
-        if self.pos_document and not self.is_fiscal:
-            raise ValidationError({
-                'is_fiscal': 'POS documents must be fiscal'
-            })
+        # СМЕКЧЕНО: POS validation (премахваме строгото правило)
+        # Коментар: Не всички POS документи са задължително фискални
+        # if self.pos_document and not self.is_fiscal:
+        #     raise ValidationError({
+        #         'is_fiscal': 'POS documents must be fiscal'
+        #     })
+
+        # =====================
+        # 7. CONSISTENCY CHECKS
+        # =====================
+
+        # Проверка за уникалност на number_prefix в рамките на app_name
+        if self.number_prefix and self.app_name:
+            existing = DocumentType.objects.filter(
+                number_prefix=self.number_prefix,
+                app_name=self.app_name,
+                is_active=True
+            ).exclude(pk=self.pk)
+
+            if existing.exists():
+                raise ValidationError({
+                    'number_prefix': _('Number prefix must be unique within app_name')
+                })
 
