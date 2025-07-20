@@ -2,6 +2,7 @@
 
 from django.contrib import admin
 from django.contrib import messages
+from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -104,54 +105,304 @@ class DynamicApprovalMixin:
 
         return approval_action
 
+    # nomenclatures/admin/dynamic_actions.py - FIXED VERSION
+
     def _handle_document_approval(self, document, user):
         """
-        ФИКСИРАНО: Обработва одобрението на един документ
+        ФИКСИРАНО: Configuration-driven approval handling
 
-        Добавена логика за draft → submitted случая
+        ✅ НОВА ЛОГИКА: Проверява requires_approval, approval_limit И auto_approve_conditions!
         """
 
-        # СПЕЦИАЛЕН СЛУЧАЙ: draft → submitted (submit, не approval!)
-        if document.status == 'draft':
-            try:
-                # Проверяваме дали може да се submit-не
-                if not hasattr(document, 'lines') or not document.lines.exists():
-                    return {
-                        'success': False,
-                        'message': 'Cannot submit request without lines'
-                    }
+        try:
+            # ✅ СТЪПКА 1: Проверка за approval изисквания
+            if document.document_type and document.document_type.requires_approval:
+                # Получаваме сумата на документа
+                document_amount = None
+                if hasattr(document, 'grand_total'):
+                    document_amount = document.grand_total
+                elif hasattr(document, 'get_estimated_total'):
+                    document_amount = document.get_estimated_total()
 
-                # ДИРЕКТЕН SUBMIT БЕЗ ApprovalService
-                document.status = 'submitted'
-                if hasattr(document, 'updated_by'):
-                    document.updated_by = user
-                document.save()
+                # Проверяваме дали изисква одобрение
+                if document.needs_approval(document_amount):
 
-                return {
-                    'success': True,
-                    'message': f'Submitted for approval (draft → submitted)'
-                }
+                    # ✅ СТЪПКА 1.1: Проверка за Auto Approve Conditions
+                    if document.document_type.auto_approve_conditions:
+                        if self._evaluate_auto_approve_conditions(document, document_amount, user):
+                            # AUTO APPROVE - пропускаме approval процеса!
+                            return self._execute_auto_approve(document, user)
 
-            except Exception as e:
+                    # ✅ СТЪПКА 1.2: Ако НЕ отговаря на auto conditions, изисква ApprovalRule
+                    from nomenclatures.services.approval_service import ApprovalService
+
+                    available_transitions = ApprovalService.get_available_transitions(document, user)
+
+                    if not available_transitions:
+                        return {
+                            'success': False,
+                            'message': f'Document requires approval but no ApprovalRule found. Amount: {document_amount}, Limit: {document.document_type.approval_limit}. Create ApprovalRule or configure Auto Approve Conditions.'
+                        }
+
+                    # Използваме ApprovalService за approval transitions
+                    first_transition = available_transitions[0]
+
+                    result = ApprovalService.execute_transition(
+                        document=document,
+                        to_status=first_transition['to_status'],
+                        user=user,
+                        comments="Approval via admin action"
+                    )
+
+                    return result
+
+            # ✅ СТЪПКА 2: Ако НЕ изисква одобрение, използваме DocumentType transitions
+            current_status = document.status
+            next_statuses = document.get_next_statuses()  # От DocumentType
+
+            if not next_statuses:
                 return {
                     'success': False,
-                    'message': f'Error submitting document: {str(e)}'
+                    'message': f'No valid transitions available from status "{current_status}"'
                 }
 
+            # ✅ УМНО: Избери най-подходящия следващ статус
+            target_status = None
+
+            # Търси approval-related статуси първо
+            approval_keywords = ['approval', 'approve', 'pending', 'submitted', 'review']
+            for keyword in approval_keywords:
+                for status in next_statuses:
+                    if keyword in status.lower():
+                        target_status = status
+                        break
+                if target_status:
+                    break
+
+            # Ако няма approval статус, вземи първия non-cancellation
+            if not target_status:
+                non_cancellation = [s for s in next_statuses if 'cancel' not in s.lower()]
+                if non_cancellation:
+                    target_status = non_cancellation[0]
+                else:
+                    target_status = next_statuses[0]  # Last resort
+
+            # ✅ ВАЛИДАЦИЯ: Проверка дали transition е разрешен
+            if not document.can_transition_to(target_status):
+                return {
+                    'success': False,
+                    'message': f'Transition from "{current_status}" to "{target_status}" not allowed by DocumentType'
+                }
+
+            # ✅ СПЕЦИАЛНИ ПРОВЕРКИ за document requirements
+            if hasattr(document, 'lines') and not document.lines.exists():
+                return {
+                    'success': False,
+                    'message': 'Cannot submit document without lines'
+                }
+
+            # ✅ ИЗПЪЛНЕНИЕ: Промяна на статуса
+            old_status = document.status
+            document.status = target_status
+
+            # Update tracking fields
+            if hasattr(document, 'updated_by'):
+                document.updated_by = user
+
+            # Special handling за approval fields
+            if 'approv' in target_status.lower():
+                if hasattr(document, 'approved_by'):
+                    document.approved_by = user
+                if hasattr(document, 'approved_at'):
+                    document.approved_at = timezone.now()
+
+            document.save()
+
+            return {
+                'success': True,
+                'message': f'Status changed: {old_status} → {target_status} (no approval required)'
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error processing approval: {str(e)}'
+            }
+
+    def _evaluate_auto_approve_conditions(self, document, document_amount, user):
+        """
+        ✅ НОВА ФУНКЦИЯ: Evaluates DocumentType auto_approve_conditions
+
+        Returns True if document meets auto-approve criteria
+        """
+        try:
+            conditions = document.document_type.auto_approve_conditions
+            if not conditions:
+                return False
+
+            # ✅ Amount-based conditions
+            if 'max_amount' in conditions:
+                max_amount = conditions['max_amount']
+                if document_amount and document_amount > max_amount:
+                    return False
+
+            if 'min_amount' in conditions:
+                min_amount = conditions['min_amount']
+                if not document_amount or document_amount < min_amount:
+                    return False
+
+            # ✅ User-based conditions
+            if 'user_roles' in conditions:
+                required_roles = conditions['user_roles']
+                user_roles = list(user.groups.values_list('name', flat=True))
+                if not any(role in user_roles for role in required_roles):
+                    return False
+
+            if 'user_permissions' in conditions:
+                required_permissions = conditions['user_permissions']
+                if not all(user.has_perm(perm) for perm in required_permissions):
+                    return False
+
+            # ✅ Document-based conditions
+            if 'required_fields' in conditions:
+                required_fields = conditions['required_fields']
+                for field in required_fields:
+                    if not getattr(document, field, None):
+                        return False
+
+            if 'supplier_whitelist' in conditions:
+                allowed_suppliers = conditions['supplier_whitelist']
+                if hasattr(document, 'supplier') and document.supplier:
+                    supplier_code = getattr(document.supplier, 'code', str(document.supplier))
+                    if supplier_code not in allowed_suppliers:
+                        return False
+
+            # ✅ Time-based conditions
+            if 'working_hours_only' in conditions and conditions['working_hours_only']:
+                from datetime import datetime
+                now = datetime.now()
+                if now.weekday() >= 5 or now.hour < 9 or now.hour > 17:  # Weekend or outside 9-17
+                    return False
+
+            return True  # All conditions passed!
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error evaluating auto approve conditions: {e}")
+            return False
+
+    def _execute_auto_approve(self, document, user):
+        """
+        ✅ НОВА ФУНКЦИЯ: Executes auto-approval transition
+        """
+        try:
+            # Find the best approval target status
+            next_statuses = document.get_next_statuses()
+
+            # Look for approval completion statuses
+            approval_complete_keywords = ['approved', 'confirmed', 'accepted']
+            target_status = None
+
+            for keyword in approval_complete_keywords:
+                for status in next_statuses:
+                    if keyword in status.lower():
+                        target_status = status
+                        break
+                if target_status:
+                    break
+
+            # Fallback to first non-cancellation status
+            if not target_status:
+                non_cancellation = [s for s in next_statuses if 'cancel' not in s.lower()]
+                target_status = non_cancellation[0] if non_cancellation else next_statuses[0]
+
+            # Execute the transition
+            old_status = document.status
+            document.status = target_status
+
+            # Set auto-approval fields
+            if hasattr(document, 'approved_by'):
+                document.approved_by = user
+            if hasattr(document, 'approved_at'):
+                document.approved_at = timezone.now()
+            if hasattr(document, 'updated_by'):
+                document.updated_by = user
+
+            document.save()
+
+            return {
+                'success': True,
+                'message': f'Auto-approved: {old_status} → {target_status} (meets auto-approve conditions)'
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error during auto-approval: {str(e)}'
+            }
+
     def _handle_document_rejection(self, document, user, request):
-        """Обработва отхвърлянето на един документ"""
+        """
+        ФИКСИРАНО: Configuration-driven rejection handling
+        """
 
-        # За rejection може да поискаме причина от потребителя
-        # За простота, използваме стандартна причина
-        reason = f"Rejected via admin action by {user.get_full_name()}"
+        try:
+            # ✅ ДИНАМИЧНО: Намери rejection статус от DocumentType
+            current_status = document.status
+            next_statuses = document.get_next_statuses()
 
-        result = ApprovalService.reject_document(
-            document=document,
-            user=user,
-            reason=reason
-        )
+            # Търси rejection статус
+            rejection_status = None
+            rejection_keywords = ['reject', 'denied', 'declined']
 
-        return result
+            for keyword in rejection_keywords:
+                for status in next_statuses:
+                    if keyword in status.lower():
+                        rejection_status = status
+                        break
+                if rejection_status:
+                    break
+
+            if not rejection_status:
+                return {
+                    'success': False,
+                    'message': f'No rejection status available from "{current_status}"'
+                }
+
+            # ✅ ВАЛИДАЦИЯ: Проверка дали transition е разрешен
+            if not document.can_transition_to(rejection_status):
+                return {
+                    'success': False,
+                    'message': f'Transition to "{rejection_status}" not allowed by DocumentType'
+                }
+
+            # ✅ ИЗПЪЛНЕНИЕ: Rejection
+            old_status = document.status
+            document.status = rejection_status
+
+            # Set rejection fields if available
+            if hasattr(document, 'rejected_by'):
+                document.rejected_by = user
+            if hasattr(document, 'rejected_at'):
+                document.rejected_at = timezone.now()
+            if hasattr(document, 'rejection_reason'):
+                document.rejection_reason = f"Rejected via admin action by {user.get_full_name()}"
+            if hasattr(document, 'updated_by'):
+                document.updated_by = user
+
+            document.save()
+
+            return {
+                'success': True,
+                'message': f'Document rejected: {old_status} → {rejection_status}'
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error processing rejection: {str(e)}'
+            }
 
     def _create_workflow_status_action(self):
         """Създава action за показване на workflow статус"""

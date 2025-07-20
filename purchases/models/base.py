@@ -369,9 +369,10 @@ class BaseDocument(models.Model):
 
     def save(self, *args, **kwargs):
         """
-        Enhanced save with DocumentType integration + AUTO_CONFIRM support
+        Enhanced save with DocumentType integration
 
         🎯 Добавена auto_confirm логика за пропускане на draft статус
+        🎯 Добавена _skip_validation флаг за пропускане на validation при създаване
         """
 
         user = getattr(self, '_current_user', None)
@@ -384,8 +385,6 @@ class BaseDocument(models.Model):
         if not self.status and self.document_type:
             if self.document_type.auto_confirm:
                 # AUTO-CONFIRM: Пропускаме draft, отиваме директно към submit/confirm статус
-
-                # Намираме първия non-draft статус от allowed_statuses
                 allowed_statuses = self.document_type.allowed_statuses
                 non_draft_statuses = [s for s in allowed_statuses if s not in ['draft', 'cancelled']]
 
@@ -409,14 +408,25 @@ class BaseDocument(models.Model):
         if not self.document_number and self.document_type and self.document_type.auto_number:
             self.document_number = self.generate_document_number()
 
-        # Full clean before saving (включва DocumentType validation)
-        self.full_clean()
+        # ✅ SKIP full_clean ако е flag-нато
+        skip_validation = getattr(self, '_skip_validation', False)
 
-        # 🎯 SAVE - ТОЛКОВА!
+        if not skip_validation:
+            # Full clean before saving (включва DocumentType validation)
+            self.full_clean()
+
+        # ✅ SAVE
         super().save(*args, **kwargs)
 
-        # 🚫 МАХНАТО: Цялата auto_transitions логика
-        # ApprovalService ще управлява всички status промени
+        # ✅ Ако сме пропуснали validation, правим я СЛЕД save (когато order има ID)
+        if skip_validation and self.pk:
+            try:
+                self.full_clean()
+            except ValidationError as e:
+                # Ако validation се провали СЛЕД save, логваме предупреждение
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Post-save validation failed for {self}: {e}")
 
     # =====================
     # UTILITY METHODS
@@ -467,8 +477,6 @@ class BaseDocumentLine(models.Model):
         verbose_name=_('Product'),
         help_text=_('Product being purchased')
     )
-
-
 
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
@@ -523,7 +531,28 @@ class BaseDocumentLine(models.Model):
         ordering = ['line_number']
 
     def __str__(self):
-        return f"Line {self.line_number}: {self.product.code} x {self.quantity}"
+        # ✅ FIXED: Use get_quantity() method instead of hardcoded quantity
+        quantity = self.get_quantity()
+        return f"Line {self.line_number}: {self.product.code} x {quantity}"
+
+    def get_quantity(self):
+        """
+        Get quantity for this line - different subclasses have different quantity fields
+
+        Returns:
+            Decimal: The quantity for this line
+        """
+        # Try different quantity field names used by subclasses
+        if hasattr(self, 'ordered_quantity'):
+            return self.ordered_quantity
+        elif hasattr(self, 'requested_quantity'):
+            return self.requested_quantity
+        elif hasattr(self, 'received_quantity'):
+            return self.received_quantity
+        elif hasattr(self, 'quantity'):
+            return self.quantity
+        else:
+            return Decimal('0.000')
 
     def clean(self):
         """Validation based on document's DocumentType requirements"""
@@ -779,12 +808,20 @@ class FinancialLineMixin(models.Model):
 
     def calculate_totals(self):
         """Calculate line totals"""
-        if self.quantity and self.unit_price:
-            gross_amount = self.quantity * self.unit_price
+        # ✅ FIXED: Use get_quantity() method instead of hardcoded quantity
+        quantity = self.get_quantity() if hasattr(self, 'get_quantity') else Decimal('0')
+
+        if quantity and self.unit_price:
+            gross_amount = quantity * self.unit_price
             self.discount_amount = gross_amount * (self.discount_percent / 100)
             net_amount = gross_amount - self.discount_amount
             self.vat_amount = net_amount * (self.vat_rate / 100)
             self.line_total = net_amount + self.vat_amount
+        else:
+            # Zero out calculations if no quantity or price
+            self.discount_amount = Decimal('0.00')
+            self.vat_amount = Decimal('0.00')
+            self.line_total = Decimal('0.00')
 
     def save(self, *args, **kwargs):
         """Auto-calculate totals before saving"""
