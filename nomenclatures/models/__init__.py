@@ -10,7 +10,7 @@ Nomenclatures models package
 - financial.py: Currency, ExchangeRate, TaxGroup
 - operational.py: UnitOfMeasure, PaymentType, POSLocation
 """
-
+from .approvals import ApprovalRule, ApprovalLog
 # Base imports
 from .base import BaseNomenclature, ActiveManager
 from .documents import DocumentType, DocumentTypeManager
@@ -70,7 +70,7 @@ __all__ = [
 __version__ = '2.0.0'  # APPROVAL SYSTEM VERSION
 __author__ = 'Your Company'
 
-from .approvals import ApprovalRule, ApprovalLog
+
 
 # Module configuration
 default_app_config = 'nomenclatures.apps.NomenclaturesConfig'
