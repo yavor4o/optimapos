@@ -65,11 +65,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin)
     # =====================
     # ДОСТАВКА-СПЕЦИФИЧНИ ПОЛЕТА
     # =====================
-    status = models.CharField(
-        _('Status'),
-        max_length=20,
 
-    )
 
     # CREATION TYPE
     CREATION_TYPE_CHOICES = [

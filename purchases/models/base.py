@@ -312,11 +312,7 @@ class BaseDocument(models.Model):
             if validation_errors:
                 raise ValidationError({'__all__': validation_errors})
 
-        # ПРЕМАХНИ тази проверка - requires_supplier не съществува:
-        # if self.document_type.requires_supplier and not self.supplier:
-        #     raise ValidationError({
-        #         'supplier': _('Supplier is required for this document type')
-        #     })
+
 
     def save(self, *args, **kwargs):
         """Enhanced save with DocumentType integration"""

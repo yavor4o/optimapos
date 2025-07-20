@@ -73,11 +73,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # =====================
     # ПОРЪЧКА-СПЕЦИФИЧНИ ПОЛЕТА
     # =====================
-    status = models.CharField(
-        _('Status'),
-        max_length=20,
 
-    )
 
     # DELIVERY DATE - expected, не actual!
     expected_delivery_date = models.DateField(
