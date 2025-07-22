@@ -52,6 +52,23 @@ class PurchaseRequestLineInline(admin.TabularInline):
     def get_extra(self, request, obj=None, **kwargs):
         return 1 if obj is None else 0
 
+    def save_formset(self, request, form, formset, change):
+        """Това се извиква когато записваш редовете в админа"""
+        # Записва редовете
+        instances = formset.save(commit=False)
+        for instance in instances:
+            instance.save()
+
+        # Изтрива маркираните за изтриване
+        for obj in formset.deleted_objects:
+            obj.delete()
+
+        formset.save_m2m()
+
+        # ЕТО ТУКА Е МАГИЯТА - пресмята финансовите полета!
+        if form.instance.pk:
+            form.instance.recalculate_totals()
+
 
 class PurchaseOrderLineInline(admin.TabularInline):
     model = PurchaseOrderLine
@@ -144,15 +161,15 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     lines_count.short_description = 'Lines'
 
     def estimated_total_display(self, obj):
-        total = obj.estimated_total
+        total = obj.get_estimated_total()
         if total:
-            return format_html('<strong>{:.2f} лв</strong>', total)
+            return total
         return '-'
 
     estimated_total_display.short_description = 'Estimated Total'
 
     def grand_total_display(self, obj):
-        return format_html('<strong>{:.2f} лв</strong>', obj.grand_total)
+        return  obj.grand_total
 
     grand_total_display.short_description = 'Grand Total'
 
@@ -300,7 +317,7 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
     lines_count.short_description = 'Lines'
 
     def grand_total_display(self, obj):
-        return format_html('<strong>{:.2f} лв</strong>', obj.grand_total)
+        return obj.grand_total
 
     grand_total_display.short_description = 'Grand Total'
 

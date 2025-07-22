@@ -52,7 +52,27 @@ def preserve_request_id_before_line_delete(sender, instance, **kwargs):
     """Preserve request ID before line deletion for cleanup"""
     instance._document_id_for_cleanup = instance.document_id
 
+@receiver(post_save, sender=PurchaseRequestLine)
+def update_request_totals_on_line_save(sender, instance, **kwargs):
+    """Recalculate request totals when line is saved"""
+    if instance.document_id:
+        try:
+            instance.document.recalculate_totals()
+            logger.debug(f"Recalculated totals for request {instance.document.document_number}")
+        except Exception as e:
+            logger.error(f"Error recalculating request totals: {e}")
 
+
+@receiver(post_delete, sender=PurchaseRequestLine)
+def cleanup_request_totals_on_line_delete(sender, instance, **kwargs):
+    """Recalculate request totals when line is deleted"""
+    if hasattr(instance, '_document_id_for_cleanup') and instance._document_id_for_cleanup:
+        try:
+            request = PurchaseRequest.objects.get(pk=instance._document_id_for_cleanup)
+            request.recalculate_totals()
+            logger.info(f"Recalculated totals for request {request.document_number} after line deletion")
+        except PurchaseRequest.DoesNotExist:
+            logger.warning(f"Request with ID {instance._document_id_for_cleanup} not found during cleanup")
 
 
 
