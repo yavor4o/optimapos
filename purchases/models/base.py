@@ -907,48 +907,28 @@ class FinancialLineMixin(models.Model):
 
     def _process_entered_price(self):
         """
-        Convert entered_price to unit_price based on document VAT settings
-
-        HIERARCHY:
-        1. Company VAT registration (blocking factor)
-        2. Product VAT rate
-        3. Document price entry mode
+        Convert entered_price to unit_price - SIMPLIFIED using SmartVATService
         """
         if not self.entered_price or not hasattr(self, 'document'):
             return
 
-        # STEP 1: Company VAT check (blocking)
-        company = self.document.get_company()
-        if not company or not company.is_vat_applicable():
-            # Company not VAT registered → no VAT calculations
+        try:
+            # Delegate to SmartVATService - no duplication!
+            from purchases.services.vat_service import SmartVATService
+
+            result = SmartVATService.calculate_line_vat(
+                self, self.entered_price, self.document
+            )
+
+            # Apply results
+            self.unit_price = result['unit_price']
+            self.vat_rate = result['vat_rate']
+            # Note: vat_amount and gross_amount calculated in calculate_totals()
+
+        except ImportError:
+            # Fallback if SmartVATService not available
             self.unit_price = self.entered_price
             self.vat_rate = Decimal('0.00')
-            return
-
-        # STEP 2: Set VAT rate from product tax group
-        if hasattr(self, 'product') and self.product and hasattr(self.product, 'tax_group'):
-            if self.product.tax_group:
-                self.vat_rate = self.product.tax_group.rate
-            else:
-                self.vat_rate = company.get_default_vat_rate()
-        else:
-            self.vat_rate = company.get_default_vat_rate()
-
-        # STEP 3: Product with 0% VAT
-        if self.vat_rate == 0:
-            self.unit_price = self.entered_price
-            return
-
-        # STEP 4: Process based on document price entry mode
-        prices_include_vat = self.document.get_price_entry_mode()
-
-        if prices_include_vat:
-            # entered_price includes VAT → extract VAT
-            vat_multiplier = 1 + (self.vat_rate / 100)
-            self.unit_price = self.entered_price / vat_multiplier
-        else:
-            # entered_price excludes VAT → use directly
-            self.unit_price = self.entered_price
 
     def calculate_totals(self):
         """

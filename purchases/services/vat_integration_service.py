@@ -4,14 +4,17 @@ VAT Integration Service
 
 Handles cross-service VAT operations and document workflows
 """
-
+import logging
 from typing import Dict, List, Optional, Union
 from decimal import Decimal
 from django.db import transaction
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from purchases.models import PurchaseRequest, PurchaseOrder, DeliveryReceipt
 
+
+ogger = logging.getLogger(__name__)  # ✅ ADDED for error logging
 
 class VATIntegrationService:
     """

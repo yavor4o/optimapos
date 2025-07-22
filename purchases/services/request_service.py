@@ -261,61 +261,49 @@ class RequestService:
     # BUSINESS CALCULATIONS
     # =====================
 
+    # REPLACE calculate_request_totals method in purchases/services/request_service.py
+
     @staticmethod
     def calculate_request_totals(request: PurchaseRequest) -> Dict:
         """
-        Calculate various totals for the request using NEW VAT-aware fields
-
-        UPDATED: Now uses VAT-aware calculations alongside estimated totals
+        Calculate request totals - SIMPLIFIED using SmartVATService
         """
         from .vat_service import SmartVATService
 
+        if not hasattr(request, 'lines') or not request.lines.exists():
+            return {
+                'lines_count': 0,
+                'estimated_total': Decimal('0.00'),
+                'vat_totals': SmartVATService.calculate_document_totals(request),
+                'planning_cost': Decimal('0.00')
+            }
+
         lines = request.lines.all()
 
-        # Original estimated calculations (for planning)
+        # LEGACY: estimated total (backward compatibility)
         estimated_total = sum(
-            (line.estimated_price or Decimal('0')) * line.requested_quantity
+            (getattr(line, 'estimated_price', Decimal('0')) or Decimal('0')) *
+            (getattr(line, 'get_quantity', lambda: Decimal('0'))())
             for line in lines
-        ) or Decimal('0.00')
+        )
 
-        lines_with_estimates = lines.filter(estimated_price__isnull=False).count()
-        estimate_coverage = (lines_with_estimates / lines.count() * 100) if lines.count() > 0 else 0
+        # NEW: Use SmartVATService for all VAT calculations
+        vat_totals = SmartVATService.calculate_document_totals(request)
 
-        # NEW: Real financial calculations (if request has financial data)
-        financial_totals = SmartVATService.calculate_document_totals(request) if hasattr(request, 'subtotal') else None
+        # Planning cost analysis
+        planning_cost = Decimal('0')
+        for line in lines:
+            effective_cost = SmartVATService.get_effective_cost(line)
+            quantity = getattr(line, 'get_quantity', lambda: Decimal('0'))()
+            planning_cost += effective_cost * quantity
 
-        result = {
-            # Basic metrics
-            'total_lines': lines.count(),
-            'total_items': sum(line.requested_quantity for line in lines),
-
-            # Estimated calculations (for planning)
-            'estimated_total': estimated_total,
-            'lines_with_estimates': lines_with_estimates,
-            'estimate_coverage_percent': round(estimate_coverage, 1),
-            'average_estimated_item_value': (
-                        estimated_total / sum(line.requested_quantity for line in lines)) if lines else Decimal('0.00'),
-
-            # Request-specific analysis
-            'high_priority_lines': lines.filter(priority__gt=0).count(),
-            'lines_with_suppliers': lines.filter(suggested_supplier__isnull=False).count(),
-            'urgency_level': request.urgency_level,
-            'request_type': request.request_type
+        return {
+            'lines_count': lines.count(),
+            'estimated_total': estimated_total,  # Legacy
+            'vat_totals': vat_totals,  # All VAT calculations
+            'planning_cost': planning_cost,  # Real cost planning
+            'vat_context': request.get_vat_context_info()
         }
-
-        # Add financial totals if available (for requests with FinancialMixin)
-        if financial_totals:
-            result.update({
-                'financial_totals': financial_totals,
-                'has_vat_calculations': True
-            })
-        else:
-            result.update({
-                'has_vat_calculations': False
-            })
-
-        return result
-
     @staticmethod
     def calculate_estimated_vs_actual_analysis(request: PurchaseRequest) -> Dict:
         """

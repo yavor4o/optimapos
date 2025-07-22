@@ -620,62 +620,47 @@ class OrderService:
 
     # REPLACE these methods in purchases/services/order_service.py
 
+    # REPLACE calculate_order_totals method in purchases/services/order_service.py
+
     @staticmethod
     def calculate_order_totals(order: PurchaseOrder) -> Dict:
         """
-        Calculate various totals for the order using NEW VAT-aware fields
-
-        FIXED: Completely rewritten to use only new VAT system
+        Calculate order totals - SIMPLIFIED using SmartVATService
         """
         from .vat_service import SmartVATService
 
-        # Use SmartVATService for all calculations
+        # Use SmartVATService for ALL calculations - no duplication!
         base_totals = SmartVATService.calculate_document_totals(order)
 
         if not hasattr(order, 'lines') or not order.lines.exists():
-            return {
-                **base_totals,
-                'order_specific': {
-                    'total_ordered_items': Decimal('0'),
-                    'delivery_progress': 0.0,
-                    'lines_pending_delivery': 0,
-                    'lines_delivered': 0,
-                    'effective_total_cost': Decimal('0')
-                }
+            base_totals['order_metrics'] = {
+                'total_ordered_items': Decimal('0'),
+                'delivery_progress': 0.0,
+                'effective_total_cost': Decimal('0')
             }
+            return base_totals
 
         lines = order.lines.all()
 
-        # Order-specific calculations using NEW fields only
+        # Order-specific metrics only
         total_ordered_items = sum(
             getattr(line, 'get_quantity', lambda: Decimal('0'))()
             for line in lines
         )
 
-        # Delivery progress analysis
-        lines_with_delivery = [l for l in lines if hasattr(l, 'delivery_status') and l.delivery_status == 'delivered']
-        delivery_progress = (len(lines_with_delivery) / lines.count() * 100) if lines.count() > 0 else 0.0
-
-        # Calculate effective cost for inventory (VAT-aware)
         effective_total_cost = sum(
             SmartVATService.get_effective_cost(line) * getattr(line, 'get_quantity', lambda: Decimal('0'))()
             for line in lines
         )
 
-        return {
-            **base_totals,
-            'order_specific': {
-                'total_ordered_items': total_ordered_items,
-                'delivery_progress': delivery_progress,
-                'lines_pending_delivery': lines.count() - len(lines_with_delivery),
-                'lines_delivered': len(lines_with_delivery),
-                'effective_total_cost': effective_total_cost,
-                'avg_effective_cost_per_item': (
-                    effective_total_cost / total_ordered_items
-                    if total_ordered_items > 0 else Decimal('0')
-                )
-            }
+        # Add order-specific data to base totals
+        base_totals['order_metrics'] = {
+            'total_ordered_items': total_ordered_items,
+            'delivery_progress': 0.0,  # Can be enhanced later
+            'effective_total_cost': effective_total_cost
         }
+
+        return base_totals
 
     @staticmethod
     def validate_order_financials(order: PurchaseOrder) -> Dict:
