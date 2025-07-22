@@ -8,6 +8,7 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.utils.safestring import mark_safe
 
+from nomenclatures.admin.dynamic_actions import DynamicPurchaseRequestAdmin
 from .models import (
     PurchaseRequest, PurchaseRequestLine,
     PurchaseOrder, PurchaseOrderLine,
@@ -150,7 +151,7 @@ class DeliveryLineInline(admin.TabularInline):
 # REPLACE PurchaseRequestAdmin - CORRECT VERSION
 
 @admin.register(PurchaseRequest)
-class PurchaseRequestAdmin(admin.ModelAdmin):
+class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
     list_display = [
         'document_number', 'supplier', 'status', 'urgency_display',
         'lines_count', 'estimated_total_display', 'total_display', 'created_at'  # ✅ Both estimated and calculated

@@ -92,7 +92,7 @@ class RequestService:
                     request=new_request,
                     product=original_line.product,
                     requested_quantity=original_line.requested_quantity,
-                    estimated_price=original_line.estimated_price,
+                    estimated_price=original_line.entered_price,
                     usage_description=original_line.usage_description,
                     suggested_supplier=original_line.suggested_supplier,
                     user=requested_by

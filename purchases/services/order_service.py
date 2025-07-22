@@ -205,7 +205,7 @@ class OrderService:
             for req_line in request.lines.all():
                 # Default values from request line
                 quantity = req_line.requested_quantity
-                unit_price = req_line.estimated_price or Decimal('0.00')
+                unit_price = req_line.entered_price or Decimal('0.00')
 
                 # Apply modifications if provided
                 if line_modifications and req_line.id in line_modifications:
@@ -262,7 +262,7 @@ class OrderService:
             order.save()
             del order._skip_customer_validation
 
-            logger.info(f"Order totals updated - Grand total: {order.grand_total}")
+            logger.info(f"Order totals updated - Grand total: {order.total}")
 
         except Exception as e:
             logger.error(f"Failed to update order totals: {e}")
@@ -350,7 +350,6 @@ class OrderService:
                     ordered_quantity=original_line.ordered_quantity,
                     unit_price=original_line.unit_price,
                     discount_percent=original_line.discount_percent,
-                    notes=original_line.notes,
                     user=user
                 )
 

@@ -383,6 +383,20 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
             'planning_cost': self.get_planning_cost()  # For inventory planning
         }
 
+    def get_estimated_total(self):
+        """
+        Връща общата стойност на заявката въз основа на entered_price и requested_quantity
+        """
+        from decimal import Decimal
+
+        total = Decimal('0.00')
+        for line in self.lines.all():
+            qty = line.requested_quantity or 0
+            price = line.entered_price or 0
+            total += qty * price
+
+        return total
+
 
 # =====================
 # REQUEST LINE MODEL - CLEANED UP
