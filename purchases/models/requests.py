@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
-from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin, FinancialMixin
+from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin, FinancialMixin, FinancialLineMixin
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class PurchaseRequestManager(models.Manager):
         )
 
 
-class PurchaseRequest(SmartDocumentTypeMixin,BaseDocument):
+class PurchaseRequest(SmartDocumentTypeMixin,BaseDocument,FinancialMixin):
     """
     Purchase Request - Заявка за покупка
 
@@ -744,7 +744,7 @@ class PurchaseRequestLineManager(models.Manager):
         )
 
 
-class PurchaseRequestLine(BaseDocumentLine):
+class PurchaseRequestLine(BaseDocumentLine,FinancialLineMixin):
     """
     Purchase Request Line - редове от заявка
 
@@ -848,16 +848,20 @@ class PurchaseRequestLine(BaseDocumentLine):
                     'unit': f'Invalid unit. Valid units: {", ".join(unit_names)}'
                 })
 
-
     def save(self, *args, **kwargs):
-        # Auto-set estimated_price ако няма и има продукт
-        if not self.estimated_price and self.product:
-            self.estimated_price = self.product.get_estimated_purchase_price(self.unit)
+        # Auto-set unit_price от estimated_price (БЕЗ ДДС)
+        if not self.unit_price and self.estimated_price:
+            self.unit_price = self.estimated_price
 
-        # Sync quantity with requested_quantity
+        # Auto-set VAT rate от продукта - ФИКСВАНО!
+        if not self.vat_rate and self.product and hasattr(self.product, 'tax_group'):
+            self.vat_rate = self.product.tax_group.rate  # ← ФИКСВАНО: rate, не vat_rate
+
+        # Sync quantity with requested_quantity (за BaseDocumentLine)
         if self.requested_quantity:
             self.quantity = self.requested_quantity
 
+        # FinancialLineMixin.save() автоматично ще извика calculate_totals()
         super().save(*args, **kwargs)
 
     # =====================
@@ -879,3 +883,6 @@ class PurchaseRequestLine(BaseDocumentLine):
     def is_high_value(self, threshold=500):
         """Check if this line has high estimated value"""
         return self.estimated_total and self.estimated_total >= threshold
+
+    def get_quantity(self):
+        return self.requested_quantity or Decimal('0')
