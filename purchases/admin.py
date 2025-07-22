@@ -1,6 +1,7 @@
 # purchases/admin.py - FIXED COMPLETE ADMIN
+import logging
 
-from django.contrib import admin
+from django.contrib import admin, messages
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
@@ -14,6 +15,8 @@ from .models import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 # =================================================================
 # INLINE ADMINS - FIXED WITH NEW FIELDS
 # =================================================================
@@ -21,19 +24,84 @@ from .models import (
 class PurchaseRequestLineInline(admin.TabularInline):
     model = PurchaseRequestLine
     extra = 1
+
     fields = [
         'product', 'requested_quantity', 'unit',
-        'estimated_price',  'unit_price', 'vat_rate',
-        'net_amount', 'vat_amount', 'gross_amount'  # ✅ FULL VAT fields
+        'entered_price',  # ✅ ONLY entered_price now
+        'price_suggestion_info',
+        ('unit_price', 'vat_rate'),
+        ('net_amount', 'gross_amount'),
     ]
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
 
-    def get_extra(self, request, obj=None, **kwargs):
-        return 1 if obj is None else 0
+    readonly_fields = [
+        'price_suggestion_info',
+        'unit_price', 'vat_rate',
+        'net_amount', 'vat_amount', 'gross_amount'
+    ]
+
+    def price_suggestion_info(self, obj):
+        """Show price suggestion and processing info"""
+        if not obj or not obj.pk:
+            return format_html('<em>Save to see price info</em>')
+
+        info_parts = []
+
+        # Show current price
+        if obj.entered_price and obj.entered_price > 0:
+            info_parts.append(
+                f'<span style="color: blue;">💰 Price: {obj.entered_price}</span>'
+            )
+        else:
+            info_parts.append(
+                '<span style="color: orange;">⚠️ No price entered</span>'
+            )
+
+        # Show VAT processing result
+        if obj.unit_price and obj.unit_price > 0:
+            if obj.entered_price and obj.entered_price != obj.unit_price:
+                # VAT was processed (prices were extracted)
+                info_parts.append(
+                    f'<small>→ Processed: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
+                )
+            else:
+                # No VAT processing needed
+                info_parts.append(
+                    f'<small>→ Direct: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
+                )
+
+        # Show auto-suggestion if available
+        if obj.product and (not obj.entered_price or obj.entered_price == 0):
+            try:
+                suggested = obj.product.get_estimated_purchase_price(obj.unit)
+                if suggested and suggested > 0:
+                    info_parts.append(
+                        f'<span style="color: green;">💡 Suggested: {suggested}</span>'
+                    )
+            except:
+                pass
+
+        return format_html('<br>'.join(info_parts))
+
+    price_suggestion_info.short_description = 'Price Info'
 
     def save_formset(self, request, form, formset, change):
+        """Enhanced save with auto-suggestion"""
         instances = formset.save(commit=False)
+
         for instance in instances:
+            # Auto-suggest price if none entered
+            if (not instance.entered_price or instance.entered_price == 0) and instance.product:
+                try:
+                    suggested = instance.product.get_estimated_purchase_price(instance.unit)
+                    if suggested and suggested > 0:
+                        instance.entered_price = suggested
+                        messages.info(
+                            request,
+                            f'Auto-suggested price {suggested} for {instance.product.code}'
+                        )
+                except Exception as e:
+                    logger.warning(f"Auto-suggestion failed for {instance.product.code}: {e}")
+
             instance.save()
 
         for obj in formset.deleted_objects:
@@ -41,7 +109,7 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
         formset.save_m2m()
 
-        # Recalculate totals
+        # Recalculate document totals
         if form.instance.pk and hasattr(form.instance, 'recalculate_totals'):
             form.instance.recalculate_totals()
 
@@ -151,7 +219,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         # Legacy estimated calculation
         try:
             total = sum(
-                (getattr(line, 'estimated_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
+                (getattr(line, 'entered_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
                 for line in obj.lines.all()
             )
             return float(total)

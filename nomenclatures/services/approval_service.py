@@ -294,7 +294,7 @@ class ApprovalService:
                 'message': f'Error during ApprovalRule validation: {str(e)}'
             }
 
-    staticmethod
+    @staticmethod
 
     def _check_document_type_auto_transitions(document, user):
         """
@@ -328,37 +328,7 @@ class ApprovalService:
         except Exception as e:
             logger.error(f"Error in DocumentType auto-transitions: {e}")
 
-    def _check_approval_rule_auto_transitions(document, user):
-        """
-        ОБНОВЕН МЕТОД: Проверява за ApprovalRule auto-transitions
-        """
-        try:
-            # Намираме правила с auto-approve условия
-            auto_rules = ApprovalRule.objects.for_document(document).filter(
-                from_status=document.status,
-                is_active=True
-            ).exclude(auto_approve_conditions={})
 
-            for rule in auto_rules:
-                if ApprovalService._evaluate_auto_approve_conditions(document, rule):
-                    logger.info(f"Executing ApprovalRule auto-transition: {document.status} → {rule.to_status}")
-
-                    # Рекурсивно викаме execute_transition
-                    result = ApprovalService.execute_transition(
-                        document=document,
-                        to_status=rule.to_status,
-                        user=user,
-                        comments=f"Automatic transition from ApprovalRule: {rule.name}"
-                    )
-
-                    if result['success']:
-                        logger.info(f"ApprovalRule auto-transition successful: {document} to {rule.to_status}")
-                        break  # Изпълняваме само първия успешен auto-transition
-                    else:
-                        logger.warning(f"ApprovalRule auto-transition failed: {result['message']}")
-
-        except Exception as e:
-            logger.error(f"Error in ApprovalRule auto-transitions: {e}")
 
     @staticmethod
     def reject_document(document, user, reason: str, **kwargs) -> Dict:
