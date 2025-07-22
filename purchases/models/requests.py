@@ -1,5 +1,7 @@
 # purchases/models/requests.py - CLEAN VERSION БЕЗ estimated_price
 import logging
+from typing import Dict
+
 from django.db import models, transaction
 from datetime import timedelta
 from django.utils import timezone
@@ -231,25 +233,180 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
     # WORKFLOW METHODS
     # =====================
     def submit_for_approval(self, user=None):
-        """Submit request for approval via ApprovalService"""
+        """
+        UPDATED: Submit request with auto-approve check
+
+        Now uses the enhanced ApprovalService for automatic approval
+        """
         from nomenclatures.services.approval_service import ApprovalService
 
-        # Business validation
-        if not self.lines.exists():
-            raise ValidationError("Cannot submit request without lines")
-
-        # Use ApprovalService
-        result = ApprovalService.execute_transition(
-            document=self,
-            to_status='submitted',
-            user=user,
-            comments="Submitted for approval"
-        )
+        # Use the new enhanced submit method
+        result = ApprovalService.submit_document_with_auto_approve(self, user)
 
         if not result['success']:
             raise ValidationError(result['message'])
 
-        return True
+        # Log the result for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if result['auto_approved']:
+            logger.info(
+                f"Request {self.document_number} was auto-approved: {result['auto_approve_details']['message']}")
+        else:
+            logger.info(f"Request {self.document_number} submitted for manual approval")
+
+        return result
+
+    def approve(self, user, notes=''):
+        """
+        UPDATED: Manual approval method
+
+        Now checks if document was already auto-approved
+        """
+        if self.status == 'approved':
+            # Document was already auto-approved
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Attempt to manually approve already approved request {self.document_number}")
+            return {
+                'success': False,
+                'message': 'Request is already approved',
+                'was_auto_approved': True
+            }
+
+        if self.status != 'submitted':
+            raise ValidationError("Can only approve submitted requests")
+
+        self.status = 'approved'
+        self.approved_by = user
+        self.approved_at = timezone.now()
+        if notes:
+            self.notes = (self.notes + '\n' + notes).strip()
+        self.updated_by = user
+        self.save()
+
+        return {
+            'success': True,
+            'message': 'Request manually approved',
+            'was_auto_approved': False
+        }
+
+    # =====================
+    # NEW HELPER METHODS
+    # =====================
+
+    def is_auto_approvable(self, user=None) -> Dict:
+        """
+        NEW: Check if request can be auto-approved without executing
+
+        Useful for UI to show if auto-approval would happen
+        """
+        from nomenclatures.services.approval_service import ApprovalService
+        from nomenclatures.models.approvals import ApprovalRule
+
+        # Find auto-approve rules
+        auto_rules = ApprovalRule.objects.for_document(self).filter(
+            from_status=self.status,
+            to_status='approved',
+            is_active=True
+        ).exclude(
+            auto_approve_conditions__isnull=True
+        ).exclude(
+            auto_approve_conditions__exact={}
+        )
+
+        if not auto_rules.exists():
+            return {
+                'can_auto_approve': False,
+                'reason': 'No auto-approve rules configured',
+                'applicable_rules': []
+            }
+
+        applicable_rules = []
+        for rule in auto_rules:
+            check_result = ApprovalService._check_auto_conditions(self, rule)
+            applicable_rules.append({
+                'rule_name': rule.name,
+                'eligible': check_result['eligible'],
+                'details': check_result['details'],
+                'conditions': rule.auto_approve_conditions
+            })
+
+        # Check if any rule would pass
+        can_auto_approve = any(rule['eligible'] for rule in applicable_rules)
+
+        return {
+            'can_auto_approve': can_auto_approve,
+            'reason': 'Auto-approve conditions met' if can_auto_approve else 'Auto-approve conditions not met',
+            'applicable_rules': applicable_rules
+        }
+
+    def get_auto_approve_preview(self) -> str:
+        """
+        NEW: Get human-readable preview of auto-approve status
+
+        For use in admin interface or API responses
+        """
+        preview_result = self.is_auto_approvable()
+
+        if not preview_result['applicable_rules']:
+            return "❌ No auto-approve rules configured"
+
+        preview_lines = []
+        for rule in preview_result['applicable_rules']:
+            status = "✅" if rule['eligible'] else "❌"
+            preview_lines.append(f"{status} {rule['rule_name']}: {rule['details']}")
+
+        if preview_result['can_auto_approve']:
+            preview_lines.insert(0, "🎯 AUTO-APPROVE: Will be automatically approved")
+        else:
+            preview_lines.insert(0, "⏳ MANUAL APPROVAL: Requires human approval")
+
+        return "\n".join(preview_lines)
+
+    # =====================
+    # ENHANCED PROPERTIES
+    # =====================
+
+    @property
+    def was_auto_approved(self):
+        """Check if this request was auto-approved"""
+        if self.status != 'approved':
+            return False
+
+        # Check ApprovalLog for auto_approved action
+        from nomenclatures.models.approvals import ApprovalLog
+        from django.contrib.contenttypes.models import ContentType
+
+        content_type = ContentType.objects.get_for_model(self.__class__)
+
+        auto_approval_logs = ApprovalLog.objects.filter(
+            content_type=content_type,
+            object_id=self.pk,
+            action='auto_approved'
+        )
+
+        return auto_approval_logs.exists()
+
+    @property
+    def auto_approval_rule_used(self):
+        """Get the rule that was used for auto-approval"""
+        if not self.was_auto_approved:
+            return None
+
+        from nomenclatures.models.approvals import ApprovalLog
+        from django.contrib.contenttypes.models import ContentType
+
+        content_type = ContentType.objects.get_for_model(self.__class__)
+
+        auto_approval_log = ApprovalLog.objects.filter(
+            content_type=content_type,
+            object_id=self.pk,
+            action='auto_approved'
+        ).first()
+
+        return auto_approval_log.rule if auto_approval_log else None
 
     @property
     def total_estimated_cost(self):

@@ -109,108 +109,68 @@ class DynamicApprovalMixin:
 
     def _handle_document_approval(self, document, user):
         """
-        ФИКСИРАНО: Configuration-driven approval handling
-
-        ✅ НОВА ЛОГИКА: Проверява requires_approval, approval_limit И auto_approve_conditions!
+        ✅ ЧИСТО: Използва само конфигурационни правила (DocumentType + ApprovalRule)
+        Без гадаене, без ключови думи.
         """
-
         try:
-            # ✅ СТЪПКА 1: Проверка за approval изисквания
+            # 1. Проверка за нужда от одобрение
             if document.document_type and document.document_type.requires_approval:
-                # Получаваме сумата на документа
-                document_amount = None
-                if hasattr(document, 'grand_total'):
-                    document_amount = document.grand_total
-                elif hasattr(document, 'get_estimated_total'):
-                    document_amount = document.get_estimated_total()
+                amount = (
+                        getattr(document, 'grand_total', None)
+                        or (document.get_estimated_total() if hasattr(document, 'get_estimated_total') else None)
+                )
 
-                # Проверяваме дали изисква одобрение
-                if document.needs_approval(document_amount):
-
-                    # ✅ СТЪПКА 1.1: Проверка за Auto Approve Conditions
-                    if document.document_type.auto_approve_conditions:
-                        if self._evaluate_auto_approve_conditions(document, document_amount, user):
-                            # AUTO APPROVE - пропускаме approval процеса!
-                            return self._execute_auto_approve(document, user)
-
-                    # ✅ СТЪПКА 1.2: Ако НЕ отговаря на auto conditions, изисква ApprovalRule
-                    from nomenclatures.services.approval_service import ApprovalService
-
-                    available_transitions = ApprovalService.get_available_transitions(document, user)
-
-                    if not available_transitions:
+                if document.needs_approval(amount):
+                    # 1.1 Вземаме всички възможни преходи за потребителя
+                    transitions = ApprovalService.get_available_transitions(document, user)
+                    if not transitions:
                         return {
                             'success': False,
-                            'message': f'Document requires approval but no ApprovalRule found. Amount: {document_amount}, Limit: {document.document_type.approval_limit}. Create ApprovalRule or configure Auto Approve Conditions.'
+                            'message': 'Document requires approval but no applicable transition was found.'
                         }
 
-                    # Използваме ApprovalService за approval transitions
-                    first_transition = available_transitions[0]
+                    # 1.2 Избираме преход с най-ниско ниво (няма гадаене)
+                    selected = sorted(transitions, key=lambda t: t['level'])[0]
 
-                    result = ApprovalService.execute_transition(
+                    return ApprovalService.execute_transition(
                         document=document,
-                        to_status=first_transition['to_status'],
+                        to_status=selected['to_status'],
                         user=user,
-                        comments="Approval via admin action"
+                        comments=f"Approval via rule: {selected['rule'].name}"
                     )
 
-                    return result
-
-            # ✅ СТЪПКА 2: Ако НЕ изисква одобрение, използваме DocumentType transitions
-            current_status = document.status
-            next_statuses = document.get_next_statuses()  # От DocumentType
-
+            # 2. Ако не се изисква одобрение — следваме DocumentType transitions
+            next_statuses = document.get_next_statuses()
             if not next_statuses:
                 return {
                     'success': False,
-                    'message': f'No valid transitions available from status "{current_status}"'
+                    'message': f'No allowed transitions from status "{document.status}"'
                 }
 
-            # ✅ УМНО: Избери най-подходящия следващ статус
-            target_status = None
+            # 2.1 Без гадаене: взимаме първия разрешен статус по дефиниран ред
+            target_status = next_statuses[0]
 
-            # Търси approval-related статуси първо
-            approval_keywords = ['approval', 'approve', 'pending', 'submitted', 'review']
-            for keyword in approval_keywords:
-                for status in next_statuses:
-                    if keyword in status.lower():
-                        target_status = status
-                        break
-                if target_status:
-                    break
-
-            # Ако няма approval статус, вземи първия non-cancellation
-            if not target_status:
-                non_cancellation = [s for s in next_statuses if 'cancel' not in s.lower()]
-                if non_cancellation:
-                    target_status = non_cancellation[0]
-                else:
-                    target_status = next_statuses[0]  # Last resort
-
-            # ✅ ВАЛИДАЦИЯ: Проверка дали transition е разрешен
+            # 2.2 Валидация
             if not document.can_transition_to(target_status):
                 return {
                     'success': False,
-                    'message': f'Transition from "{current_status}" to "{target_status}" not allowed by DocumentType'
+                    'message': f'Transition from "{document.status}" to "{target_status}" not allowed.'
                 }
 
-            # ✅ СПЕЦИАЛНИ ПРОВЕРКИ за document requirements
             if hasattr(document, 'lines') and not document.lines.exists():
                 return {
                     'success': False,
-                    'message': 'Cannot submit document without lines'
+                    'message': 'Cannot submit document without lines.'
                 }
 
-            # ✅ ИЗПЪЛНЕНИЕ: Промяна на статуса
+            # 2.3 Промяна
             old_status = document.status
             document.status = target_status
 
-            # Update tracking fields
             if hasattr(document, 'updated_by'):
                 document.updated_by = user
 
-            # Special handling за approval fields
-            if 'approv' in target_status.lower():
+            if target_status in ('approved', 'confirmed') or 'approv' in target_status:
                 if hasattr(document, 'approved_by'):
                     document.approved_by = user
                 if hasattr(document, 'approved_at'):
@@ -220,13 +180,13 @@ class DynamicApprovalMixin:
 
             return {
                 'success': True,
-                'message': f'Status changed: {old_status} → {target_status} (no approval required)'
+                'message': f'Status changed: {old_status} → {target_status} (auto transition)'
             }
 
         except Exception as e:
             return {
                 'success': False,
-                'message': f'Error processing approval: {str(e)}'
+                'message': f'Error during approval: {str(e)}'
             }
 
     def _evaluate_auto_approve_conditions(self, document, document_amount, user):

@@ -702,73 +702,238 @@ class ApprovalService:
 
     @staticmethod
     def _send_notifications(document, rule: ApprovalRule, user, action: str):
-        """Изпраща нотификации според настройките на правилото"""
+        """
+        UPDATED: Enhanced notifications with auto-approve support
+        """
         try:
-            # Засега само логваме, нотификациите са следваща фаза
-            logger.info(f"Notification: {action} by {user} for {document} using rule {rule.name}")
+            # Логваме според action type
+            if action == 'auto_approved':
+                logger.info(f"Auto-Approval Notification: {rule.name} auto-approved {document} for {user}")
+            else:
+                logger.info(f"Notification: {action} by {user} for {document} using rule {rule.name}")
 
-            # TODO: Имплементиране на реални нотификации
-            # if rule.notify_approver:
-            #     NotificationService.notify_approver(...)
-            # if rule.notify_requester:
-            #     NotificationService.notify_requester(...)
+            # TODO: Реални нотификации в следващия етап
+            if rule.notify_approver and action in ['approval_needed']:
+                # NotificationService.notify_approval_needed(...)
+                pass
+
+            if rule.notify_requester and action in ['approved', 'rejected', 'auto_approved']:
+                # NotificationService.notify_status_changed(...)
+                pass
 
         except Exception as e:
             logger.error(f"Error sending notifications: {e}")
 
     @staticmethod
     def _check_auto_transitions(document, user):
-        """Проверява за автоматични следващи преходи"""
+        """
+        UPDATED: Enhanced auto transitions с новата логика
+        """
         try:
-            # Търсим правила за автоматични преходи от новия статус
-            auto_rules = ApprovalRule.objects.for_document(document).filter(
-                from_status=document.status,
-                is_active=True
-            ).exclude(auto_approve_conditions__isnull=True).exclude(auto_approve_conditions__exact={})
+            # Използваме новия enhanced метод
+            auto_result = ApprovalService.check_and_execute_auto_approve(document, user)
 
-            for rule in auto_rules:
-                # Проверяваме условията за автоматично одобрение
-                if ApprovalService._check_auto_conditions(document, rule):
-                    # Изпълняваме автоматичния преход
-                    result = ApprovalService.execute_transition(
-                        document=document,
-                        to_status=rule.to_status,
-                        user=user,
-                        comments="Automatic transition based on predefined conditions"
-                    )
+            if auto_result['auto_approved']:
+                logger.info(f"Auto-transition completed: {auto_result['message']}")
 
-                    if result['success']:
-                        logger.info(f"Auto-transition executed: {document} to {rule.to_status}")
-                        break
+                # Проверяваме за следващи auto-transitions
+                next_auto_result = ApprovalService.check_and_execute_auto_approve(document, user)
+                if next_auto_result['auto_approved']:
+                    logger.info(f"Chained auto-transition: {next_auto_result['message']}")
 
         except Exception as e:
-            logger.error(f"Error checking auto transitions: {e}")
+            logger.error(f"Error in enhanced auto transitions: {e}")
 
     @staticmethod
-    def _check_auto_conditions(document, rule: ApprovalRule) -> bool:
-        """Проверява дали условията за автоматично одобрение са изпълнени"""
+    def _check_auto_conditions(document, rule: ApprovalRule) -> Dict:
+        """Enhanced проверка за автоматично одобрение"""
+        # [Previous implementation - full code from artifact above]
         try:
             conditions = rule.auto_approve_conditions
             if not conditions:
-                return False
+                return {
+                    'eligible': False,
+                    'passed_conditions': [],
+                    'failed_conditions': ['No auto-approve conditions defined'],
+                    'details': 'Rule has no auto-approve conditions'
+                }
 
-            # Примерни условия - може да се разшири
+            passed_conditions = []
+            failed_conditions = []
+
+            # MAX AMOUNT CHECK
             if 'max_amount' in conditions:
-                if hasattr(document, 'get_estimated_total'):
-                    amount = document.get_estimated_total()
-                    if amount and amount > conditions['max_amount']:
-                        return False
+                max_amount = conditions['max_amount']
+                try:
+                    document_amount = document.get_estimated_total()
+                    if document_amount is not None:
+                        if document_amount <= max_amount:
+                            passed_conditions.append(f"max_amount: {document_amount} <= {max_amount}")
+                        else:
+                            failed_conditions.append(f"max_amount: {document_amount} > {max_amount}")
+                    else:
+                        failed_conditions.append("max_amount: Could not calculate document total")
+                except Exception as e:
+                    failed_conditions.append(f"max_amount: Error calculating total - {str(e)}")
 
+            # URGENCY LEVEL CHECK
+            if 'urgency_level' in conditions:
+                required_urgency = conditions['urgency_level']
+                document_urgency = getattr(document, 'urgency_level', None)
+
+                if document_urgency == required_urgency:
+                    passed_conditions.append(f"urgency_level: {document_urgency} matches {required_urgency}")
+                else:
+                    failed_conditions.append(f"urgency_level: {document_urgency} != {required_urgency}")
+
+            # REQUIRED FIELDS CHECK
             if 'required_fields' in conditions:
-                for field in conditions['required_fields']:
-                    if not getattr(document, field, None):
-                        return False
+                required_fields = conditions['required_fields']
+                if isinstance(required_fields, list):
+                    for field in required_fields:
+                        field_value = getattr(document, field, None)
+                        if field_value and str(field_value).strip():
+                            passed_conditions.append(f"required_field: {field} is populated")
+                        else:
+                            failed_conditions.append(f"required_field: {field} is empty or missing")
 
-            return True
+            # BUSINESS HOURS CHECK
+            if 'business_hours_only' in conditions and conditions['business_hours_only']:
+                now = timezone.now()
+                is_weekday = now.weekday() < 5
+                is_business_hours = 9 <= now.hour < 18
+
+                if is_weekday and is_business_hours:
+                    passed_conditions.append(
+                        f"business_hours: Current time {now.strftime('%A %H:%M')} is within business hours")
+                else:
+                    failed_conditions.append(
+                        f"business_hours: Current time {now.strftime('%A %H:%M')} is outside business hours")
+
+            # REQUEST TYPE CHECK
+            if 'allowed_request_types' in conditions:
+                allowed_types = conditions['allowed_request_types']
+                document_type = getattr(document, 'request_type', None)
+
+                if document_type in allowed_types:
+                    passed_conditions.append(f"request_type: {document_type} is in allowed types {allowed_types}")
+                else:
+                    failed_conditions.append(f"request_type: {document_type} not in allowed types {allowed_types}")
+
+            # FINAL RESULT
+            eligible = len(failed_conditions) == 0 and len(passed_conditions) > 0
+
+            details = []
+            if passed_conditions:
+                details.append(f"✅ PASSED: {', '.join(passed_conditions)}")
+            if failed_conditions:
+                details.append(f"❌ FAILED: {', '.join(failed_conditions)}")
+
+            return {
+                'eligible': eligible,
+                'passed_conditions': passed_conditions,
+                'failed_conditions': failed_conditions,
+                'details': ' | '.join(details)
+            }
 
         except Exception as e:
-            logger.error(f"Error checking auto conditions: {e}")
-            return False
+            logger.error(f"Error checking auto conditions for rule {rule.name}: {e}")
+            return {
+                'eligible': False,
+                'passed_conditions': [],
+                'failed_conditions': [f"System error: {str(e)}"],
+                'details': f'Auto-approve check failed due to system error: {str(e)}'
+            }
+
+    @staticmethod
+    def check_and_execute_auto_approve(document, user) -> Dict:
+        """Проверява и изпълнява автоматично одобрение"""
+        try:
+            # Намира правила с auto conditions
+            auto_rules = ApprovalRule.objects.for_document(document).filter(
+                from_status=document.status,
+                to_status='approved',
+                is_active=True
+            ).exclude(
+                auto_approve_conditions__isnull=True
+            ).exclude(
+                auto_approve_conditions__exact={}
+            ).order_by('approval_level', 'sort_order')
+
+            if not auto_rules.exists():
+                return {
+                    'auto_approved': False,
+                    'rule_applied': None,
+                    'message': 'No auto-approve rules found',
+                    'details': 'No active approval rules with auto-approve conditions'
+                }
+
+            # Проверяваме всяко правило
+            for rule in auto_rules:
+                logger.info(f"Checking auto-approve rule: {rule.name}")
+
+                check_result = ApprovalService._check_auto_conditions(document, rule)
+                logger.info(f"Auto-approve check for rule {rule.name}: {check_result['details']}")
+
+                if check_result['eligible']:
+                    # Изпълняваме автоматичното одобрение
+                    with transaction.atomic():
+                        from_status = document.status
+
+                        # Променяме статуса
+                        document.status = rule.to_status
+
+                        # Попълваме approval полета
+                        if hasattr(document, 'approved_by'):
+                            document.approved_by = user
+                        if hasattr(document, 'approved_at'):
+                            document.approved_at = timezone.now()
+                        if hasattr(document, 'updated_by'):
+                            document.updated_by = user
+
+                        document.save()
+
+                        # Създаваме ApprovalLog запис
+                        log_entry = ApprovalService._log_approval_action(
+                            document=document,
+                            rule=rule,
+                            action='auto_approved',
+                            from_status=from_status,
+                            to_status=rule.to_status,
+                            user=user,
+                            comments=f"Auto-approved based on conditions: {check_result['details']}"
+                        )
+
+                        # Изпращаме нотификации
+                        ApprovalService._send_notifications(document, rule, user, 'auto_approved')
+
+                        logger.info(f"Auto-approved {document} using rule {rule.name}")
+
+                        return {
+                            'auto_approved': True,
+                            'rule_applied': rule,
+                            'message': f'Document auto-approved using rule: {rule.name}',
+                            'details': check_result['details'],
+                            'log_entry': log_entry
+                        }
+                else:
+                    logger.info(f"Auto-approve rule {rule.name} failed: {check_result['details']}")
+
+            return {
+                'auto_approved': False,
+                'rule_applied': None,
+                'message': 'No auto-approve conditions were met',
+                'details': 'All auto-approve rules failed their conditions'
+            }
+
+        except Exception as e:
+            logger.error(f"Error in auto-approve check for {document}: {e}")
+            return {
+                'auto_approved': False,
+                'rule_applied': None,
+                'message': f'Auto-approve failed due to error: {str(e)}',
+                'details': f'System error during auto-approve: {str(e)}'
+            }
 
     @staticmethod
     def _get_rule_approver_display(rule: ApprovalRule) -> str:
@@ -795,3 +960,52 @@ class ApprovalService:
                 return f"From {rule.min_amount} {rule.currency}"
         except Exception:
             return "No limit"
+
+    @staticmethod
+    def submit_document_with_auto_approve(document, user) -> Dict:
+        """
+        NEW: Public API за submit с auto-approve check
+
+        Това е новият препоръчителен начин за submit на документи
+        """
+        try:
+            # Validation
+            if document.status != 'draft':
+                return {
+                    'success': False,
+                    'message': 'Can only submit draft documents',
+                    'auto_approved': False
+                }
+
+            if hasattr(document, 'lines') and not document.lines.exists():
+                return {
+                    'success': False,
+                    'message': 'Cannot submit document without lines',
+                    'auto_approved': False
+                }
+
+            # Submit to 'submitted' status
+            document.status = 'submitted'
+            if hasattr(document, 'updated_by'):
+                document.updated_by = user
+            document.save()
+
+            # Check for auto-approve
+            auto_result = ApprovalService.check_and_execute_auto_approve(document, user)
+
+            return {
+                'success': True,
+                'message': 'Document submitted successfully',
+                'auto_approved': auto_result['auto_approved'],
+                'auto_approve_details': auto_result,
+                'current_status': document.status
+            }
+
+        except Exception as e:
+            logger.error(f"Error in submit_document_with_auto_approve: {e}")
+            return {
+                'success': False,
+                'message': f'Submit failed: {str(e)}',
+                'auto_approved': False
+            }
+

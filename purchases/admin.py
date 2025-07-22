@@ -153,43 +153,59 @@ class DeliveryLineInline(admin.TabularInline):
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
     list_display = [
-        'document_number', 'supplier', 'status', 'urgency_display',
-        'lines_count', 'estimated_total_display', 'total_display', 'created_at'  # ✅ Both estimated and calculated
+        'document_number', 'supplier', 'status_display', 'urgency_display',
+        'estimated_total_display', 'lines_count', 'auto_approve_indicator',  # NEW
+        'requested_by', 'created_at'
     ]
 
-    list_filter = ['status', 'urgency_level', 'supplier', 'location']
-    search_fields = ['document_number', 'supplier__name']
+    list_filter = [
+        'status', 'urgency_level', 'request_type',
+        'approval_required', 'created_at'
+    ]
+
+    search_fields = [
+        'document_number', 'supplier__name', 'requested_by__username',
+        'business_justification', 'notes'
+    ]
 
     readonly_fields = [
-        'document_number', 'document_type', 'status',
-        'subtotal', 'vat_total', 'total',  # ✅ CORRECT: PurchaseRequest HAS these fields!
-        'created_at', 'updated_at', 'created_by', 'updated_by'
+        'document_number', 'created_at', 'updated_at',
+        'converted_to_order', 'converted_at', 'converted_by',
+        'auto_approve_preview_display',  # NEW
+        'approval_history_display',  # NEW
+
     ]
 
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('supplier', 'location', 'prices_entered_with_vat')  # ✅ VAT control
+    fieldsets = [
+        (_('Document Info'), {
+            'fields': ('document_number', 'document_type', 'status', 'external_reference')
         }),
-        ('Document Info', {
-            'fields': ('document_type', 'document_number', 'status'),
+        (_('Request Details'), {
+            'fields': (
+                'supplier', 'location', 'request_type', 'urgency_level',
+                'business_justification', 'expected_usage'
+            )
+        }),
+        (_('Approval Workflow'), {
+            'fields': (
+                'approval_required', 'requested_by', 'approved_by', 'approved_at',
+                'rejection_reason', 'auto_approve_preview_display'  # NEW
+            )
+        }),
+        (_('Conversion Tracking'), {
+            'fields': (
+                'converted_to_order', 'converted_at', 'converted_by'
+            ),
             'classes': ('collapse',)
         }),
-        ('Request Details', {
-            'fields': ('urgency_level', 'request_type', 'requested_by')
-        }),
-        ('Financial Totals', {  # ✅ CORRECT: Request IS financial!
-            'fields': ('subtotal', 'vat_total', 'total'),
+        (_('System Info'), {
+            'fields': (
+                'created_at', 'updated_at',  # NEW
+
+            ),
             'classes': ('collapse',)
         }),
-        ('Justification', {
-            'fields': ('business_justification', 'expected_usage'),
-            'classes': ('collapse',)
-        }),
-        ('System Info', {
-            'fields': ('created_at', 'updated_at', 'created_by', 'updated_by'),
-            'classes': ('collapse',)
-        }),
-    )
+    ]
 
     inlines = [PurchaseRequestLineInline]
 
@@ -233,9 +249,188 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
         # VAT-calculated total
         return float(obj.total)
 
+    def status_display(self, obj):
+        """Показва статуса както е записан в базата"""
+        colors = {
+            'draft': '#757575',
+            'submitted': '#FF9800',
+            'approved': '#4CAF50',
+            'converted': '#2196F3',
+            'rejected': '#F44336',
+            'cancelled': '#9E9E9E'
+        }
+        color = colors.get(obj.status, '#757575')
+
+        # Добави 🤖 ако е автоматично одобрен
+        label = obj.status
+        if obj.status == 'approved' and getattr(obj, 'was_auto_approved', False):
+            label += ' 🤖'
+
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
+            color, label
+        )
+
+    status_display.short_description = _('Status')
+
     total_display.short_description = 'VAT Total'
 
+    def auto_approve_indicator(self, obj):
+        """Shows if request was auto-approved or can be auto-approved"""
+        if obj.status == 'approved' and obj.was_auto_approved:
+            rule_name = obj.auto_approval_rule_used.name if obj.auto_approval_rule_used else "Unknown"
+            return format_html(
+                '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; '
+                'border-radius: 3px; font-size: 10px;">🤖 AUTO: {}</span>',
+                rule_name
+            )
+        elif obj.status == 'draft':
+            preview = obj.is_auto_approvable()
+            if preview['can_auto_approve']:
+                return format_html(
+                    '<span style="background-color: #2196F3; color: white; padding: 2px 6px; '
+                    'border-radius: 3px; font-size: 10px;">⚡ WILL AUTO-APPROVE</span>'
+                )
+            else:
+                return format_html(
+                    '<span style="background-color: #FF9800; color: white; padding: 2px 6px; '
+                    'border-radius: 3px; font-size: 10px;">👤 MANUAL APPROVAL</span>'
+                )
+        else:
+            return '-'
 
+    auto_approve_indicator.short_description = _('Auto Approval')
+
+    def auto_approve_preview_display(self, obj):
+        """Detailed auto-approve preview for the admin form"""
+        if not obj.pk:
+            return "Save request first to see auto-approve preview"
+
+        preview_text = obj.get_auto_approve_preview()
+
+        # Format for HTML display
+        formatted_preview = preview_text.replace('\n', '<br>')
+
+        return format_html(
+            '<div style="font-family: monospace; font-size: 12px; '
+            'background-color: #f5f5f5; padding: 10px; border-radius: 4px;">{}</div>',
+            formatted_preview
+        )
+
+    auto_approve_preview_display.short_description = _('Auto-Approve Preview')
+
+    def approval_history_display(self, obj):
+        """Shows approval history including auto-approvals"""
+        if not obj.pk:
+            return "Save request first to see approval history"
+
+        from nomenclatures.models.approvals import ApprovalLog
+        from django.contrib.contenttypes.models import ContentType
+
+        content_type = ContentType.objects.get_for_model(obj.__class__)
+        logs = ApprovalLog.objects.filter(
+            content_type=content_type,
+            object_id=obj.pk
+        ).order_by('-created_at')
+
+        if not logs.exists():
+            return "No approval history"
+
+        history_lines = []
+        for log in logs[:5]:  # Show last 5 entries
+            action_icon = {
+                'approved': '✅',
+                'auto_approved': '🤖',
+                'rejected': '❌',
+                'submitted': '📤'
+            }.get(log.action, '📝')
+
+            user_name = log.user.get_full_name() if log.user else 'System'
+            timestamp = log.created_at.strftime('%Y-%m-%d %H:%M')
+
+            rule_info = f" ({log.rule.name})" if log.rule else ""
+
+            history_lines.append(
+                f"{action_icon} {log.action.title()}{rule_info} by {user_name} at {timestamp}"
+            )
+
+        return format_html(
+            '<div style="font-family: monospace; font-size: 11px;">{}</div>',
+            '<br>'.join(history_lines)
+        )
+
+    approval_history_display.short_description = _('Approval History')
+
+    # =====================
+    # ENHANCED ACTIONS
+    # =====================
+
+    actions = [
+        'submit_requests_with_auto_approve',  # NEW
+        'preview_auto_approve_status',  # NEW
+        'approve_requests',
+        'convert_to_orders'
+    ]
+
+    def submit_requests_with_auto_approve(self, request, queryset):
+        """NEW: Submit requests with auto-approve check"""
+        submitted_count = 0
+        auto_approved_count = 0
+        error_count = 0
+
+        for req in queryset.filter(status='draft'):
+            try:
+                result = req.submit_for_approval(request.user)
+                if result['success']:
+                    submitted_count += 1
+                    if result['auto_approved']:
+                        auto_approved_count += 1
+                else:
+                    error_count += 1
+
+            except Exception as e:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f'Error submitting {req.document_number}: {e}',
+                    level='ERROR'
+                )
+
+        # Summary message
+        messages = []
+        if submitted_count > 0:
+            messages.append(f'Submitted {submitted_count} requests')
+        if auto_approved_count > 0:
+            messages.append(f'Auto-approved {auto_approved_count} requests')
+        if error_count > 0:
+            messages.append(f'{error_count} errors occurred')
+
+        self.message_user(request, ' | '.join(messages))
+
+    submit_requests_with_auto_approve.short_description = _('Submit with auto-approve check')
+
+    def preview_auto_approve_status(self, request, queryset):
+        """NEW: Preview auto-approve status for selected requests"""
+        preview_lines = []
+
+        for req in queryset:
+            preview = req.is_auto_approvable()
+            status = "✅ AUTO" if preview['can_auto_approve'] else "👤 MANUAL"
+            preview_lines.append(f"{req.document_number}: {status} - {preview['reason']}")
+
+        # Show preview in message
+        preview_text = '\n'.join(preview_lines[:10])  # Limit to 10 items
+        if len(preview_lines) > 10:
+            preview_text += f'\n... and {len(preview_lines) - 10} more'
+
+        self.message_user(
+            request,
+            f'Auto-approve preview:\n{preview_text}',
+            level='INFO'
+        )
+
+    preview_auto_approve_status.short_description = _('Preview auto-approve status')
 
 
 
