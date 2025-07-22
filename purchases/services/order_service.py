@@ -419,7 +419,7 @@ class OrderService:
                 line_number=next_line_number,
                 product=product,
                 ordered_quantity=ordered_quantity,
-                unit=product.default_purchase_unit,
+                unit = product.get_preferred_purchase_unit(),
                 unit_price=unit_price,
                 discount_percent=discount_percent,
                 notes=notes
