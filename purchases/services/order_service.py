@@ -524,42 +524,6 @@ class OrderService:
     # =====================
 
     @staticmethod
-
-    def calculate_order_totals(order: PurchaseOrder) -> Dict:
-        """
-        Calculate various totals for the order using NEW VAT-aware fields
-
-        UPDATED: Uses new field names and real VAT calculations
-        """
-        from .vat_service import SmartVATService
-
-        # Use SmartVATService for accurate calculations
-        totals = SmartVATService.calculate_document_totals(order)
-
-        # Add order-specific calculations
-        lines = order.lines.all()
-
-        # Calculate additional metrics
-        total_ordered_items = sum(getattr(line, 'ordered_quantity', Decimal('0')) for line in lines)
-
-        # Delivery analysis
-        lines_delivered = lines.filter(delivery_status='delivered').count()
-        lines_pending = lines.filter(delivery_status='pending').count()
-        delivery_completion = (lines_delivered / lines.count() * 100) if lines.count() > 0 else 0
-
-        # Enhanced return with order-specific data
-        totals.update({
-            'total_ordered_items': total_ordered_items,
-            'delivery_completion_percent': round(delivery_completion, 1),
-            'lines_delivered': lines_delivered,
-            'lines_pending': lines_pending,
-            'order_status': order.status,
-            'delivery_status': getattr(order, 'delivery_status', 'unknown')
-        })
-
-        return totals
-
-    @staticmethod
     def validate_order_completeness(order: PurchaseOrder) -> Dict:
         """Validate if order is complete enough for sending"""
 
@@ -653,6 +617,335 @@ class OrderService:
             expected_delivery_date__lte=cutoff_date,
             delivery_status__in=['pending', 'partial']
         ).select_related('supplier'))
+
+    # REPLACE these methods in purchases/services/order_service.py
+
+    @staticmethod
+    def calculate_order_totals(order: PurchaseOrder) -> Dict:
+        """
+        Calculate various totals for the order using NEW VAT-aware fields
+
+        FIXED: Completely rewritten to use only new VAT system
+        """
+        from .vat_service import SmartVATService
+
+        # Use SmartVATService for all calculations
+        base_totals = SmartVATService.calculate_document_totals(order)
+
+        if not hasattr(order, 'lines') or not order.lines.exists():
+            return {
+                **base_totals,
+                'order_specific': {
+                    'total_ordered_items': Decimal('0'),
+                    'delivery_progress': 0.0,
+                    'lines_pending_delivery': 0,
+                    'lines_delivered': 0,
+                    'effective_total_cost': Decimal('0')
+                }
+            }
+
+        lines = order.lines.all()
+
+        # Order-specific calculations using NEW fields only
+        total_ordered_items = sum(
+            getattr(line, 'get_quantity', lambda: Decimal('0'))()
+            for line in lines
+        )
+
+        # Delivery progress analysis
+        lines_with_delivery = [l for l in lines if hasattr(l, 'delivery_status') and l.delivery_status == 'delivered']
+        delivery_progress = (len(lines_with_delivery) / lines.count() * 100) if lines.count() > 0 else 0.0
+
+        # Calculate effective cost for inventory (VAT-aware)
+        effective_total_cost = sum(
+            SmartVATService.get_effective_cost(line) * getattr(line, 'get_quantity', lambda: Decimal('0'))()
+            for line in lines
+        )
+
+        return {
+            **base_totals,
+            'order_specific': {
+                'total_ordered_items': total_ordered_items,
+                'delivery_progress': delivery_progress,
+                'lines_pending_delivery': lines.count() - len(lines_with_delivery),
+                'lines_delivered': len(lines_with_delivery),
+                'effective_total_cost': effective_total_cost,
+                'avg_effective_cost_per_item': (
+                    effective_total_cost / total_ordered_items
+                    if total_ordered_items > 0 else Decimal('0')
+                )
+            }
+        }
+
+    @staticmethod
+    def validate_order_financials(order: PurchaseOrder) -> Dict:
+        """
+        Validate order financial data with VAT awareness
+
+        ENHANCED: Complete VAT validation integration
+        """
+        issues = []
+        warnings = []
+
+        # Basic structure validation
+        if not hasattr(order, 'lines') or not order.lines.exists():
+            issues.append("Order has no lines")
+            return {
+                'valid': False,
+                'issues': issues,
+                'warnings': warnings
+            }
+
+        # VAT configuration validation
+        company = order.get_company()
+        if not company:
+            issues.append("No company configuration found")
+
+        # Check each line for VAT completeness
+        for line in order.lines.all():
+            line_number = getattr(line, 'line_number', 'Unknown')
+
+            # Check required fields
+            if not hasattr(line, 'entered_price') or not getattr(line, 'entered_price'):
+                warnings.append(f"Line {line_number}: Missing entered price")
+
+            if not hasattr(line, 'product') or not getattr(line, 'product'):
+                issues.append(f"Line {line_number}: Missing product")
+
+            # VAT-specific validations
+            if company and company.is_vat_applicable():
+                if not hasattr(line, 'vat_rate'):
+                    warnings.append(f"Line {line_number}: Missing VAT rate")
+
+                if hasattr(line, 'product') and line.product:
+                    if not hasattr(line.product, 'tax_group') or not line.product.tax_group:
+                        warnings.append(f"Line {line_number}: Product missing tax group")
+
+        # Document totals validation
+        calculated_totals = OrderService.calculate_order_totals(order)
+
+        tolerance = Decimal('0.01')  # 1 cent tolerance
+
+        if hasattr(order, 'subtotal'):
+            if abs(order.subtotal - calculated_totals['subtotal']) > tolerance:
+                issues.append(
+                    f"Subtotal mismatch: Document={order.subtotal}, "
+                    f"Calculated={calculated_totals['subtotal']}"
+                )
+
+        if hasattr(order, 'vat_total'):
+            if abs(order.vat_total - calculated_totals['vat_total']) > tolerance:
+                issues.append(
+                    f"VAT total mismatch: Document={order.vat_total}, "
+                    f"Calculated={calculated_totals['vat_total']}"
+                )
+
+        if hasattr(order, 'total'):
+            if abs(order.total - calculated_totals['total']) > tolerance:
+                issues.append(
+                    f"Total mismatch: Document={order.total}, "
+                    f"Calculated={calculated_totals['total']}"
+                )
+
+        return {
+            'valid': len(issues) == 0,
+            'issues': issues,
+            'warnings': warnings,
+            'calculated_totals': calculated_totals,
+            'vat_context': order.get_vat_context_info()
+        }
+
+    @staticmethod
+    @transaction.atomic
+    def update_order_line_quantity(
+            line: PurchaseOrderLine,
+            new_quantity: Decimal,
+            user=None
+    ) -> Dict:
+        """
+        Update line quantity with VAT recalculation
+
+        ENHANCED: Full VAT recalculation after quantity change
+        """
+        if not line.document.can_be_edited():
+            raise ValidationError("Cannot modify order in current state")
+
+        try:
+            old_quantity = getattr(line, 'get_quantity', lambda: Decimal('0'))()
+
+            # Update quantity field (depends on line type)
+            if hasattr(line, 'ordered_quantity'):
+                line.ordered_quantity = new_quantity
+
+            # Trigger VAT recalculation by saving (enhanced save method handles this)
+            line.save()
+
+            # Recalculate document totals
+            if hasattr(line.document, 'recalculate_totals'):
+                line.document.recalculate_totals()
+
+            return {
+                'success': True,
+                'message': f'Quantity updated: {old_quantity} → {new_quantity}',
+                'line': line,
+                'new_totals': OrderService.calculate_order_totals(line.document)
+            }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Error updating quantity: {str(e)}',
+                'line': line
+            }
+
+    @staticmethod
+    def recalculate_order_totals(order: PurchaseOrder) -> Dict:
+        """
+        Force complete recalculation of order totals
+
+        ENHANCED: Uses VAT-aware calculation system
+        """
+        results = {
+            'success': False,
+            'lines_processed': 0,
+            'lines_with_errors': 0,
+            'errors': []
+        }
+
+        try:
+            # Recalculate all line totals first
+            if hasattr(order, 'lines'):
+                for line in order.lines.all():
+                    try:
+                        # Enhanced save method handles VAT processing
+                        line.save()
+                        results['lines_processed'] += 1
+                    except Exception as e:
+                        results['lines_with_errors'] += 1
+                        results['errors'].append(f"Line {line.pk}: {str(e)}")
+
+            # Recalculate document totals
+            if hasattr(order, 'recalculate_totals'):
+                order.recalculate_totals()
+
+            results.update({
+                'success': results['lines_with_errors'] == 0,
+                'final_totals': OrderService.calculate_order_totals(order)
+            })
+
+            return results
+
+        except Exception as e:
+            results['errors'].append(f"Document level error: {str(e)}")
+            return results
+
+    @staticmethod
+    def get_order_vat_analysis(order: PurchaseOrder) -> Dict:
+        """
+        Get comprehensive VAT analysis for order
+
+        NEW: Detailed VAT breakdown and analysis
+        """
+        from .vat_service import SmartVATService
+
+        analysis = {
+            'document_info': {
+                'document_number': order.document_number,
+                'supplier': str(order.supplier) if hasattr(order, 'supplier') else None,
+                'location': str(order.location) if hasattr(order, 'location') else None,
+            },
+            'vat_context': order.get_vat_context_info(),
+            'vat_breakdown': SmartVATService.get_vat_breakdown_summary(order),
+            'totals': SmartVATService.calculate_document_totals(order)
+        }
+
+        # Add cost analysis
+        if hasattr(order, 'lines'):
+            lines_analysis = []
+            total_effective_cost = Decimal('0')
+
+            for line in order.lines.all():
+                effective_cost = SmartVATService.get_effective_cost(line)
+                quantity = getattr(line, 'get_quantity', lambda: Decimal('0'))()
+                line_total_cost = effective_cost * quantity
+
+                lines_analysis.append({
+                    'product': str(line.product) if hasattr(line, 'product') else 'N/A',
+                    'entered_price': getattr(line, 'entered_price', Decimal('0')),
+                    'unit_price': getattr(line, 'unit_price', Decimal('0')),
+                    'vat_rate': getattr(line, 'vat_rate', Decimal('0')),
+                    'quantity': quantity,
+                    'effective_cost_per_unit': effective_cost,
+                    'line_total_cost': line_total_cost
+                })
+
+                total_effective_cost += line_total_cost
+
+            analysis['cost_analysis'] = {
+                'lines': lines_analysis,
+                'total_effective_cost': total_effective_cost,
+                'avg_cost_per_line': (
+                    total_effective_cost / len(lines_analysis)
+                    if lines_analysis else Decimal('0')
+                )
+            }
+
+        return analysis
+
+    @staticmethod
+    def process_order_price_changes(order: PurchaseOrder, price_updates: List[Dict]) -> Dict:
+        """
+        Process bulk price updates with VAT recalculation
+
+        NEW: Bulk price update with VAT awareness
+
+        Args:
+            order: PurchaseOrder instance
+            price_updates: List of {'line_id': int, 'new_entered_price': Decimal}
+        """
+        results = {
+            'success': False,
+            'processed_lines': 0,
+            'failed_lines': 0,
+            'errors': []
+        }
+
+        if not order.can_be_edited():
+            results['errors'].append("Order cannot be edited in current state")
+            return results
+
+        try:
+            with transaction.atomic():
+                for update in price_updates:
+                    try:
+                        line = order.lines.get(pk=update['line_id'])
+                        old_price = getattr(line, 'entered_price', Decimal('0'))
+
+                        # Update entered price
+                        line.entered_price = update['new_entered_price']
+
+                        # Save triggers VAT recalculation
+                        line.save()
+
+                        results['processed_lines'] += 1
+
+                    except Exception as e:
+                        results['failed_lines'] += 1
+                        results['errors'].append(
+                            f"Line {update.get('line_id', 'unknown')}: {str(e)}"
+                        )
+
+                # Recalculate document totals
+                if hasattr(order, 'recalculate_totals'):
+                    order.recalculate_totals()
+
+                results['success'] = results['failed_lines'] == 0
+                results['new_totals'] = OrderService.calculate_order_totals(order)
+
+        except Exception as e:
+            results['errors'].append(f"Transaction error: {str(e)}")
+
+        return results
 
     # =====================
     # HELPER METHODS
