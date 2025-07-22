@@ -404,6 +404,9 @@ class DynamicApprovalMixin:
                 'message': f'Error processing rejection: {str(e)}'
             }
 
+    # ФИКС НА ADMIN ACTION - nomenclatures/admin/dynamic_actions.py
+    # Намери метода create_workflow_status_action и промени:
+
     def _create_workflow_status_action(self):
         """Създава action за показване на workflow статус"""
 
@@ -412,13 +415,17 @@ class DynamicApprovalMixin:
 
             for document in queryset:
                 try:
+                    # ✅ ФИКСВАНО: Вземи workflow status БЕЗ available_transitions
                     workflow_status = ApprovalService.get_workflow_status(document)
+
+                    # ✅ ФИКСВАНО: Вземи available_transitions с user отделно
+                    available_transitions = ApprovalService.get_available_transitions(document, request.user)
 
                     # Форматираме информацията
                     status_info = [
                         f"📄 {document}",
                         f"🔄 Current Status: {workflow_status['current_status']}",
-                        f"⚡ Available Actions: {workflow_status['available_transitions']}",
+                        f"⚡ Available Actions: {len(available_transitions)}",  # ✅ ФИКСВАНО
                         f"✅ Completed: {'Yes' if workflow_status['is_completed'] else 'No'}"
                     ]
 
@@ -429,6 +436,14 @@ class DynamicApprovalMixin:
                             status = "✅" if level['completed'] else "⏳"
                             status_info.append(
                                 f"  {status} Level {level['level']}: {level['name']} → {level['to_status']}"
+                            )
+
+                    # ✅ НОВОВЪВЕДЕНО: Показваме достъпните действия за този user
+                    if available_transitions:
+                        status_info.append("🎯 Available Actions:")
+                        for transition in available_transitions:
+                            status_info.append(
+                                f"  → {transition['to_status']} (Level {transition['level']}: {transition['name']})"
                             )
 
                     # Показваме историята
@@ -446,9 +461,8 @@ class DynamicApprovalMixin:
                 except Exception as e:
                     messages.error(request, f"{document}: Error getting workflow status - {str(e)}")
 
-        show_workflow_status.short_description = _("Show workflow status for selected documents")
+        show_workflow_status.short_description = "Show workflow status for selected documents"
         return show_workflow_status
-
     # =====================
     # DISPLAY METHODS FOR ADMIN LIST
     # =====================

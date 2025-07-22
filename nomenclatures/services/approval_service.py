@@ -162,7 +162,7 @@ class ApprovalService:
                 ApprovalService._send_notifications(document, rule, user, 'approved')
 
                 # Проверяваме за ApprovalRule auto-transitions
-                ApprovalService._check_approval_rule_auto_transitions(document, user)
+                ApprovalService._check_auto_transitions(document, user)
 
                 logger.info(f"Successfully transitioned {document} from {from_status} to {to_status} by {user}")
 
