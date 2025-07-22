@@ -251,6 +251,15 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
 
         return True
 
+    @property
+    def total_estimated_cost(self):
+        """Сума на всички цени - ФИКСВАНО!"""
+        return sum(
+            line.entered_price * line.requested_quantity  # ✅ ПРОМЕНЕНО: estimated_price → entered_price
+            for line in self.lines.all()
+            if line.entered_price  # ✅ ПРОМЕНЕНО: estimated_price → entered_price
+        ) or Decimal('0.00')
+
     def convert_to_order(self, user=None, **kwargs):
         """Convert approved request to purchase order"""
         if self.status != 'approved':

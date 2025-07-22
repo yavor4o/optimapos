@@ -3,7 +3,7 @@
 from typing import Dict, List, Optional
 from decimal import Decimal
 from django.db import transaction
-from django.utils import timezone
+
 from django.core.exceptions import ValidationError
 
 from purchases.models.requests import PurchaseRequest, PurchaseRequestLine
@@ -257,7 +257,7 @@ class RequestService:
                 'total_lines': request.lines.count(),
                 'total_items': sum(line.requested_quantity for line in request.lines.all()),
                 'estimated_total': RequestService._calculate_estimated_total(request),
-                'lines_with_estimates': request.lines.filter(estimated_price__isnull=False).count(),
+                'lines_with_estimates': request.lines.filter(entered_price__isnull=False).count(),
                 'lines_with_suppliers': request.lines.filter(suggested_supplier__isnull=False).count(),
                 'high_priority_lines': request.lines.filter(priority__gt=0).count(),
             },
@@ -378,7 +378,7 @@ class RequestService:
             issues.append("Business justification is required")
 
         # Check estimates for high-value requests
-        lines_without_estimates = request.lines.filter(estimated_price__isnull=True).count()
+        lines_without_estimates = request.lines.filter(entered_price__isnull=True).count()
         if lines_without_estimates > 0:
             warnings.append(f"{lines_without_estimates} lines missing price estimates")
 
@@ -468,11 +468,13 @@ class RequestService:
     @staticmethod
     def _analyze_product_categories(request: PurchaseRequest) -> Dict:
         """Analyze product categories in request"""
-        lines = request.lines.select_related('product', 'product__group')
+        lines = request.lines.select_related('product', 'product__product_group')  # ✅ ФИКСВАНО
 
         category_breakdown = {}
         for line in lines:
-            category = line.product.group.name if line.product.group else 'Uncategorized'
+            # ✅ ФИКСВАНО: product.group → product.product_group
+            category = line.product.product_group.name if line.product.product_group else 'Uncategorized'
+
             if category not in category_breakdown:
                 category_breakdown[category] = {
                     'lines': 0,
@@ -482,9 +484,9 @@ class RequestService:
 
             category_breakdown[category]['lines'] += 1
             category_breakdown[category]['total_quantity'] += line.requested_quantity
-            if line.estimated_price:
+            if line.entered_price:
                 category_breakdown[category]['estimated_value'] += (
-                        line.estimated_price * line.requested_quantity
+                        line.entered_price * line.requested_quantity
                 )
 
         return {
@@ -506,7 +508,7 @@ class RequestService:
         # Detail completeness (30 points)
         total_lines = request.lines.count()
         if total_lines > 0:
-            lines_with_estimates = request.lines.filter(estimated_price__isnull=False).count()
+            lines_with_estimates = request.lines.filter(entered_price__isnull=False).count()
             lines_with_suppliers = request.lines.filter(suggested_supplier__isnull=False).count()
 
             score += int((lines_with_estimates / total_lines) * 15)
