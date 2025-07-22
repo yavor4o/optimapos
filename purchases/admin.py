@@ -23,7 +23,8 @@ class PurchaseRequestLineInline(admin.TabularInline):
     extra = 1
     fields = [
         'product', 'requested_quantity', 'unit',
-        'entered_price', 'unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount'
+        'estimated_price',  'unit_price', 'vat_rate',
+        'net_amount', 'vat_amount', 'gross_amount'  # ✅ FULL VAT fields
     ]
     readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
 
@@ -78,11 +79,13 @@ class DeliveryLineInline(admin.TabularInline):
 # PURCHASE REQUEST ADMIN - FIXED
 # =================================================================
 
+# REPLACE PurchaseRequestAdmin - CORRECT VERSION
+
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(admin.ModelAdmin):
     list_display = [
-        'document_number', 'supplier', 'status_display', 'urgency_display',
-        'lines_count', 'estimated_total_display', 'vat_status_display', 'created_at'
+        'document_number', 'supplier', 'status', 'urgency_display',
+        'lines_count', 'estimated_total_display', 'total_display', 'created_at'  # ✅ Both estimated and calculated
     ]
 
     list_filter = ['status', 'urgency_level', 'supplier', 'location']
@@ -90,13 +93,13 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
     readonly_fields = [
         'document_number', 'document_type', 'status',
-        'subtotal', 'vat_total', 'total',  # ✅ FIXED: total не grand_total
+        'subtotal', 'vat_total', 'total',  # ✅ CORRECT: PurchaseRequest HAS these fields!
         'created_at', 'updated_at', 'created_by', 'updated_by'
     ]
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('supplier', 'location', 'prices_entered_with_vat')  # ✅ ADDED VAT control
+            'fields': ('supplier', 'location', 'prices_entered_with_vat')  # ✅ VAT control
         }),
         ('Document Info', {
             'fields': ('document_type', 'document_number', 'status'),
@@ -105,8 +108,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         ('Request Details', {
             'fields': ('urgency_level', 'request_type', 'requested_by')
         }),
-        ('Financial Totals', {
-            'fields': ('subtotal', 'vat_total', 'total'),  # ✅ FIXED: total
+        ('Financial Totals', {  # ✅ CORRECT: Request IS financial!
+            'fields': ('subtotal', 'vat_total', 'total'),
             'classes': ('collapse',)
         }),
         ('Justification', {
@@ -128,34 +131,6 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
 
-    def status_display(self, obj):
-        # ✅ FIXED: Check if status exists and has get_status_display
-        if hasattr(obj, 'status') and hasattr(obj, 'get_status_display'):
-            status_value = obj.status
-            status_label = obj.get_status_display()
-        else:
-            # Fallback for models without status choices
-            status_value = getattr(obj, 'status', 'unknown')
-            status_label = status_value.title() if status_value else 'Unknown'
-
-        colors = {
-            'draft': '#757575',
-            'submitted': '#FF9800',
-            'approved': '#4CAF50',
-            'converted': '#2196F3',
-            'rejected': '#F44336',
-            'unknown': '#9E9E9E'
-        }
-        color = colors.get(status_value, '#757575')
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, status_label
-        )
-
-    status_display.short_description = 'Status'
-
     def urgency_display(self, obj):
         if obj.urgency_level == 'high':
             return format_html('<span style="color: #F44336;">🔥 High</span>')
@@ -173,34 +148,27 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     lines_count.short_description = 'Lines'
 
     def estimated_total_display(self, obj):
-        # ✅ FIXED: Use method instead of non-existent field
+        # Legacy estimated calculation
         try:
-            if hasattr(obj, 'get_estimated_total'):
-                total = obj.get_estimated_total()
-                return format_html('<strong>{:.2f} лв</strong>', float(total or 0))
-            else:
-                # Fallback calculation
-                total = sum(
-                    (getattr(line, 'estimated_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
-                    for line in obj.lines.all()
-                )
-                return format_html('<strong>{:.2f} лв</strong>', float(total))
+            total = sum(
+                (getattr(line, 'estimated_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
+                for line in obj.lines.all()
+            )
+            return float(total)
         except Exception:
             return '-'
 
-    estimated_total_display.short_description = 'Estimated Total'
+    estimated_total_display.short_description = 'Estimated'
 
-    def vat_status_display(self, obj):
-        # ✅ NEW: Show VAT status
-        try:
-            if hasattr(obj, 'is_vat_applicable') and obj.is_vat_applicable():
-                return format_html('<span style="color: green;">✅ VAT</span>')
-            else:
-                return format_html('<span style="color: gray;">➖ No VAT</span>')
-        except Exception:
-            return '-'
+    def total_display(self, obj):
+        # VAT-calculated total
+        return float(obj.total)
 
-    vat_status_display.short_description = 'VAT'
+    total_display.short_description = 'VAT Total'
+
+
+
+
 
 
 # =================================================================
