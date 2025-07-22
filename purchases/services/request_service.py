@@ -52,7 +52,7 @@ class RequestService:
                         request=request,
                         product=line_data['product'],
                         requested_quantity=line_data['requested_quantity'],
-                        estimated_price=line_data.get('estimated_price'),
+                        entered_price=line_data.get('entered_price'),
                         usage_description=line_data.get('usage_description', ''),
                         suggested_supplier=line_data.get('suggested_supplier'),
                         user=requested_by
@@ -92,7 +92,7 @@ class RequestService:
                     request=new_request,
                     product=original_line.product,
                     requested_quantity=original_line.requested_quantity,
-                    estimated_price=original_line.entered_price,  # ✅ Използвай entered_price
+                    entered_price=original_line.entered_price,  # ✅ Използвай entered_price
                     usage_description=original_line.usage_description,
                     suggested_supplier=original_line.suggested_supplier,
                     user=requested_by
@@ -113,7 +113,7 @@ class RequestService:
             request: PurchaseRequest,
             product,
             requested_quantity: Decimal,
-            estimated_price: Decimal = None,  # ✅ Keep parameter name for compatibility
+            entered_price: Decimal = None,  # ✅ Keep parameter name for compatibility
             usage_description: str = '',
             suggested_supplier=None,
             user=None
@@ -131,8 +131,8 @@ class RequestService:
             preferred_unit = product.get_preferred_purchase_unit()
 
             # If no price provided, try to get from product
-            if not estimated_price:
-                estimated_price = product.get_estimated_purchase_price(unit=preferred_unit)
+            if not entered_price:
+                entered_price = product.get_estimated_purchase_price(unit=preferred_unit)
 
             # Create the line with FinancialLineMixin fields
             line = PurchaseRequestLine.objects.create(
@@ -140,7 +140,7 @@ class RequestService:
                 line_number=next_line_number,
                 product=product,
                 requested_quantity=requested_quantity,
-                entered_price=estimated_price or Decimal('0.0000'),  # ✅ Use entered_price
+                entered_price=entered_price or Decimal('0.0000'),  # ✅ Use entered_price
                 usage_description=usage_description,
                 suggested_supplier=suggested_supplier,
                 unit=preferred_unit
@@ -290,7 +290,7 @@ class RequestService:
 
         # LEGACY: estimated total (backward compatibility)
         estimated_total = sum(
-            (getattr(line, 'estimated_price', Decimal('0')) or Decimal('0')) *
+            (getattr(line, 'entered_price', Decimal('0')) or Decimal('0')) *
             (getattr(line, 'get_quantity', lambda: Decimal('0'))())
             for line in lines
         )
@@ -335,7 +335,7 @@ class RequestService:
             comparison_data.append({
                 'product_code': line.product.code,
                 'quantity': line.requested_quantity,
-                'estimated_price': line.entered_price,
+                'entered_price': line.entered_price,
                 'estimated_total': estimated_line_total,
                 'actual_unit_price': getattr(line, 'unit_price', Decimal('0')),
                 'actual_net_amount': actual_net_amount,
@@ -356,7 +356,7 @@ class RequestService:
             'overall_variance_percent': overall_variance_percent,
             'lines_analysis': comparison_data,
             'accuracy_metrics': {
-                'lines_with_estimates': len([l for l in comparison_data if l['estimated_price']]),
+                'lines_with_estimates': len([l for l in comparison_data if l['entered_price']]),
                 'lines_over_estimate': len([l for l in comparison_data if l['variance'] and l['variance'] > 0]),
                 'lines_under_estimate': len([l for l in comparison_data if l['variance'] and l['variance'] < 0]),
             }
