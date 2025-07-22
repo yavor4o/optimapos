@@ -92,7 +92,7 @@ class RequestService:
                     request=new_request,
                     product=original_line.product,
                     requested_quantity=original_line.requested_quantity,
-                    estimated_price=original_line.entered_price,
+                    estimated_price=original_line.entered_price,  # ✅ Използвай entered_price
                     usage_description=original_line.usage_description,
                     suggested_supplier=original_line.suggested_supplier,
                     user=requested_by
@@ -113,7 +113,7 @@ class RequestService:
             request: PurchaseRequest,
             product,
             requested_quantity: Decimal,
-            estimated_price: Decimal = None,
+            estimated_price: Decimal = None,  # ✅ Keep parameter name for compatibility
             usage_description: str = '',
             suggested_supplier=None,
             user=None
@@ -124,18 +124,26 @@ class RequestService:
             raise ValidationError("Cannot modify non-draft requests")
 
         try:
-            # Автоматично генерираме line_number
+            # Auto-generate line number
             next_line_number = (request.lines.count() + 1)
 
+            # Get preferred purchase unit from product
+            preferred_unit = product.get_preferred_purchase_unit()
+
+            # If no price provided, try to get from product
+            if not estimated_price:
+                estimated_price = product.get_estimated_purchase_price(unit=preferred_unit)
+
+            # Create the line with FinancialLineMixin fields
             line = PurchaseRequestLine.objects.create(
                 document=request,
                 line_number=next_line_number,
                 product=product,
                 requested_quantity=requested_quantity,
-                estimated_price=estimated_price,
+                entered_price=estimated_price or Decimal('0.0000'),  # ✅ Use entered_price
                 usage_description=usage_description,
                 suggested_supplier=suggested_supplier,
-                unit=product.default_purchase_unit  # Вземи от продукта
+                unit=preferred_unit
             )
 
             return {
@@ -318,7 +326,7 @@ class RequestService:
         total_actual = Decimal('0.00')
 
         for line in lines:
-            estimated_line_total = (line.estimated_price or Decimal('0')) * line.requested_quantity
+            estimated_line_total = (line.entered_price or Decimal('0')) * line.requested_quantity
             actual_net_amount = getattr(line, 'net_amount', Decimal('0'))
 
             variance = actual_net_amount - estimated_line_total if estimated_line_total else None
@@ -327,7 +335,7 @@ class RequestService:
             comparison_data.append({
                 'product_code': line.product.code,
                 'quantity': line.requested_quantity,
-                'estimated_price': line.estimated_price,
+                'estimated_price': line.entered_price,
                 'estimated_total': estimated_line_total,
                 'actual_unit_price': getattr(line, 'unit_price', Decimal('0')),
                 'actual_net_amount': actual_net_amount,
@@ -424,9 +432,9 @@ class RequestService:
     def _calculate_estimated_total(request: PurchaseRequest) -> Decimal:
         """Calculate estimated total value"""
         return sum(
-            line.estimated_price * line.requested_quantity
+            line.entered_price * line.requested_quantity
             for line in request.lines.all()
-            if line.estimated_price
+            if line.entered_price
         ) or Decimal('0.00')
 
     @staticmethod
@@ -446,9 +454,9 @@ class RequestService:
 
             supplier_breakdown[supplier_name]['lines'] += 1
             supplier_breakdown[supplier_name]['total_quantity'] += line.requested_quantity
-            if line.estimated_price:
+            if line.entered_price:
                 supplier_breakdown[supplier_name]['estimated_value'] += (
-                        line.estimated_price * line.requested_quantity
+                        line.entered_price * line.requested_quantity
                 )
 
         return {

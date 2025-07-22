@@ -1,15 +1,11 @@
 # purchases/models/requests.py - CLEAN VERSION БЕЗ estimated_price
-
 import logging
-import warnings
-
 from django.db import models, transaction
+from datetime import timedelta
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-
 from decimal import Decimal
-
 from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin, FinancialMixin, FinancialLineMixin
 
 logger = logging.getLogger(__name__)
@@ -44,7 +40,7 @@ class PurchaseRequestManager(models.Manager):
 
     def overdue_approval(self, days=3):
         """Requests waiting for approval too long"""
-        cutoff_date = timezone.now().date() - timezone.timedelta(days=days)
+        cutoff_date = timezone.now().date() - timedelta(days=days)
         return self.filter(
             status='submitted',
             document_date__lte=cutoff_date
@@ -269,7 +265,7 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
                 supplier=self.supplier,
                 location=self.location,
                 document_date=timezone.now().date(),
-                expected_delivery_date=timezone.now().date() + timezone.timedelta(days=7),
+                expected_delivery_date=timezone.now().date() + timedelta(days=7),
                 external_reference=self.external_reference,
                 notes=f"Created from request {self.document_number}\n{self.notes}".strip(),
                 source_request=self,

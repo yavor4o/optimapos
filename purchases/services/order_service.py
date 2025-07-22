@@ -1,18 +1,19 @@
 # purchases/services/order_service.py - ENHANCED
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional
 from decimal import Decimal
+from django.contrib.auth import get_user_model
 from django.db import transaction, models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-
-from nomenclatures.models import DocumentType
 from purchases.models.orders import PurchaseOrder, PurchaseOrderLine
 from purchases.models.requests import PurchaseRequest
 
 
 logger = logging.getLogger(__name__)
+
+User = get_user_model()
 
 class OrderService:
     """Service for Purchase Order business operations"""
@@ -117,7 +118,7 @@ class OrderService:
         # Set default delivery date
         if not expected_delivery_date:
             days_offset = 3 if request.urgency_level in ['high', 'critical'] else 7
-            expected_delivery_date = timezone.now().date() + timezone.timedelta(days=days_offset)
+            expected_delivery_date = timezone.now().date() + timedelta(days=days_offset)
 
         # =====================
         # FIND ORDER DOCUMENT TYPE
@@ -331,7 +332,7 @@ class OrderService:
                 supplier=original_order.supplier,
                 location=original_order.location,
                 expected_delivery_date=modifications.get('expected_delivery_date',
-                                                         timezone.now().date() + timezone.timedelta(days=7)),
+                                                         timezone.now().date() + timedelta(days=7)),
                 is_urgent=modifications.get('is_urgent', original_order.is_urgent),
                 order_method=modifications.get('order_method', original_order.order_method),
                 delivery_terms=original_order.delivery_terms,
@@ -609,7 +610,7 @@ class OrderService:
     def get_overdue_orders(days_overdue=0) -> List[PurchaseOrder]:
         """Get orders that are overdue for delivery"""
 
-        cutoff_date = timezone.now().date() - timezone.timedelta(days=days_overdue)
+        cutoff_date = timezone.now().date() - timedelta(days=days_overdue)
 
         return list(PurchaseOrder.objects.filter(
             status='confirmed',
@@ -887,11 +888,12 @@ class OrderService:
             order: PurchaseOrder instance
             price_updates: List of {'line_id': int, 'new_entered_price': Decimal}
         """
-        results = {
+        results: Dict[str, any] = {  # ✅ Explicit type annotation
             'success': False,
             'processed_lines': 0,
             'failed_lines': 0,
-            'errors': []
+            'errors': [],
+            'new_totals': None  # ✅ Initialize as None
         }
 
         if not order.can_be_edited():
@@ -924,13 +926,15 @@ class OrderService:
                     order.recalculate_totals()
 
                 results['success'] = results['failed_lines'] == 0
-                results['new_totals'] = OrderService.calculate_order_totals(order)
+
+                # ✅ Calculate new totals after successful processing
+                if results['success']:
+                    results['new_totals'] = OrderService.calculate_order_totals(order)
 
         except Exception as e:
             results['errors'].append(f"Transaction error: {str(e)}")
 
         return results
-
     # =====================
     # HELPER METHODS
     # =====================
@@ -945,11 +949,13 @@ class OrderService:
     @staticmethod
     def _analyze_order_lines(order: PurchaseOrder) -> Dict:
         """Analyze order lines breakdown"""
-        lines = order.lines.select_related('product', 'product__group')
+        lines = order.lines.select_related('product', 'product__product_group')  # ✅ ФИКСВАНО
 
         category_breakdown = {}
         for line in lines:
-            category = line.product.group.name if line.product.group else 'Uncategorized'
+            # ✅ ФИКСВАНО: product.group -> product.product_group
+            category = line.product.product_group.name if line.product.product_group else 'Uncategorized'
+
             if category not in category_breakdown:
                 category_breakdown[category] = {
                     'lines': 0,
@@ -959,13 +965,23 @@ class OrderService:
 
             category_breakdown[category]['lines'] += 1
             category_breakdown[category]['total_quantity'] += line.ordered_quantity
-            category_breakdown[category]['total_value'] += line.line_total
+
+            # ✅ ФИКСВАНО: line.line_total -> line.gross_amount (if using FinancialLineMixin)
+            # OR get calculated total from line
+            line_total = getattr(line, 'gross_amount', Decimal('0')) or (
+                line.unit_price * line.ordered_quantity if hasattr(line, 'unit_price') else Decimal('0')
+            )
+            category_breakdown[category]['total_value'] += line_total
+
+        # ✅ ФИКСВАНО: lines.filter() -> list comprehension (lines е queryset)
+        lines_list = list(lines)
 
         return {
             'total_categories': len(category_breakdown),
             'category_breakdown': category_breakdown,
-            'highest_value_line': max(lines, key=lambda l: l.line_total) if lines else None,
-            'lines_with_discounts': lines.filter(discount_percent__gt=0).count()
+            'highest_value_line': max(lines_list,
+                                      key=lambda l: getattr(l, 'gross_amount', Decimal('0'))) if lines_list else None,
+            'lines_with_discounts': len([l for l in lines_list if getattr(l, 'discount_percent', 0) > 0])
         }
 
     @staticmethod
