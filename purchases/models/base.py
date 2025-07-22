@@ -7,6 +7,8 @@ from django.utils import timezone
 from decimal import Decimal
 from datetime import timedelta
 
+from core.models.company import Company
+
 
 class DocumentManager(models.Manager):
     """Base manager for all purchase documents"""
@@ -395,6 +397,77 @@ class BaseDocument(models.Model):
             'workflow_rules': self.get_workflow_rules(),
         }
 
+    def get_company(self):
+        """Get current company instance"""
+
+        return Company.get_current()
+
+    def get_price_entry_mode(self) -> bool:
+        """
+        Get effective price entry mode for this document
+
+        Returns:
+            bool: True if prices include VAT, False if exclude VAT
+        """
+        # Document-level override has priority (if this is a financial document)
+        if hasattr(self, 'prices_entered_with_vat') and self.prices_entered_with_vat is not None:
+            return self.prices_entered_with_vat
+
+        # Fallback to location setting
+        if self.location:
+            # Determine document type based on model name
+            model_name = self._meta.model_name.lower()
+
+            if 'purchase' in model_name or 'request' in model_name:
+                return getattr(self.location, 'purchase_prices_include_vat', False)
+            elif 'sale' in model_name or 'invoice' in model_name:
+                return getattr(self.location, 'sales_prices_include_vat', True)
+
+        # Last fallback - prices without VAT
+        return False
+
+    def get_supplier_vat_status(self) -> bool:
+        """Check if supplier is VAT registered"""
+        if self.supplier:
+            return getattr(self.supplier, 'vat_registered', False)
+        return False
+
+    def get_company_vat_status(self) -> bool:
+        """Check if company is VAT registered"""
+        company = self.get_company()
+        if company:
+            return company.is_vat_applicable()
+        return False
+
+    def is_vat_applicable(self) -> bool:
+        """
+        Check if VAT calculations should be applied
+
+        Returns:
+            bool: True if VAT should be calculated, False otherwise
+        """
+        # Company VAT registration is the primary check
+        if not self.get_company_vat_status():
+            return False
+
+        # If company is VAT registered, then apply VAT
+        # (supplier VAT status affects how we interpret prices, not whether we calculate VAT)
+        return True
+
+    def get_vat_context_info(self) -> dict:
+        """Get complete VAT context for this document"""
+        return {
+            'company_vat_registered': self.get_company_vat_status(),
+            'supplier_vat_registered': self.get_supplier_vat_status(),
+            'prices_entered_with_vat': self.get_price_entry_mode(),
+            'document_override': getattr(self, 'prices_entered_with_vat', None),
+            'location_default_purchase': getattr(self.location, 'purchase_prices_include_vat',
+                                                 False) if self.location else None,
+            'location_default_sales': getattr(self.location, 'sales_prices_include_vat',
+                                              True) if self.location else None,
+            'vat_applicable': self.is_vat_applicable()
+        }
+
 
 # =================================================================
 # MINIMAL BASE DOCUMENT LINE
@@ -554,20 +627,31 @@ class BaseDocumentLine(models.Model):
 # MIXIN CLASSES - ЗА СПЕЦИФИЧНИ ФУНКЦИОНАЛНОСТИ
 # =================================================================
 
+# REPLACE the FinancialMixin class in purchases/models/base.py
+
 class FinancialMixin(models.Model):
     """
-    Mixin за документи с финансови данни
+    Enhanced Financial mixin for documents with financial data
 
-    Използва се от PurchaseOrder и DeliveryReceipt.
-    НЕ се използва от PurchaseRequest (заявките нямат финансови данни).
+    FIXED: Correct VAT calculation logic
+    RENAMED: grand_total → total
+    ADDED: prices_entered_with_vat field
     """
+
+    # PRICE ENTRY CONTROL
+    prices_entered_with_vat = models.BooleanField(
+        _('Prices Entered With VAT'),
+        null=True,
+        blank=True,
+        help_text=_('Override location setting. null = use location default, True/False = override for this document')
+    )
 
     subtotal = models.DecimalField(
         _('Subtotal'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Sum of all line totals before VAT')
+        help_text=_('Sum of all net amounts (excluding VAT)')  # ENHANCED help text
     )
 
     discount_total = models.DecimalField(
@@ -586,8 +670,9 @@ class FinancialMixin(models.Model):
         help_text=_('Total VAT amount')
     )
 
-    grand_total = models.DecimalField(
-        _('Grand Total'),
+    # RENAMED: grand_total → total
+    total = models.DecimalField(
+        _('Total'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
@@ -598,34 +683,57 @@ class FinancialMixin(models.Model):
         abstract = True
 
     def recalculate_totals(self):
-        """Recalculate all financial totals from lines"""
+        """
+        FIXED: Correct VAT calculation logic
+
+        subtotal = sum of net amounts (excluding VAT)
+        vat_total = sum of VAT amounts
+        total = subtotal + vat_total
+        """
         if not hasattr(self, 'lines'):
             return
 
         lines = self.lines.all()
-        subtotal = sum(getattr(line, 'line_total', 0) for line in lines)
+
+        # FIXED: Use net_amount (excluding VAT) for subtotal, not line_total/gross_amount
+        subtotal = sum(getattr(line, 'net_amount', 0) for line in lines)
         discount_total = sum(getattr(line, 'discount_amount', 0) for line in lines)
         vat_total = sum(getattr(line, 'vat_amount', 0) for line in lines)
 
         self.subtotal = subtotal
         self.discount_total = discount_total
         self.vat_total = vat_total
-        self.grand_total = subtotal + vat_total
+        self.total = subtotal + vat_total  # FIXED: use 'total' not 'grand_total'
 
         self.save(update_fields=[
-            'subtotal', 'discount_total', 'vat_total', 'grand_total'
+            'subtotal', 'discount_total', 'vat_total', 'total'
         ])
 
     def clean(self):
-        """Financial validation enhanced with DocumentType"""
+        """Enhanced financial validation"""
         super().clean()
 
-        # VAT validation based on DocumentType
-        if hasattr(self, 'document_type') and self.document_type:
-            if self.document_type.requires_vat_calculation and self.vat_total < 0:
-                raise ValidationError({
-                    'vat_total': _('VAT total cannot be negative')
-                })
+        # Basic financial validation
+        if self.vat_total < 0:
+            raise ValidationError({
+                'vat_total': _('VAT total cannot be negative')
+            })
+
+        # Logical consistency validation
+        if self.total < self.subtotal:
+            raise ValidationError({
+                'total': _('Total cannot be less than subtotal')
+            })
+
+    def get_financial_summary(self) -> dict:
+        """Get financial summary for this document"""
+        return {
+            'subtotal': self.subtotal,
+            'discount_total': self.discount_total,
+            'vat_total': self.vat_total,
+            'total': self.total,
+            'lines_count': getattr(self, 'lines', None).count() if hasattr(self, 'lines') else 0
+        }
 
 
 class PaymentMixin(models.Model):
@@ -920,3 +1028,5 @@ class SmartDocumentTypeMixin(models.Model):
             'current_document_type': self.document_type,
             'would_auto_detect': not bool(self.document_type)
         }
+
+
