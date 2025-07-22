@@ -819,17 +819,38 @@ class DeliveryMixin(models.Model):
 
 class FinancialLineMixin(models.Model):
     """
-    Mixin за редове с финансови данни
+    Enhanced Financial line mixin with VAT-aware price processing
+
+    NEW FIELDS:
+    - entered_price: Price as entered by user
+    - net_amount: Amount excluding VAT
+
+    RENAMED:
+    - line_total → gross_amount: Amount including VAT
+
+    ENHANCED:
+    - Smart VAT processing based on company/document settings
     """
 
+    # NEW: Price as entered by user
+    entered_price = models.DecimalField(
+        _('Entered Price'),
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('0.0000'),
+        help_text=_('Price as entered by user (before VAT processing)')
+    )
+
+    # Unit price (ALWAYS excluding VAT in database)
     unit_price = models.DecimalField(
         _('Unit Price'),
         max_digits=10,
         decimal_places=4,
         default=Decimal('0.0000'),
-        help_text=_('Price per unit excluding VAT')
+        help_text=_('Price per unit ALWAYS excluding VAT')
     )
 
+    # Discount fields
     discount_percent = models.DecimalField(
         _('Discount %'),
         max_digits=5,
@@ -846,12 +867,13 @@ class FinancialLineMixin(models.Model):
         help_text=_('Calculated discount amount')
     )
 
+    # VAT fields
     vat_rate = models.DecimalField(
         _('VAT Rate %'),
         max_digits=5,
         decimal_places=2,
-        default=Decimal('20.00'),
-        help_text=_('VAT rate percentage')
+        default=Decimal('0.00'),
+        help_text=_('VAT rate percentage from product tax group')
     )
 
     vat_amount = models.DecimalField(
@@ -862,38 +884,140 @@ class FinancialLineMixin(models.Model):
         help_text=_('Calculated VAT amount')
     )
 
-    line_total = models.DecimalField(
-        _('Line Total'),
+    # NEW: Net amount (quantity × unit_price - discount, excluding VAT)
+    net_amount = models.DecimalField(
+        _('Net Amount'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Total including VAT')
+        help_text=_('Line amount excluding VAT (after discount)')
+    )
+
+    # RENAMED: line_total → gross_amount
+    gross_amount = models.DecimalField(
+        _('Gross Amount'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Line amount including VAT')
     )
 
     class Meta:
         abstract = True
 
+    def _process_entered_price(self):
+        """
+        Convert entered_price to unit_price based on document VAT settings
+
+        HIERARCHY:
+        1. Company VAT registration (blocking factor)
+        2. Product VAT rate
+        3. Document price entry mode
+        """
+        if not self.entered_price or not hasattr(self, 'document'):
+            return
+
+        # STEP 1: Company VAT check (blocking)
+        company = self.document.get_company()
+        if not company or not company.is_vat_applicable():
+            # Company not VAT registered → no VAT calculations
+            self.unit_price = self.entered_price
+            self.vat_rate = Decimal('0.00')
+            return
+
+        # STEP 2: Set VAT rate from product tax group
+        if hasattr(self, 'product') and self.product and hasattr(self.product, 'tax_group'):
+            if self.product.tax_group:
+                self.vat_rate = self.product.tax_group.rate
+            else:
+                self.vat_rate = company.get_default_vat_rate()
+        else:
+            self.vat_rate = company.get_default_vat_rate()
+
+        # STEP 3: Product with 0% VAT
+        if self.vat_rate == 0:
+            self.unit_price = self.entered_price
+            return
+
+        # STEP 4: Process based on document price entry mode
+        prices_include_vat = self.document.get_price_entry_mode()
+
+        if prices_include_vat:
+            # entered_price includes VAT → extract VAT
+            vat_multiplier = 1 + (self.vat_rate / 100)
+            self.unit_price = self.entered_price / vat_multiplier
+        else:
+            # entered_price excludes VAT → use directly
+            self.unit_price = self.entered_price
+
     def calculate_totals(self):
-        """Calculate line totals"""
-        # ✅ FIXED: Use get_quantity() method instead of hardcoded quantity
+        """
+        Calculate all line totals with enhanced VAT logic
+        """
+        # Get quantity using polymorphic method
         quantity = self.get_quantity() if hasattr(self, 'get_quantity') else Decimal('0')
 
         if quantity and self.unit_price:
-            gross_amount = quantity * self.unit_price
-            self.discount_amount = gross_amount * (self.discount_percent / 100)
-            net_amount = gross_amount - self.discount_amount
-            self.vat_amount = net_amount * (self.vat_rate / 100)
-            self.line_total = net_amount + self.vat_amount
+            # Calculate base amounts (excluding VAT)
+            gross_amount_excl_vat = quantity * self.unit_price
+            self.discount_amount = gross_amount_excl_vat * (self.discount_percent / 100)
+            self.net_amount = gross_amount_excl_vat - self.discount_amount
+
+            # Calculate VAT
+            self.vat_amount = self.net_amount * (self.vat_rate / 100)
+
+            # Calculate gross amount (including VAT)
+            self.gross_amount = self.net_amount + self.vat_amount
         else:
             # Zero out calculations if no quantity or price
             self.discount_amount = Decimal('0.00')
+            self.net_amount = Decimal('0.00')
             self.vat_amount = Decimal('0.00')
-            self.line_total = Decimal('0.00')
+            self.gross_amount = Decimal('0.00')
 
     def save(self, *args, **kwargs):
-        """Auto-calculate totals before saving"""
+        """
+        Enhanced save with VAT-aware price processing
+        """
+        # Process entered price → unit price (VAT-aware)
+        self._process_entered_price()
+
+        # Calculate all totals
         self.calculate_totals()
+
         super().save(*args, **kwargs)
+
+    def get_effective_cost(self) -> Decimal:
+        """
+        Get effective cost for inventory calculations
+
+        Returns:
+            Decimal: Cost amount according to company VAT status
+        """
+        if not hasattr(self, 'document'):
+            return self.unit_price
+
+        company = self.document.get_company()
+        if company and company.is_vat_applicable():
+            # VAT registered company → use net amount (excluding VAT)
+            return self.unit_price
+        else:
+            # Non-VAT company → use gross amount (real cost including VAT)
+            quantity = self.get_quantity() if hasattr(self, 'get_quantity') else Decimal('1')
+            return self.gross_amount / quantity if quantity else self.gross_amount
+
+    def get_vat_breakdown(self) -> dict:
+        """Get detailed VAT breakdown for this line"""
+        return {
+            'entered_price': self.entered_price,
+            'unit_price': self.unit_price,
+            'quantity': self.get_quantity() if hasattr(self, 'get_quantity') else None,
+            'net_amount': self.net_amount,
+            'vat_rate': self.vat_rate,
+            'vat_amount': self.vat_amount,
+            'gross_amount': self.gross_amount,
+            'effective_cost': self.get_effective_cost()
+        }
 
 
 class SmartDocumentTypeMixin(models.Model):

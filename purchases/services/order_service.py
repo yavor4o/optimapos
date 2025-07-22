@@ -524,30 +524,40 @@ class OrderService:
     # =====================
 
     @staticmethod
-    def calculate_order_totals(order: PurchaseOrder) -> Dict:
-        """Calculate various totals for the order"""
 
+    def calculate_order_totals(order: PurchaseOrder) -> Dict:
+        """
+        Calculate various totals for the order using NEW VAT-aware fields
+
+        UPDATED: Uses new field names and real VAT calculations
+        """
+        from .vat_service import SmartVATService
+
+        # Use SmartVATService for accurate calculations
+        totals = SmartVATService.calculate_document_totals(order)
+
+        # Add order-specific calculations
         lines = order.lines.all()
 
-        subtotal = sum(line.line_total for line in lines)
-        total_discount = sum(
-            (line.unit_price * line.ordered_quantity * line.discount_percent / 100)
-            for line in lines
-        )
+        # Calculate additional metrics
+        total_ordered_items = sum(getattr(line, 'ordered_quantity', Decimal('0')) for line in lines)
 
-        # VAT calculation would go here
-        vat_total = subtotal * Decimal('0.20')  # 20% VAT assumption
-        grand_total = subtotal - total_discount + vat_total
+        # Delivery analysis
+        lines_delivered = lines.filter(delivery_status='delivered').count()
+        lines_pending = lines.filter(delivery_status='pending').count()
+        delivery_completion = (lines_delivered / lines.count() * 100) if lines.count() > 0 else 0
 
-        return {
-            'total_lines': lines.count(),
-            'total_items': sum(line.ordered_quantity for line in lines),
-            'subtotal': subtotal,
-            'total_discount': total_discount,
-            'vat_total': vat_total,
-            'grand_total': grand_total,
-            'average_line_value': (subtotal / lines.count()) if lines.count() > 0 else Decimal('0.00')
-        }
+        # Enhanced return with order-specific data
+        totals.update({
+            'total_ordered_items': total_ordered_items,
+            'delivery_completion_percent': round(delivery_completion, 1),
+            'lines_delivered': lines_delivered,
+            'lines_pending': lines_pending,
+            'order_status': order.status,
+            'delivery_status': getattr(order, 'delivery_status', 'unknown')
+        })
+
+        return totals
 
     @staticmethod
     def validate_order_completeness(order: PurchaseOrder) -> Dict:

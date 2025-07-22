@@ -737,6 +737,10 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
 
         return True
 
+    def get_quantity(self):
+        """Get quantity for financial calculations"""
+        return self.ordered_quantity or Decimal('0')
+
     # =====================
     # PROPERTIES
     # =====================

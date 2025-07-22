@@ -263,27 +263,107 @@ class RequestService:
 
     @staticmethod
     def calculate_request_totals(request: PurchaseRequest) -> Dict:
-        """Calculate various totals for the request"""
+        """
+        Calculate various totals for the request using NEW VAT-aware fields
+
+        UPDATED: Now uses VAT-aware calculations alongside estimated totals
+        """
+        from .vat_service import SmartVATService
 
         lines = request.lines.all()
 
-        total_items = sum(line.requested_quantity for line in lines)
+        # Original estimated calculations (for planning)
         estimated_total = sum(
-            line.estimated_price * line.requested_quantity
+            (line.estimated_price or Decimal('0')) * line.requested_quantity
             for line in lines
-            if line.estimated_price
         ) or Decimal('0.00')
 
         lines_with_estimates = lines.filter(estimated_price__isnull=False).count()
         estimate_coverage = (lines_with_estimates / lines.count() * 100) if lines.count() > 0 else 0
 
-        return {
+        # NEW: Real financial calculations (if request has financial data)
+        financial_totals = SmartVATService.calculate_document_totals(request) if hasattr(request, 'subtotal') else None
+
+        result = {
+            # Basic metrics
             'total_lines': lines.count(),
-            'total_items': total_items,
+            'total_items': sum(line.requested_quantity for line in lines),
+
+            # Estimated calculations (for planning)
             'estimated_total': estimated_total,
             'lines_with_estimates': lines_with_estimates,
             'estimate_coverage_percent': round(estimate_coverage, 1),
-            'average_item_value': (estimated_total / total_items) if total_items > 0 else Decimal('0.00')
+            'average_estimated_item_value': (
+                        estimated_total / sum(line.requested_quantity for line in lines)) if lines else Decimal('0.00'),
+
+            # Request-specific analysis
+            'high_priority_lines': lines.filter(priority__gt=0).count(),
+            'lines_with_suppliers': lines.filter(suggested_supplier__isnull=False).count(),
+            'urgency_level': request.urgency_level,
+            'request_type': request.request_type
+        }
+
+        # Add financial totals if available (for requests with FinancialMixin)
+        if financial_totals:
+            result.update({
+                'financial_totals': financial_totals,
+                'has_vat_calculations': True
+            })
+        else:
+            result.update({
+                'has_vat_calculations': False
+            })
+
+        return result
+
+    @staticmethod
+    def calculate_estimated_vs_actual_analysis(request: PurchaseRequest) -> Dict:
+        """
+        Compare estimated prices vs actual financial calculations
+
+        NEW: Analysis of estimation accuracy
+        """
+        lines = request.lines.all()
+
+        comparison_data = []
+        total_estimated = Decimal('0.00')
+        total_actual = Decimal('0.00')
+
+        for line in lines:
+            estimated_line_total = (line.estimated_price or Decimal('0')) * line.requested_quantity
+            actual_net_amount = getattr(line, 'net_amount', Decimal('0'))
+
+            variance = actual_net_amount - estimated_line_total if estimated_line_total else None
+            variance_percent = (variance / estimated_line_total * 100) if estimated_line_total else None
+
+            comparison_data.append({
+                'product_code': line.product.code,
+                'quantity': line.requested_quantity,
+                'estimated_price': line.estimated_price,
+                'estimated_total': estimated_line_total,
+                'actual_unit_price': getattr(line, 'unit_price', Decimal('0')),
+                'actual_net_amount': actual_net_amount,
+                'variance': variance,
+                'variance_percent': variance_percent
+            })
+
+            total_estimated += estimated_line_total
+            total_actual += actual_net_amount
+
+        overall_variance = total_actual - total_estimated
+        overall_variance_percent = (overall_variance / total_estimated * 100) if total_estimated else None
+
+        return {
+            'total_estimated': total_estimated,
+            'total_actual': total_actual,
+            'overall_variance': overall_variance,
+            'overall_variance_percent': overall_variance_percent,
+            'lines_analysis': comparison_data,
+            'accuracy_metrics': {
+                'lines_with_estimates': len([l for l in comparison_data if l['estimated_price']]),
+                'lines_over_estimate': len([l for l in comparison_data if l['variance'] and l['variance'] > 0]),
+                'lines_under_estimate': len([l for l in comparison_data if l['variance'] and l['variance'] < 0]),
+            }
         }
 
     @staticmethod
