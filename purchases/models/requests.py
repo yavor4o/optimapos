@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
-from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin
+from .base import BaseDocument, BaseDocumentLine, SmartDocumentTypeMixin, FinancialMixin
 
 logger = logging.getLogger(__name__)
 
@@ -838,6 +838,27 @@ class PurchaseRequestLine(BaseDocumentLine):
             raise ValidationError({
                 'estimated_price': _('Estimated price cannot be negative')
             })
+
+        # ДОБАВЯМЕ UNIT VALIDATION
+        if self.product and self.unit:
+            valid_units = self.product.get_valid_purchase_units()
+            if self.unit not in valid_units:
+                unit_names = [u.name for u in valid_units]
+                raise ValidationError({
+                    'unit': f'Invalid unit. Valid units: {", ".join(unit_names)}'
+                })
+
+
+    def save(self, *args, **kwargs):
+        # Auto-set estimated_price ако няма и има продукт
+        if not self.estimated_price and self.product:
+            self.estimated_price = self.product.get_estimated_purchase_price(self.unit)
+
+        # Sync quantity with requested_quantity
+        if self.requested_quantity:
+            self.quantity = self.requested_quantity
+
+        super().save(*args, **kwargs)
 
     # =====================
     # BUSINESS METHODS

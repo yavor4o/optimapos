@@ -409,6 +409,68 @@ class Product(models.Model):
 
         return True, "OK"
 
+    # В Product модела - добавяме helper method
+    def get_valid_purchase_units(self):
+        """Връща всички валидни units за покупки"""
+        from nomenclatures.models import UnitOfMeasure
+
+        # Започваме с base_unit
+        unit_ids = [self.base_unit.id]
+
+        # Добавяме активни packaging units
+        packaging_unit_ids = self.packagings.filter(
+            is_active=True
+        ).values_list('unit_id', flat=True)
+
+        unit_ids.extend(packaging_unit_ids)
+
+        return UnitOfMeasure.objects.filter(id__in=unit_ids)
+
+    def get_preferred_purchase_unit(self):
+        """Връща preferred unit за покупки"""
+        # Първо търси default purchase unit
+        default_packaging = self.packagings.filter(
+            is_default_purchase_unit=True,
+            is_active=True
+        ).first()
+
+        if default_packaging:
+            return default_packaging.unit
+
+        # Иначе base_unit
+        return self.base_unit
+
+    # В Product модела - добавяме helper method
+    def get_estimated_purchase_price(self, unit=None):
+        """Връща estimated purchase price за дадения unit"""
+
+        # Първо опитваме последната доставна цена
+        if self.last_purchase_cost:
+            price = self.last_purchase_cost
+        else:
+            # Fallback към current_avg_cost
+            price = self.current_avg_cost or Decimal('0')
+
+        # Ако няма цена, връщаме 0
+        if price <= 0:
+            return Decimal('0')
+
+        # last_purchase_cost е за base_unit
+        # Ако unit е различен от base_unit, правим conversion
+        if unit and unit != self.base_unit:
+            packaging = self.packagings.filter(
+                unit=unit,
+                is_active=True
+            ).first()
+
+            if packaging:
+                # conversion_factor показва колко base_unit има в packaging
+                # Ако base_unit е 1 лв/бр, а packaging е кашон=12бр
+                # То цената за кашон е 1 * 12 = 12 лв
+                price = price * packaging.conversion_factor
+
+        return price
+
     def get_restrictions_summary(self) -> str:
         """Human-readable restrictions"""
         restrictions = []

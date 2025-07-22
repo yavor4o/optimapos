@@ -94,7 +94,9 @@ class InventoryLocationAdmin(admin.ModelAdmin):
         (_('Inventory Settings'), {
             'fields': (
                 'default_markup_percentage',
-                'allow_negative_stock'
+                'allow_negative_stock',
+                'sales_prices_include_vat',
+                'purchase_prices_include_vat'
             ),
             'description': _('Settings that affect inventory behavior')
         }),

@@ -288,35 +288,59 @@ class BaseDocument(models.Model):
         return 'confirmed' in self.get_next_statuses()
 
     def clean(self):
-        """Enhanced validation with DocumentType integration"""
+        """
+        ФИКСВАНО: Enhanced validation БЕЗ document_type validation
+
+        document_type се валидира в save(), НЕ в clean()
+        """
         super().clean()
 
-        if not self.document_type:
-            raise ValidationError({
-                'document_type': _('Document type is required')
-            })
+        # ПРЕМАХНАТО: if not self.document_type validation
+        # SmartDocumentTypeMixin се грижи за document_type в save()
 
-        # Validate status against DocumentType
-        if self.status and self.status not in self.get_allowed_statuses():
-            raise ValidationError({
-                'status': f'Status "{self.status}" not allowed for document type "{self.document_type.name}"'
-            })
+        # Validate status against DocumentType САМО ако document_type вече е налично
+        if self.document_type and self.status:
+            allowed_statuses = self.get_allowed_statuses()
+            if self.status not in allowed_statuses:
+                raise ValidationError({
+                    'status': f'Status "{self.status}" not allowed for document type "{self.document_type.name}". Allowed: {allowed_statuses}'
+                })
 
-        # Validate business rules from DocumentType (ОПРОСТЕНО)
-        if hasattr(self, 'grand_total'):
-            total = getattr(self, 'grand_total', 0)
-            validation_errors = self.document_type.validate_document_data({
-                'total': total,
-                'lines': hasattr(self, 'lines') and self.lines.exists()
-            })
+        # ФИКСВАНО: БАЗОВА валидация БЕЗ DocumentType dependencies
+        if self.document_date:
+            try:
+                # FIX: Конвертираме и двете към date за сравнение
+                today = timezone.now().date()
 
-            if validation_errors:
-                raise ValidationError({'__all__': validation_errors})
+                # Ако document_date е datetime, вземи само date частта
+                if isinstance(self.document_date, timezone.datetime):
+                    doc_date = self.document_date.date()
+                else:
+                    doc_date = self.document_date
 
-
+                if doc_date > today:
+                    raise ValidationError({
+                        'document_date': _('Document date cannot be in the future')
+                    })
+            except Exception as e:
+                # DEBUG: Временно catch за да видим точната грешка
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Date comparison error: {e}")
+                logger.error(f"document_date type: {type(self.document_date)}")
+                logger.error(f"document_date value: {self.document_date}")
+                logger.error(f"today type: {type(today)}")
+                logger.error(f"today value: {today}")
+                # Re-raise original error
+                raise
 
     def save(self, *args, **kwargs):
-        """Enhanced save with DocumentType integration"""
+        """
+        Enhanced save с DocumentType integration
+
+        ВАЖНО: SmartDocumentTypeMixin.save() ще извика auto_detect_document_type()
+        ПРЕДИ BaseDocument.save()
+        """
 
         # Set user tracking
         user = getattr(self, '_current_user', None)
@@ -325,7 +349,7 @@ class BaseDocument(models.Model):
                 self.created_by = user
             self.updated_by = user
 
-        # Set default status
+        # АВТОМАТИЧЕН СТАТУС - слага default_status от DocumentType
         if not self.status and self.document_type:
             self.status = self.document_type.default_status
 
@@ -333,7 +357,7 @@ class BaseDocument(models.Model):
         if not self.document_number and self.document_type and self.document_type.auto_number:
             self.document_number = self.document_type.get_next_number()
 
-        # Validation
+        # Validation САМО ако не е skip-вана
         skip_validation = getattr(self, '_skip_validation', False)
         if not skip_validation:
             self.full_clean()
@@ -506,7 +530,24 @@ class BaseDocumentLine(models.Model):
                         'quality_notes': _('Quality notes required when not approved')
                     })
 
+    def save(self, *args, **kwargs):
+        """Auto-set line number - ПРОФЕСИОНАЛЕН ПОДХОД"""
+        if not self.line_number:
+            if hasattr(self, 'document') and self.document:
+                # Намери най-високия line_number за този документ
+                max_line = self.__class__.objects.filter(
+                    document=self.document
+                ).aggregate(
+                    max_num=models.Max('line_number')
+                )['max_num']
 
+                # Следващия номер
+                self.line_number = (max_line or 0) + 1
+            else:
+                # Fallback ако няма document
+                self.line_number = 1
+
+        super().save(*args, **kwargs)
 
 
 # =================================================================

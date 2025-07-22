@@ -60,6 +60,9 @@ class InventoryLocation(models.Model):
         help_text=_('Default markup when no specific price is set')
     )
 
+    purchase_prices_include_vat = models.BooleanField(default=False)
+    sales_prices_include_vat = models.BooleanField(default=True)
+
     # Address and contact
     address = models.TextField(_('Address'), blank=True)
     phone = models.CharField(_('Phone'), max_length=20, blank=True)
