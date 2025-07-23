@@ -105,12 +105,11 @@ class DynamicApprovalMixin:
 
         return approval_action
 
-    # nomenclatures/admin/dynamic_actions.py - FIXED VERSION
+    # nomenclatures/admin/dynamic_actions.py - COMPLETE METHOD
 
     def _handle_document_approval(self, document, user):
         """
-        ✅ ЧИСТО: Използва само конфигурационни правила (DocumentType + ApprovalRule)
-        Без гадаене, без ключови думи.
+        ✅ COMPLETE: Handle document approval with conversion support
         """
         try:
             # 1. Проверка за нужда от одобрение
@@ -129,14 +128,19 @@ class DynamicApprovalMixin:
                             'message': 'Document requires approval but no applicable transition was found.'
                         }
 
-                    # 1.2 Избираме преход с най-ниско ниво (няма гадаене)
-                    selected = sorted(transitions, key=lambda t: t['level'])[0]
+                    # 1.2 Избираме най-подходящия преход
+                    selected_transition = self._select_best_transition(transitions, document.status)
 
+                    # 1.3 ✅ SPECIAL HANDLING за conversion
+                    if selected_transition['to_status'] == 'converted':
+                        return self._handle_conversion_transition(document, selected_transition, user)
+
+                    # 1.4 Изпълняваме обикновен approval transition
                     return ApprovalService.execute_transition(
                         document=document,
-                        to_status=selected['to_status'],
+                        to_status=selected_transition['to_status'],
                         user=user,
-                        comments=f"Approval via rule: {selected['rule'].name}"
+                        comments=f"Via rule: {selected_transition['rule'].name}"
                     )
 
             # 2. Ако не се изисква одобрение — следваме DocumentType transitions
@@ -147,10 +151,14 @@ class DynamicApprovalMixin:
                     'message': f'No allowed transitions from status "{document.status}"'
                 }
 
-            # 2.1 Без гадаене: взимаме първия разрешен статус по дефиниран ред
-            target_status = next_statuses[0]
+            # 2.1 Smart selection за DocumentType transitions
+            target_status = self._select_best_next_status(next_statuses, document.status)
 
-            # 2.2 Валидация
+            # 2.2 ✅ SPECIAL HANDLING за conversion
+            if target_status == 'converted':
+                return self._handle_conversion_transition(document, {'to_status': target_status}, user)
+
+            # 2.3 Валидация
             if not document.can_transition_to(target_status):
                 return {
                     'success': False,
@@ -163,13 +171,14 @@ class DynamicApprovalMixin:
                     'message': 'Cannot submit document without lines.'
                 }
 
-            # 2.3 Промяна
+            # 2.4 Изпълнение на DocumentType transition
             old_status = document.status
             document.status = target_status
 
             if hasattr(document, 'updated_by'):
                 document.updated_by = user
 
+            # Special handling за approval fields
             if target_status in ('approved', 'confirmed') or 'approv' in target_status:
                 if hasattr(document, 'approved_by'):
                     document.approved_by = user
@@ -187,6 +196,64 @@ class DynamicApprovalMixin:
             return {
                 'success': False,
                 'message': f'Error during approval: {str(e)}'
+            }
+
+    def _select_best_transition(self, transitions, current_status):
+        """
+        ✅ FLEXIBLE: Избира transition според sort_order
+        """
+        if len(transitions) == 1:
+            return transitions[0]
+
+        # Просто връщаме първия по sort_order (най-малко = най-висок приоритет)
+        return sorted(transitions, key=lambda t: t['rule'].sort_order)[0]
+
+    def _select_best_next_status(self, next_statuses, current_status):
+        """
+        ✅ FLEXIBLE: Избира статус без hardcoded keywords
+        """
+        if len(next_statuses) == 1:
+            return next_statuses[0]
+
+        # 1. Изключваме final statuses (обикновено са деструктивни)
+        document_type = getattr(self, 'model', None)
+        if document_type and hasattr(document_type, '_meta'):
+            try:
+                # Опитваме се да намерим document_type от първия обект
+                first_obj = document_type.objects.first()
+                if first_obj and hasattr(first_obj, 'document_type'):
+                    final_statuses = getattr(first_obj.document_type, 'final_statuses', [])
+                    non_final = [s for s in next_statuses if s not in final_statuses]
+                    if non_final:
+                        return non_final[0]
+            except:
+                pass
+
+        # 2. Fallback: просто първия статус
+        return next_statuses[0]
+
+    def _handle_conversion_transition(self, document, transition, user):
+        """
+        ✅ NEW: Special handling for conversion to order
+        """
+        try:
+            # Use the model's built-in conversion method
+            if hasattr(document, 'convert_to_order'):
+                order = document.convert_to_order(user)
+                return {
+                    'success': True,
+                    'message': f'Converted to order: {order.document_number}'
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': 'Document does not support conversion to order'
+                }
+
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Conversion error: {str(e)}'
             }
 
     def _evaluate_auto_approve_conditions(self, document, document_amount, user):

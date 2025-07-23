@@ -417,6 +417,8 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
             if line.entered_price  # ✅ ПРОМЕНЕНО: estimated_price → entered_price
         ) or Decimal('0.00')
 
+    # purchases/models/requests.py - FIX convert_to_order method
+
     def convert_to_order(self, user=None, **kwargs):
         """Convert approved request to purchase order"""
         if self.status != 'approved':
@@ -424,22 +426,49 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
 
         # Import here to avoid circular imports
         from .orders import PurchaseOrder, PurchaseOrderLine
+        from nomenclatures.models import DocumentType
 
         with transaction.atomic():
-            # Create the order
-            order = PurchaseOrder.objects.create(
-                supplier=self.supplier,
-                location=self.location,
-                document_date=timezone.now().date(),
-                expected_delivery_date=timezone.now().date() + timedelta(days=7),
-                external_reference=self.external_reference,
-                notes=f"Created from request {self.document_number}\n{self.notes}".strip(),
-                source_request=self,
-                created_by=user or self.updated_by,
-                updated_by=user or self.updated_by,
-            )
+            # ✅ FIX: Get PurchaseOrder DocumentType for proper defaults
+            try:
+                po_document_type = DocumentType.objects.get(
+                    app_name='purchases',
+                    model_name='PurchaseOrder'
+                )
+            except DocumentType.DoesNotExist:
+                # Fallback: try by code
+                try:
+                    po_document_type = DocumentType.objects.get(code='PURCHASE_ORDER')
+                except DocumentType.DoesNotExist:
+                    po_document_type = None
 
-            # ✅ FIXED: Copy lines using unit_price (proper VAT processed)
+            # ✅ FIX: Create the order with proper defaults
+            order_data = {
+                'document_type': po_document_type,
+                'supplier': self.supplier,
+                'location': self.location,
+                'status': po_document_type.default_status if po_document_type else 'draft',  # ✅ FIXED
+                'document_date': timezone.now().date(),
+                'expected_delivery_date': timezone.now().date() + timedelta(days=7),
+                'external_reference': self.external_reference,
+                'notes': f"Created from request {self.document_number}\n{self.notes}".strip(),
+                'source_request': self,
+                'created_by': user or self.updated_by,
+                'updated_by': user or self.updated_by,
+            }
+
+            # ✅ FIX: Handle document_number generation
+            if po_document_type and po_document_type.auto_number:
+                # Let the model auto-generate the number in save()
+                pass  # document_number will be auto-generated
+            else:
+                # Manual fallback
+                import uuid
+                order_data['document_number'] = f"PO-{timezone.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8].upper()}"
+
+            order = PurchaseOrder.objects.create(**order_data)
+
+            # ✅ COPY LINES: Using proper field mapping
             for req_line in self.lines.all():
                 PurchaseOrderLine.objects.create(
                     document=order,
@@ -447,32 +476,22 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
                     product=req_line.product,
                     unit=req_line.unit,
                     ordered_quantity=req_line.requested_quantity,
-
-                    # ✅ USE unit_price (VAT processed) not estimated_price
-                    unit_price=req_line.unit_price or Decimal('0.0000'),
+                    # ✅ FIX: Use entered_price (not estimated_price)
+                    unit_price=req_line.entered_price or Decimal('0.0000'),
                     entered_price=req_line.entered_price or Decimal('0.0000'),
-
                     source_request_line=req_line,
                 )
 
-            # Update request status via ApprovalService
-            from nomenclatures.services.approval_service import ApprovalService
+            # ✅ UPDATE REQUEST STATUS: Set conversion tracking
+            self.status = 'converted'
+            self.converted_to_order = order
+            self.converted_at = timezone.now()
+            self.converted_by = user
+            self.save()
 
-            result = ApprovalService.execute_transition(
-                document=self,
-                to_status='converted',
-                user=user,
-                comments=f"Converted to order {order.document_number}"
-            )
-
-            if result['success']:
-                self.converted_to_order = order
-                self.converted_at = timezone.now()
-                self.converted_by = user
-                self.save()
-
-            # Recalculate order totals
-            order.recalculate_totals()
+            # ✅ RECALCULATE: Order totals
+            if hasattr(order, 'recalculate_totals'):
+                order.recalculate_totals()
 
             return order
 

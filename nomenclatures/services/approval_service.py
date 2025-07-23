@@ -29,19 +29,26 @@ class ApprovalService:
     @staticmethod
     def get_available_transitions(document, user) -> List[Dict]:
         """
-        Връща всички възможни преходи за документ и потребител
-
-        НОВА ЛОГИКА: Проверява и DocumentType и ApprovalRule ограниченията
+        FIXED: Debug version с детайлно логване
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         try:
             if not document or not hasattr(document, 'status'):
+                logger.warning("Document invalid or no status")
                 return []
+
+            logger.info(f"=== DEBUG get_available_transitions for {document} ===")
+            logger.info(f"Document status: {document.status}")
+            logger.info(f"User: {user}")
 
             # НОВА ПРОВЕРКА: Вземаме allowed transitions от DocumentType
             document_allowed_transitions = document.get_next_statuses()
+            logger.info(f"DocumentType allowed transitions: {document_allowed_transitions}")
 
             if not document_allowed_transitions:
-                logger.info(f"No DocumentType transitions allowed from status '{document.status}' for {document}")
+                logger.info(f"No DocumentType transitions allowed from status '{document.status}'")
                 return []
 
             # Намираме всички активни ApprovalRule-и за този документ
@@ -50,31 +57,43 @@ class ApprovalService:
                 is_active=True
             )
 
+            logger.info(f"Found {applicable_rules.count()} applicable rules")
+            for rule in applicable_rules:
+                logger.info(f"  - {rule.name}: {rule.from_status} → {rule.to_status}")
+
             # НОВА ФИЛТРАЦИЯ: Само правила които DocumentType позволява
             applicable_rules = applicable_rules.filter(
                 to_status__in=document_allowed_transitions
             )
 
+            logger.info(f"After DocumentType filtering: {applicable_rules.count()} rules")
+
             # Филтрираме по сума ако документът има такава
             if hasattr(document, 'get_estimated_total'):
                 try:
                     amount = document.get_estimated_total()
+                    logger.info(f"Document amount: {amount}")
+
                     if amount and amount > 0:
+                        from django.db import models
                         applicable_rules = applicable_rules.filter(
                             min_amount__lte=amount
                         ).filter(
                             models.Q(max_amount__isnull=True) |
                             models.Q(max_amount__gte=amount)
                         )
+                        logger.info(f"After amount filtering: {applicable_rules.count()} rules")
                 except Exception as e:
                     logger.warning(f"Error getting document amount: {e}")
 
             available_transitions = []
 
             for rule in applicable_rules:
-                # Проверяваме дали потребителят може да изпълни това правило
+                logger.info(f"Checking rule: {rule.name}")
+
+                # ✅ FIXED: Използваме правилната логика за user permissions
                 if user and ApprovalService._can_user_execute_rule(user, rule, document):
-                    # Проверяваме дали предишните нива са завършени
+                    # ✅ FIXED: Проверяваме предишните нива правилно
                     if ApprovalService._check_previous_levels_completed(document, rule):
                         available_transitions.append({
                             'to_status': rule.to_status,
@@ -82,13 +101,20 @@ class ApprovalService:
                             'level': rule.approval_level,
                             'name': rule.name,
                             'description': rule.description or f"Transition to {rule.to_status}",
-                            'document_type_allowed': True  # НОВ: Маркираме че DocumentType го позволява
+                            'document_type_allowed': True
                         })
+                        logger.info(f"  → ADDED: {rule.name}")
+                    else:
+                        logger.info(f"  → SKIPPED: Previous levels not completed")
+                else:
+                    logger.info(f"  → SKIPPED: User cannot execute")
 
             # Сортираме по ниво
             available_transitions.sort(key=lambda x: x['level'])
 
-            logger.info(f"Found {len(available_transitions)} available transitions for {document} (user: {user})")
+            logger.info(f"FINAL RESULT: {len(available_transitions)} available transitions")
+            for t in available_transitions:
+                logger.info(f"  - {t['to_status']} (rule: {t['name']}, level: {t['level']})")
 
             return available_transitions
 
@@ -563,23 +589,23 @@ class ApprovalService:
             return None
 
     @staticmethod
-    def _can_user_execute_rule(user, rule: ApprovalRule, document) -> bool:
-        """Проверява дали потребителят може да изпълни правилото"""
+    def _can_user_execute_rule(user, rule: ApprovalRule, document=None) -> bool:
+        """
+        FIXED: Проверява дали user може да изпълни правилото
+        """
         try:
-            if not user:
-                return False
-
             if rule.approver_type == 'user':
                 return rule.approver_user == user
 
             elif rule.approver_type == 'role':
                 if rule.approver_role:
-                    return user.groups.filter(id=rule.approver_role.id).exists()
+                    return user.groups.filter(pk=rule.approver_role.pk).exists()
+                return False
 
             elif rule.approver_type == 'permission':
                 if rule.approver_permission:
-                    return user.has_perm(
-                        f"{rule.approver_permission.content_type.app_label}.{rule.approver_permission.codename}")
+                    return user.user_permissions.filter(pk=rule.approver_permission.pk).exists()
+                return False
 
             elif rule.approver_type == 'dynamic':
                 # За dynamic правила можем да добавим специална логика тук
@@ -588,6 +614,8 @@ class ApprovalService:
             return False
 
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
             logger.error(f"Error checking user rule permissions: {e}")
             return False
 

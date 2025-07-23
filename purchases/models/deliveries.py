@@ -6,7 +6,8 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
-from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, DeliveryMixin, FinancialLineMixin
+from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, DeliveryMixin, FinancialLineMixin, \
+    SmartDocumentTypeMixin
 
 
 class DeliveryReceiptManager(models.Manager):
@@ -50,7 +51,7 @@ class DeliveryReceiptManager(models.Manager):
         )
 
 
-class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin):
+class DeliveryReceipt(SmartDocumentTypeMixin,BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin):
     """
     Delivery Receipt - Доставки и получаване на стоки
 
