@@ -74,11 +74,12 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # ПОРЪЧКА-СПЕЦИФИЧНИ ПОЛЕТА
     # =====================
 
-
-    # DELIVERY DATE - expected, не actual!
+    # Expected delivery (not actual)
     expected_delivery_date = models.DateField(
         _('Expected Delivery Date'),
-        help_text=_('When we expect to receive this order')
+        null=True,
+        blank=True,
+        help_text=_('When we expect to receive the goods')
     )
 
     requested_delivery_date = models.DateField(
@@ -373,12 +374,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         """Check if order can be sent to supplier"""
         return self.status == 'confirmed' and not hasattr(self, 'sent_to_supplier_at')
 
-
-
-
-
-
-
     def update_delivery_status(self):
         """Update delivery status based on line delivery progress"""
         if not hasattr(self, 'lines'):
@@ -404,28 +399,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # =====================
     # BUSINESS LOGIC CHECKS
     # =====================
-    def can_be_edited(self):
-        """Override with order-specific logic"""
-        return self.status in [self.DRAFT]
 
-    def can_be_sent(self):
-        """Check if order can be sent to supplier"""
-        return (
-                self.status == self.DRAFT and
-                self.lines.exists()
-        )
-
-    def can_be_confirmed(self):
-        """Check if order can be confirmed"""
-        return self.status in [self.SENT, self.DRAFT]
-
-    def can_be_used_for_delivery(self):
-        """Check if order can be used for delivery creation"""
-        return (
-                self.status == self.CONFIRMED and
-                self.supplier_confirmed and
-                self.delivery_status in ['pending', 'partial']
-        )
 
     def can_be_cancelled(self):
         """Override with order-specific logic"""

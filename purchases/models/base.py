@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 from core.models.company import Company
 
@@ -315,7 +315,7 @@ class BaseDocument(models.Model):
                 today = timezone.now().date()
 
                 # Ако document_date е datetime, вземи само date частта
-                if isinstance(self.document_date, timezone.datetime):
+                if isinstance(self.document_date, datetime):
                     doc_date = self.document_date.date()
                 else:
                     doc_date = self.document_date
