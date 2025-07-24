@@ -77,8 +77,8 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
 
     list_display = [
         'document_number', 'supplier', 'status_display', 'urgency_level',
-        'total_display',  # ✅ FIXED: total вместо estimated_total
-        'workflow_actions_display',  # ✅ NEW: WorkflowService actions
+        'total_display',
+        'workflow_actions_display',
         'requested_by', 'created_at'
     ]
 
@@ -130,38 +130,13 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
 
     inlines = [PurchaseRequestLineInline]
 
-    # ✅ ДОБАВИ WorkflowService actions към DynamicPurchaseRequestAdmin actions
-    # ЗАМЕНИ get_actions method-а в PurchaseRequestAdmin
+    actions = [
+        'workflow_submit_requests',
+        'workflow_approve_requests',
+        'workflow_reject_requests',
+        'show_workflow_status'
+    ]
 
-    def get_actions(self, request):
-        """Extend actions from DynamicPurchaseRequestAdmin + add WorkflowService actions"""
-        actions = super().get_actions(request)
-
-        # ✅ ФИКСВАНО: Правилният формат за Django admin actions
-        actions['workflow_submit_requests'] = (
-            self.workflow_submit_requests,
-            'workflow_submit_requests',
-            "📤 Submit via WorkflowService"
-        )
-        actions['workflow_approve_requests'] = (
-            self.workflow_approve_requests,
-            'workflow_approve_requests',
-            "✅ Approve via WorkflowService"
-        )
-        actions['workflow_reject_requests'] = (
-            self.workflow_reject_requests,
-            'workflow_reject_requests',
-            "❌ Reject via WorkflowService"
-        )
-        actions['show_workflow_status'] = (
-            self.show_workflow_status,
-            'show_workflow_status',
-            "📊 Show WorkflowService status"
-        )
-
-        return actions
-
-    # ✅ WorkflowService action methods
     def workflow_submit_requests(self, request, queryset):
         """Submit selected requests using WorkflowService"""
         success_count = 0
@@ -189,6 +164,7 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
             self.message_user(request, f"❌ Failed to submit {error_count} requests", level='ERROR')
 
     workflow_submit_requests.short_description = "📤 Submit via WorkflowService"
+
 
     def workflow_approve_requests(self, request, queryset):
         """Approve selected requests using WorkflowService"""
