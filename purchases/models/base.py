@@ -184,6 +184,71 @@ class BaseDocument(models.Model):
     # =====================
     objects = DocumentManager()
 
+    # =====================
+    # WORKFLOW SERVICE INTEGRATION - ДОБАВИ ПРЕДИ class Meta
+    # =====================
+
+    def transition_to(self, status: str, user=None, **kwargs):
+        """
+        Convenience method за workflow transitions
+
+        Usage:
+            request.transition_to('submitted', user=request.user)
+            order.transition_to('confirmed', user=manager, comments="Approved by manager")
+
+        Returns:
+            Dict: {'success': bool, 'message': str, 'from_status': str, 'to_status': str}
+        """
+        from purchases.services.workflow_service import WorkflowService
+        return WorkflowService.transition_document(self, status, user, **kwargs)
+
+    def get_available_actions(self, user=None):
+        """
+        Връща възможните actions за текущия user
+
+        Usage:
+            actions = request.get_available_actions(request.user)
+            for action in actions:
+                if action['can_transition']:
+                    print(f"Can transition to: {action['to_status']}")
+
+        Returns:
+            List[Dict]: [{'to_status': str, 'can_transition': bool, 'reason': str}, ...]
+        """
+        from purchases.services.workflow_service import WorkflowService
+        return WorkflowService.get_available_transitions(self, user)
+
+    def can_transition_to(self, status: str, user=None):
+        """
+        Проверява дали може да се направи конкретен transition
+
+        Usage:
+            if request.can_transition_to('approved', manager):
+                # Show approve button
+
+        Returns:
+            bool: True ако transition е възможен
+        """
+        available = self.get_available_actions(user)
+        for action in available:
+            if action['to_status'] == status:
+                return action['can_transition']
+        return False
+
+    def get_next_statuses_for_user(self, user=None):
+        """
+        Връща списък от статуси до които user може да премине
+
+        Usage:
+            next_statuses = document.get_next_statuses_for_user(user)
+            # ['submitted', 'cancelled'] например
+
+        Returns:
+            List[str]: Списък от статуси до които може да се премине
+        """
+        available = self.get_available_actions(user)
+        return [action['to_status'] for action in available if action['can_transition']]
+
     class Meta:
         abstract = True
         get_latest_by = 'created_at'
@@ -206,11 +271,6 @@ class BaseDocument(models.Model):
             return []
         return self.document_type.get_next_statuses(self.status)
 
-    def can_transition_to(self, new_status):
-        """Check if status transition is allowed by DocumentType"""
-        if not self.document_type:
-            return False
-        return self.document_type.can_transition_to(self.status, new_status)
 
     def is_final_status(self):
         """Check if current status is final"""
@@ -338,10 +398,10 @@ class BaseDocument(models.Model):
 
     def save(self, *args, **kwargs):
         """
-        Enhanced save с DocumentType integration
+        Enhanced save method - БЕЗ auto-transitions
 
-        ВАЖНО: SmartDocumentTypeMixin.save() ще извика auto_detect_document_type()
-        ПРЕДИ BaseDocument.save()
+        ВАЖНО: Auto-transitions са премахнати!
+        Използвай transition_to() за status changes.
         """
 
         # Set user tracking
@@ -351,11 +411,11 @@ class BaseDocument(models.Model):
                 self.created_by = user
             self.updated_by = user
 
-        # АВТОМАТИЧЕН СТАТУС - слага default_status от DocumentType
+        # САМО default status ако няма status
         if not self.status and self.document_type:
             self.status = self.document_type.default_status
 
-        # Generate document number ДИРЕКТНО - БЕЗ wrapper!
+        # Generate document number
         if not self.document_number and self.document_type and self.document_type.auto_number:
             self.document_number = self.document_type.get_next_number()
 
@@ -367,14 +427,9 @@ class BaseDocument(models.Model):
         # Save
         super().save(*args, **kwargs)
 
-        # Post-save validation if needed
-        if skip_validation and self.pk:
-            try:
-                self.full_clean()
-            except ValidationError as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Post-save validation failed for {self}: {e}")
+        # Recalculate totals ако има FinancialMixin
+        if hasattr(self, 'recalculate_totals'):
+            self.recalculate_totals()
 
     def get_workflow_info(self):
         """Get complete workflow information for this document"""

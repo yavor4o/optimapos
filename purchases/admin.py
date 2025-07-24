@@ -1,166 +1,90 @@
-# purchases/admin.py - FIXED COMPLETE ADMIN
-import logging
+# purchases/admin.py - CLEAN VERSION БЕЗ КАШОТИНА
 
-from django.contrib import admin, messages
-from django import forms
-from django.core.exceptions import ValidationError
+from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.utils.safestring import mark_safe
+from django.db.models import Count, Sum
+from django.utils import timezone
 
-from nomenclatures.admin.dynamic_actions import DynamicPurchaseRequestAdmin
 from .models import (
     PurchaseRequest, PurchaseRequestLine,
     PurchaseOrder, PurchaseOrderLine,
-    DeliveryReceipt, DeliveryLine
+    DeliveryReceipt, DeliveryLine,
 )
 
+# ДОБАВИ import за WorkflowService
+from purchases.services.workflow_service import WorkflowService
 
-logger = logging.getLogger(__name__)
+# Import DynamicPurchaseRequestAdmin ако го използваме
+from nomenclatures.admin.dynamic_actions import DynamicPurchaseRequestAdmin
+
 
 # =================================================================
-# INLINE ADMINS - FIXED WITH NEW FIELDS
+# INLINE ADMINS
 # =================================================================
 
 class PurchaseRequestLineInline(admin.TabularInline):
     model = PurchaseRequestLine
     extra = 1
-
     fields = [
-        'product', 'requested_quantity', 'unit',
-        'entered_price',  # ✅ ONLY entered_price now
-        'price_suggestion_info',
-        ('unit_price', 'vat_rate'),
-        ('net_amount', 'gross_amount'),
+        'line_number', 'product', 'requested_quantity', 'unit',
+        'entered_price', 'suggested_supplier', 'priority'  # ✅ FIXED: entered_price
     ]
+    readonly_fields = ['line_number', 'net_amount', 'vat_amount', 'gross_amount']  # ✅ NEW financial fields
 
-    readonly_fields = [
-        'price_suggestion_info',
-        'unit_price', 'vat_rate',
-        'net_amount', 'vat_amount', 'gross_amount'
-    ]
-
-    def price_suggestion_info(self, obj):
-        """Show price suggestion and processing info"""
-        if not obj or not obj.pk:
-            return format_html('<em>Save to see price info</em>')
-
-        info_parts = []
-
-        # Show current price
-        if obj.entered_price and obj.entered_price > 0:
-            info_parts.append(
-                f'<span style="color: blue;">💰 Price: {obj.entered_price}</span>'
-            )
-        else:
-            info_parts.append(
-                '<span style="color: orange;">⚠️ No price entered</span>'
-            )
-
-        # Show VAT processing result
-        if obj.unit_price and obj.unit_price > 0:
-            if obj.entered_price and obj.entered_price != obj.unit_price:
-                # VAT was processed (prices were extracted)
-                info_parts.append(
-                    f'<small>→ Processed: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
-                )
-            else:
-                # No VAT processing needed
-                info_parts.append(
-                    f'<small>→ Direct: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
-                )
-
-        # Show auto-suggestion if available
-        if obj.product and (not obj.entered_price or obj.entered_price == 0):
-            try:
-                suggested = obj.product.get_estimated_purchase_price(obj.unit)
-                if suggested and suggested > 0:
-                    info_parts.append(
-                        f'<span style="color: green;">💡 Suggested: {suggested}</span>'
-                    )
-            except:
-                pass
-
-        return format_html('<br>'.join(info_parts))
-
-    price_suggestion_info.short_description = 'Price Info'
-
-    def save_formset(self, request, form, formset, change):
-        """Enhanced save with auto-suggestion"""
-        instances = formset.save(commit=False)
-
-        for instance in instances:
-            # Auto-suggest price if none entered
-            if (not instance.entered_price or instance.entered_price == 0) and instance.product:
-                try:
-                    suggested = instance.product.get_estimated_purchase_price(instance.unit)
-                    if suggested and suggested > 0:
-                        instance.entered_price = suggested
-                        messages.info(
-                            request,
-                            f'Auto-suggested price {suggested} for {instance.product.code}'
-                        )
-                except Exception as e:
-                    logger.warning(f"Auto-suggestion failed for {instance.product.code}: {e}")
-
-            instance.save()
-
-        for obj in formset.deleted_objects:
-            obj.delete()
-
-        formset.save_m2m()
-
-        # Recalculate document totals
-        if form.instance.pk and hasattr(form.instance, 'recalculate_totals'):
-            form.instance.recalculate_totals()
+    def get_extra(self, request, obj=None, **kwargs):
+        return 0 if obj else 1
 
 
 class PurchaseOrderLineInline(admin.TabularInline):
     model = PurchaseOrderLine
     extra = 1
     fields = [
-        'product', 'ordered_quantity', 'unit',
-        'entered_price', 'unit_price', 'discount_percent', 'vat_rate',
-        'net_amount', 'vat_amount', 'gross_amount'
+        'line_number', 'product', 'ordered_quantity', 'unit', 'entered_price',  # ✅ FIXED: entered_price
+        'discount_percent', 'net_amount', 'vat_amount', 'gross_amount'  # ✅ NEW financial fields
     ]
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    readonly_fields = ['line_number', 'unit_price', 'net_amount', 'vat_amount', 'gross_amount']
 
     def get_extra(self, request, obj=None, **kwargs):
-        return 1 if obj is None else 0
+        return 0 if obj else 1
 
 
 class DeliveryLineInline(admin.TabularInline):
     model = DeliveryLine
     extra = 1
     fields = [
-        'product', 'received_quantity', 'unit',
-        'entered_price', 'unit_price', 'discount_percent', 'vat_rate',
-        'net_amount', 'vat_amount', 'gross_amount',
+        'line_number', 'product', 'received_quantity', 'unit', 'entered_price',  # ✅ FIXED: entered_price
         'batch_number', 'expiry_date', 'quality_approved'
     ]
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    readonly_fields = ['line_number', 'unit_price', 'net_amount', 'vat_amount', 'gross_amount']
 
     def get_extra(self, request, obj=None, **kwargs):
-        return 1 if obj is None else 0
+        return 0 if obj else 1
 
 
 # =================================================================
-# PURCHASE REQUEST ADMIN - FIXED
+# PURCHASE REQUEST ADMIN - CLEAN VERSION
 # =================================================================
-
-# REPLACE PurchaseRequestAdmin - CORRECT VERSION
 
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
+    """
+    Професионален admin за Purchase Requests
+
+    Наследява DynamicPurchaseRequestAdmin за автоматични workflow actions
+    + добавя специфични WorkflowService actions
+    """
+
     list_display = [
-        'document_number', 'supplier', 'status_display', 'urgency_display',
-        'estimated_total_display', 'lines_count', 'auto_approve_indicator',  # NEW
+        'document_number', 'supplier', 'status_display', 'urgency_level',
+        'total_display',  # ✅ FIXED: total вместо estimated_total
+        'workflow_actions_display',  # ✅ NEW: WorkflowService actions
         'requested_by', 'created_at'
     ]
 
     list_filter = [
         'status', 'urgency_level', 'request_type',
-        'approval_required', 'created_at'
+        'approval_required', 'created_at', 'supplier'
     ]
 
     search_fields = [
@@ -170,10 +94,8 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
 
     readonly_fields = [
         'document_number', 'created_at', 'updated_at',
-        'converted_to_order', 'converted_at', 'converted_by',
-        'auto_approve_preview_display',  # NEW
-        'approval_history_display',  # NEW
-
+        'subtotal', 'vat_total', 'total',  # ✅ FIXED: financial fields
+        'converted_to_order', 'converted_at', 'converted_by'
     ]
 
     fieldsets = [
@@ -186,264 +108,188 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
                 'business_justification', 'expected_usage'
             )
         }),
+        (_('Financial Summary'), {  # ✅ NEW: financial section
+            'fields': ('subtotal', 'vat_total', 'total'),
+            'classes': ('collapse',)
+        }),
         (_('Approval Workflow'), {
             'fields': (
                 'approval_required', 'requested_by', 'approved_by', 'approved_at',
-                'rejection_reason', 'auto_approve_preview_display'  # NEW
+                'rejection_reason'
             )
         }),
         (_('Conversion Tracking'), {
-            'fields': (
-                'converted_to_order', 'converted_at', 'converted_by'
-            ),
+            'fields': ('converted_to_order', 'converted_at', 'converted_by'),
             'classes': ('collapse',)
         }),
         (_('System Info'), {
-            'fields': (
-                'created_at', 'updated_at',  # NEW
-
-            ),
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     ]
 
     inlines = [PurchaseRequestLineInline]
 
-    def save_model(self, request, obj, form, change):
-        if not change:
-            obj.requested_by = request.user
-            obj.created_by = request.user
-        obj.updated_by = request.user
-        super().save_model(request, obj, form, change)
+    # ✅ ДОБАВИ WorkflowService actions към DynamicPurchaseRequestAdmin actions
+    def get_actions(self, request):
+        """Extend actions from DynamicPurchaseRequestAdmin + add WorkflowService actions"""
+        actions = super().get_actions(request)
 
-    def urgency_display(self, obj):
-        if obj.urgency_level == 'high':
-            return format_html('<span style="color: #F44336;">🔥 High</span>')
-        elif obj.urgency_level == 'medium':
-            return format_html('<span style="color: #FF9800;">⚡ Medium</span>')
-        else:
-            return format_html('<span style="color: #4CAF50;">📋 Normal</span>')
+        # Add WorkflowService actions
+        actions['workflow_submit_requests'] = (self.workflow_submit_requests, 'workflow_submit_requests',
+                                               self.workflow_submit_requests.short_description)
+        actions['workflow_approve_requests'] = (self.workflow_approve_requests, 'workflow_approve_requests',
+                                                self.workflow_approve_requests.short_description)
+        actions['workflow_reject_requests'] = (self.workflow_reject_requests, 'workflow_reject_requests',
+                                               self.workflow_reject_requests.short_description)
+        actions['show_workflow_status'] = (self.show_workflow_status, 'show_workflow_status',
+                                           self.show_workflow_status.short_description)
 
-    urgency_display.short_description = 'Urgency'
+        return actions
 
-    def lines_count(self, obj):
-        count = obj.lines.count()
-        return format_html('<strong>{}</strong>', count)
-
-    lines_count.short_description = 'Lines'
-
-    def estimated_total_display(self, obj):
-        # Legacy estimated calculation
-        try:
-            total = sum(
-                (getattr(line, 'entered_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
-                for line in obj.lines.all()
-            )
-            return float(total)
-        except Exception:
-            return '-'
-
-    estimated_total_display.short_description = 'Estimated'
-
-    def total_display(self, obj):
-        # VAT-calculated total
-        return float(obj.total)
-
-    def status_display(self, obj):
-        """Показва статуса както е записан в базата"""
-        colors = {
-            'draft': '#757575',
-            'submitted': '#FF9800',
-            'approved': '#4CAF50',
-            'converted': '#2196F3',
-            'rejected': '#F44336',
-            'cancelled': '#9E9E9E'
-        }
-        color = colors.get(obj.status, '#757575')
-
-        # Добави 🤖 ако е автоматично одобрен
-        label = obj.status
-        if obj.status == 'approved' and getattr(obj, 'was_auto_approved', False):
-            label += ' 🤖'
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, label
-        )
-
-    status_display.short_description = _('Status')
-
-    total_display.short_description = 'VAT Total'
-
-    def auto_approve_indicator(self, obj):
-        """Shows if request was auto-approved or can be auto-approved"""
-        if obj.status == 'approved' and obj.was_auto_approved:
-            rule_name = obj.auto_approval_rule_used.name if obj.auto_approval_rule_used else "Unknown"
-            return format_html(
-                '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; '
-                'border-radius: 3px; font-size: 10px;">🤖 AUTO: {}</span>',
-                rule_name
-            )
-        elif obj.status == 'draft':
-            preview = obj.is_auto_approvable()
-            if preview['can_auto_approve']:
-                return format_html(
-                    '<span style="background-color: #2196F3; color: white; padding: 2px 6px; '
-                    'border-radius: 3px; font-size: 10px;">⚡ WILL AUTO-APPROVE</span>'
-                )
-            else:
-                return format_html(
-                    '<span style="background-color: #FF9800; color: white; padding: 2px 6px; '
-                    'border-radius: 3px; font-size: 10px;">👤 MANUAL APPROVAL</span>'
-                )
-        else:
-            return '-'
-
-    auto_approve_indicator.short_description = _('Auto Approval')
-
-    def auto_approve_preview_display(self, obj):
-        """Detailed auto-approve preview for the admin form"""
-        if not obj.pk:
-            return "Save request first to see auto-approve preview"
-
-        preview_text = obj.get_auto_approve_preview()
-
-        # Format for HTML display
-        formatted_preview = preview_text.replace('\n', '<br>')
-
-        return format_html(
-            '<div style="font-family: monospace; font-size: 12px; '
-            'background-color: #f5f5f5; padding: 10px; border-radius: 4px;">{}</div>',
-            formatted_preview
-        )
-
-    auto_approve_preview_display.short_description = _('Auto-Approve Preview')
-
-    def approval_history_display(self, obj):
-        """Shows approval history including auto-approvals"""
-        if not obj.pk:
-            return "Save request first to see approval history"
-
-        from nomenclatures.models.approvals import ApprovalLog
-        from django.contrib.contenttypes.models import ContentType
-
-        content_type = ContentType.objects.get_for_model(obj.__class__)
-        logs = ApprovalLog.objects.filter(
-            content_type=content_type,
-            object_id=obj.pk
-        ).order_by('-created_at')
-
-        if not logs.exists():
-            return "No approval history"
-
-        history_lines = []
-        for log in logs[:5]:  # Show last 5 entries
-            action_icon = {
-                'approved': '✅',
-                'auto_approved': '🤖',
-                'rejected': '❌',
-                'submitted': '📤'
-            }.get(log.action, '📝')
-
-            user_name = log.user.get_full_name() if log.user else 'System'
-            timestamp = log.created_at.strftime('%Y-%m-%d %H:%M')
-
-            rule_info = f" ({log.rule.name})" if log.rule else ""
-
-            history_lines.append(
-                f"{action_icon} {log.action.title()}{rule_info} by {user_name} at {timestamp}"
-            )
-
-        return format_html(
-            '<div style="font-family: monospace; font-size: 11px;">{}</div>',
-            '<br>'.join(history_lines)
-        )
-
-    approval_history_display.short_description = _('Approval History')
-
-    # =====================
-    # ENHANCED ACTIONS
-    # =====================
-
-    actions = [
-        'submit_requests_with_auto_approve',  # NEW
-        'preview_auto_approve_status',  # NEW
-        'approve_requests',
-        'convert_to_orders'
-    ]
-
-    def submit_requests_with_auto_approve(self, request, queryset):
-        """NEW: Submit requests with auto-approve check"""
-        submitted_count = 0
-        auto_approved_count = 0
+    # ✅ WorkflowService action methods
+    def workflow_submit_requests(self, request, queryset):
+        """Submit selected requests using WorkflowService"""
+        success_count = 0
         error_count = 0
 
-        for req in queryset.filter(status='draft'):
-            try:
-                result = req.submit_for_approval(request.user)
-                if result['success']:
-                    submitted_count += 1
-                    if result['auto_approved']:
-                        auto_approved_count += 1
-                else:
-                    error_count += 1
+        for purchase_request in queryset:
+            result = WorkflowService.transition_document(
+                purchase_request, 'submitted', request.user
+            )
 
-            except Exception as e:
+            if result['success']:
+                success_count += 1
+            else:
                 error_count += 1
                 self.message_user(
                     request,
-                    f'Error submitting {req.document_number}: {e}',
+                    f"❌ {purchase_request.document_number}: {result['message']}",
                     level='ERROR'
                 )
 
-        # Summary message
-        messages = []
-        if submitted_count > 0:
-            messages.append(f'Submitted {submitted_count} requests')
-        if auto_approved_count > 0:
-            messages.append(f'Auto-approved {auto_approved_count} requests')
+        if success_count > 0:
+            self.message_user(request, f"📤 Successfully submitted {success_count} requests")
+
         if error_count > 0:
-            messages.append(f'{error_count} errors occurred')
+            self.message_user(request, f"❌ Failed to submit {error_count} requests", level='ERROR')
 
-        self.message_user(request, ' | '.join(messages))
+    workflow_submit_requests.short_description = "📤 Submit via WorkflowService"
 
-    submit_requests_with_auto_approve.short_description = _('Submit with auto-approve check')
+    def workflow_approve_requests(self, request, queryset):
+        """Approve selected requests using WorkflowService"""
+        success_count = 0
+        error_count = 0
 
-    def preview_auto_approve_status(self, request, queryset):
-        """NEW: Preview auto-approve status for selected requests"""
-        preview_lines = []
+        for purchase_request in queryset:
+            result = WorkflowService.transition_document(
+                purchase_request, 'approved', request.user,
+                comments="Approved via admin bulk action"
+            )
 
-        for req in queryset:
-            preview = req.is_auto_approvable()
-            status = "✅ AUTO" if preview['can_auto_approve'] else "👤 MANUAL"
-            preview_lines.append(f"{req.document_number}: {status} - {preview['reason']}")
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {purchase_request.document_number}: {result['message']}",
+                    level='ERROR'
+                )
 
-        # Show preview in message
-        preview_text = '\n'.join(preview_lines[:10])  # Limit to 10 items
-        if len(preview_lines) > 10:
-            preview_text += f'\n... and {len(preview_lines) - 10} more'
+        if success_count > 0:
+            self.message_user(request, f"✅ Successfully approved {success_count} requests")
 
-        self.message_user(
-            request,
-            f'Auto-approve preview:\n{preview_text}',
-            level='INFO'
-        )
+    workflow_approve_requests.short_description = "✅ Approve via WorkflowService"
 
-    preview_auto_approve_status.short_description = _('Preview auto-approve status')
+    def workflow_reject_requests(self, request, queryset):
+        """Reject selected requests using WorkflowService"""
+        success_count = 0
+        error_count = 0
 
+        for purchase_request in queryset:
+            result = WorkflowService.transition_document(
+                purchase_request, 'rejected', request.user,
+                reason="Rejected via admin bulk action"
+            )
 
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {purchase_request.document_number}: {result['message']}",
+                    level='ERROR'
+                )
+
+        if success_count > 0:
+            self.message_user(request, f"❌ Successfully rejected {success_count} requests")
+
+    workflow_reject_requests.short_description = "❌ Reject via WorkflowService"
+
+    def show_workflow_status(self, request, queryset):
+        """Show workflow status for selected documents"""
+        for document in queryset:
+            available_actions = WorkflowService.get_available_transitions(document, request.user)
+
+            action_list = []
+            for action in available_actions:
+                status_icon = "✅" if action['can_transition'] else "❌"
+                reason = f" ({action['reason']})" if action.get('reason') else ""
+                action_list.append(f"{status_icon} {action['to_status']}{reason}")
+
+            actions_text = ", ".join(action_list) if action_list else "No actions available"
+
+            self.message_user(
+                request,
+                f"📋 {document.document_number} (Status: {document.status}): {actions_text}"
+            )
+
+    show_workflow_status.short_description = "📊 Show WorkflowService status"
+
+    def workflow_actions_display(self, obj):
+        """Shows available workflow actions for this document"""
+        available = WorkflowService.get_available_transitions(obj, None)
+
+        if available:
+            next_actions = [a['to_status'] for a in available if a['can_transition']]
+            if next_actions:
+                return format_html(
+                    '<span style="color: #007cba; font-weight: bold;">→ {}</span>',
+                    next_actions[0]
+                )
+            else:
+                return format_html('<span style="color: #ffc107;">⏳ Pending</span>')
+
+        return format_html('<span style="color: #28a745;">✅ Final</span>')
+
+    workflow_actions_display.short_description = 'Next Action (WS)'
+    workflow_actions_display.admin_order_field = 'status'
+
+    def total_display(self, obj):
+        """Display financial total"""
+        if hasattr(obj, 'total') and obj.total:
+            return f"€{obj.total:,.2f}"
+        return "-"
+
+    total_display.short_description = 'Total'
+    total_display.admin_order_field = 'total'
 
 
 # =================================================================
-# PURCHASE ORDER ADMIN - FIXED
+# PURCHASE ORDER ADMIN - FIXED INHERITANCE
 # =================================================================
 
 @admin.register(PurchaseOrder)
-class PurchaseOrderAdmin(DynamicPurchaseRequestAdmin):
+class PurchaseOrderAdmin(admin.ModelAdmin):  # ✅ FIXED: Наследява admin.ModelAdmin, не DynamicPurchaseRequestAdmin!
+    """Професионален admin за Purchase Orders"""
+
     list_display = [
-        'document_number', 'supplier', 'status_display', 'is_urgent',
-        'lines_count', 'total_display', 'expected_delivery_date'  # ✅ FIXED: total_display
+        'document_number', 'supplier', 'status', 'is_urgent',
+        'total_display',  # ✅ FIXED: total field
+        'workflow_actions_display',  # ✅ NEW: WorkflowService actions
+        'expected_delivery_date'
     ]
 
     list_filter = [
@@ -456,89 +302,156 @@ class PurchaseOrderAdmin(DynamicPurchaseRequestAdmin):
     ]
 
     readonly_fields = [
-        'document_number', 'document_type', 'status',
-        'subtotal', 'discount_total', 'vat_total', 'total',  # ✅ FIXED: total
-        'created_at', 'updated_at', 'created_by', 'updated_by'
+        'document_number', 'created_at', 'updated_at',
+        'subtotal', 'discount_total', 'vat_total', 'total'  # ✅ FIXED: total
     ]
 
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('supplier', 'location', 'status', 'is_urgent', 'prices_entered_with_vat')  # ✅ ADDED VAT control
+    fieldsets = [
+        (_('Document Info'), {
+            'fields': ('document_number', 'document_type', 'status')
         }),
-        ('Order Details', {
+        (_('Order Details'), {
             'fields': (
+                'supplier', 'location', 'is_urgent',
                 'document_date', 'expected_delivery_date',
                 'supplier_order_reference', 'supplier_confirmed'
             )
         }),
-        ('Financial Summary', {
-            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),  # ✅ FIXED: total
+        (_('Financial Summary'), {
+            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),  # ✅ FIXED
             'classes': ('collapse',)
         }),
-        ('Source Information', {
+        (_('Source Information'), {
             'fields': ('source_request',),
             'classes': ('collapse',)
         }),
-        ('Payment Information', {
-            'fields': ('is_paid', 'payment_date', 'payment_method'),
+        (_('System Info'), {
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
-        ('System Info', {
-            'fields': ('document_number', 'document_type', 'created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
+    ]
 
     inlines = [PurchaseOrderLineInline]
 
-    def status_display(self, obj):
-        # ✅ FIXED: Safe status display
-        try:
-            status_value = obj.status
-            status_label = obj.get_status_display() if hasattr(obj, 'get_status_display') else status_value.title()
-        except:
-            status_value = 'unknown'
-            status_label = 'Unknown'
+    actions = [
+        'workflow_confirm_orders', 'workflow_cancel_orders', 'show_workflow_status'
+    ]
 
-        colors = {
-            'draft': '#757575',
-            'confirmed': '#4CAF50',
-            'sent': '#2196F3',
-            'delivered': '#FF9800',
-            'completed': '#9C27B0',
-            'unknown': '#9E9E9E'
-        }
-        color = colors.get(status_value, '#757575')
+    # ✅ WorkflowService actions за Orders
+    def workflow_confirm_orders(self, request, queryset):
+        """Confirm selected orders using WorkflowService"""
+        success_count = 0
+        error_count = 0
 
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, status_label
-        )
+        for order in queryset:
+            result = WorkflowService.transition_document(
+                order, 'confirmed', request.user,
+                comments="Confirmed via admin bulk action"
+            )
 
-    status_display.short_description = 'Status'
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {order.document_number}: {result['message']}",
+                    level='ERROR'
+                )
 
-    def lines_count(self, obj):
-        return format_html('<strong>{}</strong>', obj.lines.count())
+        if success_count > 0:
+            self.message_user(request, f"✅ Successfully confirmed {success_count} orders")
 
-    lines_count.short_description = 'Lines'
+    workflow_confirm_orders.short_description = "✅ Confirm via WorkflowService"
+
+    def workflow_cancel_orders(self, request, queryset):
+        """Cancel selected orders using WorkflowService"""
+        success_count = 0
+        error_count = 0
+
+        for order in queryset:
+            result = WorkflowService.transition_document(
+                order, 'cancelled', request.user,
+                comments="Cancelled via admin bulk action"
+            )
+
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {order.document_number}: {result['message']}",
+                    level='ERROR'
+                )
+
+        if success_count > 0:
+            self.message_user(request, f"❌ Successfully cancelled {success_count} orders")
+
+    workflow_cancel_orders.short_description = "❌ Cancel via WorkflowService"
+
+    def show_workflow_status(self, request, queryset):
+        """Show workflow status for selected documents - same as requests"""
+        for document in queryset:
+            available_actions = WorkflowService.get_available_transitions(document, request.user)
+
+            action_list = []
+            for action in available_actions:
+                status_icon = "✅" if action['can_transition'] else "❌"
+                reason = f" ({action['reason']})" if action.get('reason') else ""
+                action_list.append(f"{status_icon} {action['to_status']}{reason}")
+
+            actions_text = ", ".join(action_list) if action_list else "No actions available"
+
+            self.message_user(
+                request,
+                f"📋 {document.document_number} (Status: {document.status}): {actions_text}"
+            )
+
+    show_workflow_status.short_description = "📊 Show WorkflowService status"
+
+    def workflow_actions_display(self, obj):
+        """Shows available workflow actions - same as requests"""
+        available = WorkflowService.get_available_transitions(obj, None)
+
+        if available:
+            next_actions = [a['to_status'] for a in available if a['can_transition']]
+            if next_actions:
+                return format_html(
+                    '<span style="color: #007cba; font-weight: bold;">→ {}</span>',
+                    next_actions[0]
+                )
+            else:
+                return format_html('<span style="color: #ffc107;">⏳ Pending</span>')
+
+        return format_html('<span style="color: #28a745;">✅ Final</span>')
+
+    workflow_actions_display.short_description = 'Next Action (WS)'
+    workflow_actions_display.admin_order_field = 'status'
 
     def total_display(self, obj):
-        # ✅ FIXED: Use total instead of grand_total
-        return obj.total
+        """Display financial total"""
+        if hasattr(obj, 'total') and obj.total:
+            return f"€{obj.total:,.2f}"
+        return "-"
 
     total_display.short_description = 'Total'
+    total_display.admin_order_field = 'total'
 
 
 # =================================================================
-# DELIVERY RECEIPT ADMIN - FIXED
+# DELIVERY RECEIPT ADMIN
 # =================================================================
 
 @admin.register(DeliveryReceipt)
 class DeliveryReceiptAdmin(admin.ModelAdmin):
+    """Професионален admin за Delivery Receipts"""
+
     list_display = [
-        'document_number', 'supplier', 'delivery_date', 'status_display',
-        'lines_count', 'total_display', 'quality_status', 'received_by'  # ✅ FIXED: total_display
+        'document_number', 'supplier', 'delivery_date', 'status',
+        'total_display',  # ✅ FIXED: total field
+        'workflow_actions_display',  # ✅ NEW: WorkflowService actions
+        'has_quality_issues', 'has_variances'
     ]
 
     list_filter = [
@@ -547,143 +460,207 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
     ]
 
     search_fields = [
-        'document_number', 'supplier__name', 'delivery_note_number'
+        'document_number', 'supplier__name', 'delivery_note_number',
+        'vehicle_info', 'driver_name'
     ]
 
     readonly_fields = [
-        'document_number', 'document_type', 'status',
-        'subtotal', 'discount_total', 'vat_total', 'total',  # ✅ FIXED: total
-        'received_at', 'processed_at',
-        'created_at', 'updated_at', 'created_by', 'updated_by'
+        'document_number', 'created_at', 'updated_at',
+        'subtotal', 'discount_total', 'vat_total', 'total'  # ✅ FIXED: total
     ]
 
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('supplier', 'location', 'status', 'prices_entered_with_vat')  # ✅ ADDED VAT control
+    fieldsets = [
+        (_('Document Info'), {
+            'fields': ('document_number', 'document_type', 'status')
         }),
-        ('Delivery Details', {
+        (_('Delivery Details'), {
             'fields': (
-                'delivery_date', 'delivery_note_number', 'external_reference',
-                'vehicle_info', 'driver_name', 'driver_phone'
+                'supplier', 'location', 'delivery_date',
+                'delivery_note_number', 'vehicle_info', 'driver_name'
             )
         }),
-        ('Quality Control', {
+        (_('Financial Summary'), {
+            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),  # ✅ FIXED
+            'classes': ('collapse',)
+        }),
+        (_('Quality Control'), {
             'fields': (
                 'quality_checked', 'has_quality_issues', 'quality_inspector',
                 'quality_notes'
-            )
-        }),
-        ('Variances', {
-            'fields': ('has_variances',),
-            'classes': ('collapse',)
-        }),
-        ('Financial Summary', {
-            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),  # ✅ FIXED: total
-            'classes': ('collapse',)
-        }),
-        ('Payment Information', {
-            'fields': ('is_paid', 'payment_date', 'payment_method'),
-            'classes': ('collapse',)
-        }),
-        ('System Info', {
-            'fields': (
-                'document_number', 'document_type', 'received_at', 'processed_at',
-                'created_at', 'updated_at'
             ),
             'classes': ('collapse',)
         }),
-    )
+        (_('System Info'), {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    ]
 
     inlines = [DeliveryLineInline]
 
-    def status_display(self, obj):
-        # ✅ FIXED: Safe status display
-        try:
-            status_value = obj.status
-            status_label = obj.get_status_display() if hasattr(obj, 'get_status_display') else status_value.title()
-        except:
-            status_value = 'unknown'
-            status_label = 'Unknown'
+    actions = [
+        'workflow_receive_deliveries', 'workflow_complete_deliveries', 'show_workflow_status'
+    ]
 
-        colors = {
-            'draft': '#757575',
-            'delivered': '#FF9800',
-            'received': '#2196F3',
-            'processed': '#9C27B0',
-            'completed': '#4CAF50',
-            'unknown': '#9E9E9E'
-        }
-        color = colors.get(status_value, '#757575')
+    # ✅ WorkflowService actions за Deliveries
+    def workflow_receive_deliveries(self, request, queryset):
+        """Mark deliveries as received using WorkflowService"""
+        success_count = 0
+        error_count = 0
 
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, status_label
-        )
+        for delivery in queryset:
+            result = WorkflowService.transition_document(
+                delivery, 'received', request.user,
+                comments="Received via admin bulk action"
+            )
 
-    status_display.short_description = 'Status'
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {delivery.document_number}: {result['message']}",
+                    level='ERROR'
+                )
 
-    def lines_count(self, obj):
-        return format_html('<strong>{}</strong>', obj.lines.count())
+        if success_count > 0:
+            self.message_user(request, f"📦 Successfully received {success_count} deliveries")
 
-    lines_count.short_description = 'Lines'
+    workflow_receive_deliveries.short_description = "📦 Receive via WorkflowService"
+
+    def workflow_complete_deliveries(self, request, queryset):
+        """Complete deliveries using WorkflowService"""
+        success_count = 0
+        error_count = 0
+
+        for delivery in queryset:
+            result = WorkflowService.transition_document(
+                delivery, 'completed', request.user,
+                comments="Completed via admin bulk action"
+            )
+
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                self.message_user(
+                    request,
+                    f"❌ {delivery.document_number}: {result['message']}",
+                    level='ERROR'
+                )
+
+        if success_count > 0:
+            self.message_user(request, f"✅ Successfully completed {success_count} deliveries")
+
+    workflow_complete_deliveries.short_description = "✅ Complete via WorkflowService"
+
+    # Copy workflow_actions_display и show_workflow_status методите от другите admin класове
+    def workflow_actions_display(self, obj):
+        """Shows available workflow actions"""
+        available = WorkflowService.get_available_transitions(obj, None)
+
+        if available:
+            next_actions = [a['to_status'] for a in available if a['can_transition']]
+            if next_actions:
+                return format_html(
+                    '<span style="color: #007cba; font-weight: bold;">→ {}</span>',
+                    next_actions[0]
+                )
+            else:
+                return format_html('<span style="color: #ffc107;">⏳ Pending</span>')
+
+        return format_html('<span style="color: #28a745;">✅ Final</span>')
+
+    workflow_actions_display.short_description = 'Next Action (WS)'
+    workflow_actions_display.admin_order_field = 'status'
+
+    def show_workflow_status(self, request, queryset):
+        """Show workflow status for selected documents"""
+        for document in queryset:
+            available_actions = WorkflowService.get_available_transitions(document, request.user)
+
+            action_list = []
+            for action in available_actions:
+                status_icon = "✅" if action['can_transition'] else "❌"
+                reason = f" ({action['reason']})" if action.get('reason') else ""
+                action_list.append(f"{status_icon} {action['to_status']}{reason}")
+
+            actions_text = ", ".join(action_list) if action_list else "No actions available"
+
+            self.message_user(
+                request,
+                f"📋 {document.document_number} (Status: {document.status}): {actions_text}"
+            )
+
+    show_workflow_status.short_description = "📊 Show WorkflowService status"
 
     def total_display(self, obj):
-        # ✅ FIXED: Use total instead of grand_total
-        return obj.total
+        """Display financial total"""
+        if hasattr(obj, 'total') and obj.total:
+            return f"€{obj.total:,.2f}"
+        return "-"
 
     total_display.short_description = 'Total'
-
-    def quality_status(self, obj):
-        if obj.has_quality_issues:
-            return format_html('<span style="color: red;">❌ Issues</span>')
-        elif obj.quality_checked:
-            return format_html('<span style="color: green;">✅ OK</span>')
-        else:
-            return format_html('<span style="color: orange;">⏳ Pending</span>')
-
-    quality_status.short_description = 'Quality'
+    total_display.admin_order_field = 'total'
 
 
 # =================================================================
-# LINE MODELS ADMIN - FIXED
+# LINE ADMINS - OPTIONAL
 # =================================================================
 
 @admin.register(PurchaseRequestLine)
 class PurchaseRequestLineAdmin(admin.ModelAdmin):
+    """Админ за редове от заявки"""
+
     list_display = [
         'document', 'line_number', 'product', 'requested_quantity',
-        'entered_price', 'unit_price', 'gross_amount'  # ✅ FIXED: added entered_price
+        'entered_price', 'total_display'  # ✅ FIXED: entered_price
     ]
 
-    list_filter = ['document__status', 'document__supplier']
+    list_filter = ['document__status', 'suggested_supplier']
     search_fields = ['product__code', 'product__name', 'document__document_number']
 
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    def total_display(self, obj):
+        if hasattr(obj, 'gross_amount') and obj.gross_amount:
+            return f"€{obj.gross_amount:,.2f}"
+        return "-"
+
+    total_display.short_description = 'Line Total'
 
 
 @admin.register(PurchaseOrderLine)
 class PurchaseOrderLineAdmin(admin.ModelAdmin):
+    """Админ за редове от поръчки"""
+
     list_display = [
         'document', 'line_number', 'product', 'ordered_quantity',
-        'entered_price', 'unit_price', 'discount_percent', 'gross_amount'  # ✅ FIXED
+        'entered_price', 'total_display'  # ✅ FIXED
     ]
 
-    list_filter = ['document__status', 'document__supplier']
+    list_filter = ['document__status', 'delivery_status']
     search_fields = ['product__code', 'product__name', 'document__document_number']
 
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    def total_display(self, obj):
+        if hasattr(obj, 'gross_amount') and obj.gross_amount:
+            return f"€{obj.gross_amount:,.2f}"
+        return "-"
+
+    total_display.short_description = 'Line Total'
 
 
 @admin.register(DeliveryLine)
 class DeliveryLineAdmin(admin.ModelAdmin):
+    """Админ за редове от доставки"""
+
     list_display = [
         'document', 'line_number', 'product', 'received_quantity',
-        'entered_price', 'unit_price', 'gross_amount', 'quality_approved', 'batch_number'  # ✅ FIXED
+        'entered_price', 'quality_status', 'batch_number'  # ✅ FIXED
     ]
 
     list_filter = [
-        'quality_approved', 'document__status', 'document__supplier'
+        'quality_approved', 'document__status', 'document__supplier',
+        'expiry_date'
     ]
 
     search_fields = [
@@ -691,4 +668,10 @@ class DeliveryLineAdmin(admin.ModelAdmin):
         'document__document_number'
     ]
 
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    def quality_status(self, obj):
+        if obj.quality_approved:
+            return format_html('<span style="color: green;">✅ Approved</span>')
+        else:
+            return format_html('<span style="color: red;">❌ Rejected</span>')
+
+    quality_status.short_description = _('Quality')
