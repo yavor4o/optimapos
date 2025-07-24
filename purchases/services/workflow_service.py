@@ -31,68 +31,77 @@ class WorkflowService:
     ЕДИНСТВЕН entry point за всички status transitions
     """
 
+    # ВРЕМЕННО: Добави debug logging в WorkflowService.transition_document()
+
     @staticmethod
     @transaction.atomic
     def transition_document(document, to_status: str, user: User = None, **kwargs) -> Dict:
         """
-        Основният метод за status transitions
-
-        Args:
-            document: Document instance (PurchaseRequest, PurchaseOrder, DeliveryReceipt)
-            to_status: Target status ('submitted', 'approved', 'converted', etc.)
-            user: User performing the transition
-            **kwargs: Additional context (comments, reason, etc.)
-
-        Returns:
-            Dict: {'success': bool, 'message': str, 'from_status': str, 'to_status': str}
+        DEBUG VERSION - Намира infinite recursion
         """
         try:
             from_status = document.status
-            logger.info(f"🔄 Starting transition: {document.document_number} {from_status} -> {to_status}")
+            print(f"🔄 DEBUG: Starting transition: {document.document_number} {from_status} -> {to_status}")
 
             # СТЪПКА 1: DocumentType validation
+            print(f"🔍 DEBUG: Step 1 - DocumentType validation")
             validation_result = WorkflowService._validate_document_type_transition(document, to_status)
             if not validation_result['valid']:
+                print(f"❌ DEBUG: DocumentType validation failed: {validation_result['message']}")
                 return {
                     'success': False,
                     'message': validation_result['message'],
                     'error_code': 'DOCUMENT_TYPE_VALIDATION_FAILED'
                 }
+            print(f"✅ DEBUG: DocumentType validation passed")
 
             # СТЪПКА 2: Business rules validation
+            print(f"🔍 DEBUG: Step 2 - Business rules validation")
             business_validation = WorkflowService._validate_business_rules(document, to_status, user, **kwargs)
             if not business_validation['valid']:
+                print(f"❌ DEBUG: Business validation failed: {business_validation['message']}")
                 return {
                     'success': False,
                     'message': business_validation['message'],
                     'error_code': 'BUSINESS_RULES_VALIDATION_FAILED'
                 }
+            print(f"✅ DEBUG: Business validation passed")
 
             # СТЪПКА 3: Approval handling (ако се изисква)
+            print(f"🔍 DEBUG: Step 3 - Checking if approval needed")
             if WorkflowService._needs_approval(document, to_status):
+                print(f"🔍 DEBUG: Approval needed - calling ApprovalService")
                 approval_result = WorkflowService._handle_approval_transition(document, to_status, user, **kwargs)
                 if not approval_result['success']:
+                    print(f"❌ DEBUG: Approval failed: {approval_result['message']}")
                     return approval_result
+                print(f"✅ DEBUG: Approval successful")
                 # ApprovalService вече е update-нал document.status, затова return
                 return approval_result
 
+            print(f"🔍 DEBUG: No approval needed - executing direct transition")
+
             # СТЪПКА 4: Execute non-approval transition
             with transaction.atomic():
+                print(f"🔍 DEBUG: Step 4a - Updating status from {document.status} to {to_status}")
                 # Update status
                 document.status = to_status
 
+                print(f"🔍 DEBUG: Step 4b - Updating document fields")
                 # Update related fields
                 WorkflowService._update_document_fields(document, to_status, user)
 
+                print(f"🔍 DEBUG: Step 4c - Saving document")
                 # Save document
                 document.save()
 
+                print(f"🔍 DEBUG: Step 4d - Post-transition actions")
                 # СТЪПКА 5: Post-transition actions
                 WorkflowService._execute_post_transition_actions(
                     document, from_status, to_status, user, **kwargs
                 )
 
-            logger.info(f"✅ Transition successful: {document.document_number} {from_status} -> {to_status}")
+            print(f"✅ DEBUG: Transition completed successfully")
 
             return {
                 'success': True,
@@ -102,7 +111,9 @@ class WorkflowService:
             }
 
         except Exception as e:
-            logger.error(f"❌ Transition failed: {document.document_number} -> {to_status}: {e}")
+            print(f"❌ DEBUG: Exception in transition_document: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'message': f'Transition failed: {str(e)}',
@@ -191,28 +202,10 @@ class WorkflowService:
 
     @staticmethod
     def _needs_approval(document, to_status: str) -> bool:
-        """Проверява дали transition изисква approval"""
-        try:
-            # Approval статуси винаги изискват ApprovalService
-            if to_status in ['approved', 'rejected']:
-                return True
-
-            # Submit статуси могат да изискват approval (за auto-approve)
-            if to_status == 'submitted':
-                return True
-
-            # Проверка за други ApprovalRules
-            from nomenclatures.models.approvals import ApprovalRule
-            rules = ApprovalRule.objects.for_document(document).filter(
-                from_status=document.status,
-                to_status=to_status
-            )
-
-            return rules.exists()
-
-        except Exception as e:
-            logger.error(f"Error checking approval requirement: {e}")
-            return False
+        """ApprovalService е ВОДЕЩ за всички transitions"""
+        print(f"🔍 DEBUG: _needs_approval called for {document.document_number} -> {to_status}")
+        print(f"✅ DEBUG: ApprovalService handles ALL transitions")
+        return True
 
     @staticmethod
     def _handle_approval_transition(document, to_status: str, user: User = None, **kwargs) -> Dict:

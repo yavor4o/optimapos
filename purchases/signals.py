@@ -88,13 +88,19 @@ def log_delivery_changes(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=PurchaseRequestLine)
 def update_request_totals_on_line_save(sender, instance, **kwargs):
-    """ЗАПАЗВАМЕ - Recalculate totals when line is saved"""
+    """
+    ✅ ПРОФЕСИОНАЛНО: Manual totals update when lines change
+
+    Calls save() which will trigger recalculate_totals() internally
+    """
     if instance.document_id:
         try:
-            instance.document.recalculate_totals()
-            logger.debug(f"💰 Recalculated totals for request {instance.document.document_number}")
+            # ✅ PROFESSIONAL: Just save the document,
+            # save() method will handle totals calculation
+            instance.document.save()
+            logger.debug(f"💰 Updated totals for request {instance.document.document_number}")
         except Exception as e:
-            logger.error(f"❌ Error recalculating request totals: {e}")
+            logger.error(f"❌ Error updating request totals: {e}")
 
 
 @receiver(post_save, sender=PurchaseOrderLine)

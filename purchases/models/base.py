@@ -398,38 +398,45 @@ class BaseDocument(models.Model):
 
     def save(self, *args, **kwargs):
         """
-        Enhanced save method - БЕЗ auto-transitions
+        Enhanced save method - ПРОФЕСИОНАЛЕН ПОДХОД
 
-        ВАЖНО: Auto-transitions са премахнати!
-        Използвай transition_to() за status changes.
+        Workflow:
+        1. User tracking
+        2. Default status
+        3. Document numbering
+        4. Validation
+        5. Financial calculations (ако са налични)
+        6. Database save
+
+        ✅ Clean, predictable, single transaction
         """
 
-        # Set user tracking
+        # 1. Set user tracking
         user = getattr(self, '_current_user', None)
         if user and user.is_authenticated:
             if not self.pk:  # New record
                 self.created_by = user
             self.updated_by = user
 
-        # САМО default status ако няма status
+        # 2. САМО default status ако няма status
         if not self.status and self.document_type:
             self.status = self.document_type.default_status
 
-        # Generate document number
+        # 3. Generate document number
         if not self.document_number and self.document_type and self.document_type.auto_number:
             self.document_number = self.document_type.get_next_number()
 
-        # Validation САМО ако не е skip-вана
+        # 4. Validation
         skip_validation = getattr(self, '_skip_validation', False)
         if not skip_validation:
             self.full_clean()
 
-        # Save
-        super().save(*args, **kwargs)
-
-        # Recalculate totals ако има FinancialMixin
+        # 5. ✅ ПРОФЕСИОНАЛНО: Calculate totals ПРЕДИ save
         if hasattr(self, 'recalculate_totals'):
-            self.recalculate_totals()
+            self.recalculate_totals()  # Pure calculation БЕЗ save
+
+        # 6. Single database save
+        super().save(*args, **kwargs)
 
     def get_workflow_info(self):
         """Get complete workflow information for this document"""
@@ -739,30 +746,39 @@ class FinancialMixin(models.Model):
 
     def recalculate_totals(self):
         """
-        FIXED: Correct VAT calculation logic
+        ✅ ПРОФЕСИОНАЛНО: Pure calculation method
 
-        subtotal = sum of net amounts (excluding VAT)
-        vat_total = sum of VAT amounts
-        total = subtotal + vat_total
+        Responsibilities:
+        - Calculate financial totals
+        - Update instance fields
+        - NO side effects (no save, no signals)
+
+        Called by save() method for consistent behavior
         """
         if not hasattr(self, 'lines'):
             return
 
         lines = self.lines.all()
 
-        # FIXED: Use net_amount (excluding VAT) for subtotal, not line_total/gross_amount
+        # Calculate totals from lines
         subtotal = sum(getattr(line, 'net_amount', 0) for line in lines)
         discount_total = sum(getattr(line, 'discount_amount', 0) for line in lines)
         vat_total = sum(getattr(line, 'vat_amount', 0) for line in lines)
 
+        # Update instance fields (no save)
         self.subtotal = subtotal
         self.discount_total = discount_total
         self.vat_total = vat_total
-        self.total = subtotal + vat_total  # FIXED: use 'total' not 'grand_total'
+        self.total = subtotal + vat_total
 
-        self.save(update_fields=[
-            'subtotal', 'discount_total', 'vat_total', 'total'
-        ])
+    def refresh_totals(self):
+        """
+        ✅ ПРОФЕСИОНАЛНО: Explicit method за manual totals refresh
+
+        Use when you want to recalculate AND save in one operation
+        """
+        self.recalculate_totals()  # Calculate
+        self.save(update_fields=['subtotal', 'discount_total', 'vat_total', 'total'])
 
     def clean(self):
         """Enhanced financial validation"""

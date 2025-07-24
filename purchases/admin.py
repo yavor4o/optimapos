@@ -131,19 +131,33 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
     inlines = [PurchaseRequestLineInline]
 
     # ✅ ДОБАВИ WorkflowService actions към DynamicPurchaseRequestAdmin actions
+    # ЗАМЕНИ get_actions method-а в PurchaseRequestAdmin
+
     def get_actions(self, request):
         """Extend actions from DynamicPurchaseRequestAdmin + add WorkflowService actions"""
         actions = super().get_actions(request)
 
-        # Add WorkflowService actions
-        actions['workflow_submit_requests'] = (self.workflow_submit_requests, 'workflow_submit_requests',
-                                               self.workflow_submit_requests.short_description)
-        actions['workflow_approve_requests'] = (self.workflow_approve_requests, 'workflow_approve_requests',
-                                                self.workflow_approve_requests.short_description)
-        actions['workflow_reject_requests'] = (self.workflow_reject_requests, 'workflow_reject_requests',
-                                               self.workflow_reject_requests.short_description)
-        actions['show_workflow_status'] = (self.show_workflow_status, 'show_workflow_status',
-                                           self.show_workflow_status.short_description)
+        # ✅ ФИКСВАНО: Правилният формат за Django admin actions
+        actions['workflow_submit_requests'] = (
+            self.workflow_submit_requests,
+            'workflow_submit_requests',
+            "📤 Submit via WorkflowService"
+        )
+        actions['workflow_approve_requests'] = (
+            self.workflow_approve_requests,
+            'workflow_approve_requests',
+            "✅ Approve via WorkflowService"
+        )
+        actions['workflow_reject_requests'] = (
+            self.workflow_reject_requests,
+            'workflow_reject_requests',
+            "❌ Reject via WorkflowService"
+        )
+        actions['show_workflow_status'] = (
+            self.show_workflow_status,
+            'show_workflow_status',
+            "📊 Show WorkflowService status"
+        )
 
         return actions
 
@@ -339,11 +353,20 @@ class PurchaseOrderAdmin(admin.ModelAdmin):  # ✅ FIXED: Наследява adm
 
     # ✅ WorkflowService actions за Orders
     def workflow_confirm_orders(self, request, queryset):
-        """Confirm selected orders using WorkflowService"""
+        """
+        ✅ SMART: Confirm orders - skip already confirmed
+        """
         success_count = 0
         error_count = 0
+        skipped_count = 0
 
         for order in queryset:
+            # ✅ SMART: Skip already confirmed orders
+            if order.status == 'confirmed':
+                skipped_count += 1
+                continue
+
+            # Try to confirm
             result = WorkflowService.transition_document(
                 order, 'confirmed', request.user,
                 comments="Confirmed via admin bulk action"
@@ -359,10 +382,19 @@ class PurchaseOrderAdmin(admin.ModelAdmin):  # ✅ FIXED: Наследява adm
                     level='ERROR'
                 )
 
+        # Summary messages
         if success_count > 0:
             self.message_user(request, f"✅ Successfully confirmed {success_count} orders")
 
-    workflow_confirm_orders.short_description = "✅ Confirm via WorkflowService"
+        if skipped_count > 0:
+            self.message_user(request, f"⏭️ Skipped {skipped_count} already confirmed orders")
+
+        if error_count > 0:
+            self.message_user(request, f"❌ Failed to confirm {error_count} orders", level='ERROR')
+
+    workflow_confirm_orders.short_description = "✅ Smart Confirm via WorkflowService"
+
+
 
     def workflow_cancel_orders(self, request, queryset):
         """Cancel selected orders using WorkflowService"""
