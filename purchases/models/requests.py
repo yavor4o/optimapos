@@ -410,11 +410,13 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
 
     @property
     def total_estimated_cost(self):
-        """Сума на всички цени - ФИКСВАНО!"""
+        if not self.pk:
+            return Decimal('0.00')
+
         return sum(
-            line.entered_price * line.requested_quantity  # ✅ ПРОМЕНЕНО: estimated_price → entered_price
+            line.entered_price * line.requested_quantity
             for line in self.lines.all()
-            if line.entered_price  # ✅ ПРОМЕНЕНО: estimated_price → entered_price
+            if line.entered_price
         ) or Decimal('0.00')
 
     # purchases/models/requests.py - FIX convert_to_order method
@@ -543,10 +545,12 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
     # FINANCIAL PLANNING
     # =====================
     def get_planning_cost(self):
-        """Get planning cost using effective costs for inventory planning"""
-        from purchases.services.vat_service import SmartVATService
+        if not self.pk:
+            return Decimal('0.00')
 
+        from purchases.services.vat_service import SmartVATService
         total_cost = Decimal('0')
+
         for line in self.lines.all():
             effective_cost = SmartVATService.get_effective_cost(line)
             quantity = line.get_quantity()
@@ -555,20 +559,26 @@ class PurchaseRequest(SmartDocumentTypeMixin, BaseDocument, FinancialMixin):
         return total_cost
 
     def get_financial_summary(self):
-        """Get complete financial summary"""
+        if not self.pk:
+            return {
+                'lines_count': 0,
+                'subtotal': Decimal('0.00'),
+                'vat_total': Decimal('0.00'),
+                'total': Decimal('0.00'),
+                'planning_cost': Decimal('0.00')
+            }
+
         return {
             'lines_count': self.lines.count(),
-            'subtotal': self.subtotal,  # From FinancialMixin (net amounts)
-            'vat_total': self.vat_total,  # From FinancialMixin (VAT amounts)
-            'total': self.total,  # From FinancialMixin (gross amounts)
-            'planning_cost': self.get_planning_cost()  # For inventory planning
+            'subtotal': self.subtotal,
+            'vat_total': self.vat_total,
+            'total': self.total,
+            'planning_cost': self.get_planning_cost()
         }
 
     def get_estimated_total(self):
-        """
-        Връща общата стойност на заявката въз основа на entered_price и requested_quantity
-        """
-        from decimal import Decimal
+        if not self.pk:
+            return Decimal('0.00')
 
         total = Decimal('0.00')
         for line in self.lines.all():

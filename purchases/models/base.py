@@ -746,30 +746,22 @@ class FinancialMixin(models.Model):
 
     def recalculate_totals(self):
         """
-        ✅ ПРОФЕСИОНАЛНО: Pure calculation method
-
-        Responsibilities:
-        - Calculate financial totals
-        - Update instance fields
-        - NO side effects (no save, no signals)
-
-        Called by save() method for consistent behavior
+        ✅ SAFE: Skip if object has no PK yet
         """
-        if not hasattr(self, 'lines'):
+        if not self.pk or not hasattr(self, 'lines'):
+            self.subtotal = Decimal('0.00')
+            self.discount_total = Decimal('0.00')
+            self.vat_total = Decimal('0.00')
+            self.total = Decimal('0.00')
             return
 
         lines = self.lines.all()
 
         # Calculate totals from lines
-        subtotal = sum(getattr(line, 'net_amount', 0) for line in lines)
-        discount_total = sum(getattr(line, 'discount_amount', 0) for line in lines)
-        vat_total = sum(getattr(line, 'vat_amount', 0) for line in lines)
-
-        # Update instance fields (no save)
-        self.subtotal = subtotal
-        self.discount_total = discount_total
-        self.vat_total = vat_total
-        self.total = subtotal + vat_total
+        self.subtotal = sum(getattr(line, 'net_amount', 0) for line in lines)
+        self.discount_total = sum(getattr(line, 'discount_amount', 0) for line in lines)
+        self.vat_total = sum(getattr(line, 'vat_amount', 0) for line in lines)
+        self.total = self.subtotal + self.vat_total
 
     def refresh_totals(self):
         """

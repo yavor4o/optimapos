@@ -202,42 +202,30 @@ class WorkflowService:
 
     @staticmethod
     def _needs_approval(document, to_status: str) -> bool:
-        """ApprovalService е ВОДЕЩ за всички transitions"""
-        print(f"🔍 DEBUG: _needs_approval called for {document.document_number} -> {to_status}")
-        print(f"✅ DEBUG: ApprovalService handles ALL transitions")
-        return True
+        # 1) ако документът въобще не изисква approval по тип → False
+        if not (document.document_type and document.document_type.requires_approval):
+            return False
 
-    @staticmethod
-    def _handle_approval_transition(document, to_status: str, user: User = None, **kwargs) -> Dict:
-        """Обработва transitions които изискват approval"""
-        try:
-            from nomenclatures.services.approval_service import ApprovalService
+        # 2) ако няма правило за този преход → False (няма как да одобряваме)
+        from nomenclatures.models.approvals import ApprovalRule
+        return ApprovalRule.objects.for_document(document).filter(
+            from_status=document.status,
+            to_status=to_status
+        ).exists()
 
-            if to_status == 'submitted':
-                # За submit използваме auto-approve функцията
-                return ApprovalService.submit_document_with_auto_approve(document, user)
+    def _handle_approval_transition(document, to_status, user=None, **kwargs):
+        from nomenclatures.services.approval_service import ApprovalService
 
-            elif to_status == 'approved':
-                # За manual approval
-                comments = kwargs.get('comments', '')
-                return ApprovalService.approve_document(document, to_status, user, comments)
+        if to_status == 'submitted':
+            return ApprovalService.submit_document_with_auto_approve(document, user)
 
-            elif to_status == 'rejected':
-                # За rejection
-                reason = kwargs.get('reason', kwargs.get('comments', 'Rejected'))
-                return ApprovalService.reject_document(document, reason, user)
+        if to_status == 'rejected':
+            reason = kwargs.get('reason') or kwargs.get('comments', 'Rejected')
+            return ApprovalService.reject_document(document, user, reason)
 
-            else:
-                # За други approval transitions
-                comments = kwargs.get('comments', '')
-                return ApprovalService.execute_transition(document, to_status, user, comments)
-
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Approval handling error: {str(e)}',
-                'error_code': 'APPROVAL_ERROR'
-            }
+        # Всичко останало мине през execute_transition
+        comments = kwargs.get('comments', '')
+        return ApprovalService.execute_transition(document, to_status, user, comments)
 
     @staticmethod
     def _validate_business_rules(document, to_status: str, user: User = None,
