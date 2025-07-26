@@ -440,7 +440,7 @@ class PurchaseRequestAdmin(DynamicPurchaseRequestAdmin):
 # =================================================================
 
 @admin.register(PurchaseOrder)
-class PurchaseOrderAdmin(admin.ModelAdmin):
+class PurchaseOrderAdmin(DynamicPurchaseRequestAdmin):
     list_display = [
         'document_number', 'supplier', 'status_display', 'is_urgent',
         'lines_count', 'total_display', 'expected_delivery_date'  # ✅ FIXED: total_display
@@ -535,7 +535,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 # =================================================================
 
 @admin.register(DeliveryReceipt)
-class DeliveryReceiptAdmin(admin.ModelAdmin):
+class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
     list_display = [
         'document_number', 'supplier', 'delivery_date', 'status_display',
         'lines_count', 'total_display', 'quality_status', 'received_by'  # ✅ FIXED: total_display
@@ -630,7 +630,7 @@ class DeliveryReceiptAdmin(admin.ModelAdmin):
 
     def total_display(self, obj):
         # ✅ FIXED: Use total instead of grand_total
-        return format_html('<strong>{:.2f} лв</strong>', float(obj.total))
+        return float(obj.total)
 
     total_display.short_description = 'Total'
 

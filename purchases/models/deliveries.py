@@ -236,82 +236,6 @@ class DeliveryReceipt(SmartDocumentTypeMixin,BaseDocument, FinancialMixin, Payme
         return "DEL"
 
 
-
-    # =====================
-    # WORKFLOW METHODS
-    # =====================
-    def mark_as_delivered(self, user=None):
-        """Mark delivery as delivered (arrived at location)"""
-        if self.status not in [self.DRAFT]:
-            raise ValidationError("Can only mark draft deliveries as delivered")
-
-        self.status = self.DELIVERED
-        if not self.delivery_date:
-            self.delivery_date = timezone.now().date()
-        self.updated_by = user
-        self.save()
-
-        return True
-
-    def receive_delivery(self, user, quality_check=True):
-        """Receive and process the delivery"""
-        if self.status != self.DELIVERED:
-            raise ValidationError("Can only receive delivered items")
-
-        if not self.lines.exists():
-            raise ValidationError("Cannot receive delivery without lines")
-
-        self.status = self.RECEIVED
-        self.received_by = user
-        self.received_at = timezone.now()
-
-        if quality_check:
-            self.quality_checked = True
-            self.quality_inspector = user
-            # Check if any lines have quality issues
-            self.has_quality_issues = self.lines.filter(quality_approved=False).exists()
-            self.quality_approved = not self.has_quality_issues
-
-        # Check for variances
-        self.has_variances = self.lines.exclude(variance_quantity=0).exists()
-
-        self.updated_by = user
-        self.save()
-
-        # Update source orders
-        self._update_source_orders()
-
-        return True
-
-    def complete_processing(self, user=None):
-        """Complete delivery processing"""
-        if self.status not in [self.RECEIVED, self.PROCESSED]:
-            raise ValidationError("Can only complete received or processed deliveries")
-
-        self.status = self.COMPLETED
-        self.processed_by = user or self.updated_by
-        self.processed_at = timezone.now()
-        self.updated_by = user
-        self.save()
-
-        return True
-
-    def _update_source_orders(self):
-        """Update delivery quantities on source orders"""
-        if not self.source_orders.exists():
-            return
-
-        # Update each source order with delivered quantities
-        for order in self.source_orders.all():
-            for order_line in order.lines.all():
-                delivery_lines = self.lines.filter(source_order_line=order_line)
-                total_delivered = sum(dl.received_quantity for dl in delivery_lines)
-                if total_delivered > 0:
-                    order_line.add_delivery(total_delivered)
-
-            # Update order delivery status
-            order.update_delivery_status()
-
     # =====================
     # BUSINESS LOGIC CHECKS
     # =====================
@@ -570,7 +494,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         super().clean()
 
         # Set quantity from received_quantity for base validation
-        if self.received_quantity and not self.quantity:
+        if self.received_quantity and not self.received_quantity:
             self.quantity = self.received_quantity
 
         # Received quantity must be positive

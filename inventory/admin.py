@@ -383,9 +383,12 @@ class InventoryMovementAdmin(admin.ModelAdmin):
         sign = '+' if obj.movement_type == 'IN' else '-'
         color = 'green' if obj.movement_type == 'IN' else 'red'
 
+        # Форматираме количеството отделно
+        formatted_quantity = f"{float(obj.quantity):.3f}"
+
         return format_html(
-            '<strong style="color: {};">{}{:.3f}</strong>',
-            color, sign, obj.quantity
+            '<strong style="color: {};">{}{}</strong>',
+            color, sign, formatted_quantity
         )
 
     quantity_display.short_description = _('Quantity')
