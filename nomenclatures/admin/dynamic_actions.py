@@ -8,6 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import PermissionDenied, ValidationError
 
 from nomenclatures.services.approval_service import ApprovalService
+from purchases.services import WorkflowService
 
 
 class DynamicApprovalMixin:
@@ -105,32 +106,20 @@ class DynamicApprovalMixin:
 
         return approval_action
 
-    # nomenclatures/admin/dynamic_actions.py - ФИНАЛЕН ФИКСИРАН КОД
-
     def _handle_document_approval(self, document, user):
         """
-        ✅ ФИНАЛЕН: Handle document approval with COMPLETE WorkflowService integration
-
-        ФИКСИРАНО: И двата пътя сега използват WorkflowService за пълна business logic
+        ✅ COMPLETE: Handle document approval with conversion support
         """
         try:
-            from purchases.services.workflow_service import WorkflowService
-
-            print(f"🔄 DEBUG: _handle_document_approval called for {document.document_number}")
-
             # 1. Проверка за нужда от одобрение
             if document.document_type and document.document_type.requires_approval:
-                print("📋 DEBUG: Document requires approval - using approval workflow")
-
                 amount = (
                         getattr(document, 'grand_total', None)
-                        or getattr(document, 'total', None)
                         or (document.get_estimated_total() if hasattr(document, 'get_estimated_total') else None)
                 )
 
                 if document.needs_approval(amount):
                     # 1.1 Вземаме всички възможни преходи за потребителя
-                    from nomenclatures.services.approval_service import ApprovalService
                     transitions = ApprovalService.get_available_transitions(document, user)
                     if not transitions:
                         return {
@@ -140,21 +129,20 @@ class DynamicApprovalMixin:
 
                     # 1.2 Избираме най-подходящия преход
                     selected_transition = self._select_best_transition(transitions, document.status)
-                    target_status = selected_transition['to_status']
 
-                    print(f"📋 DEBUG: Selected approval transition: {document.status} → {target_status}")
+                    # 1.3 ✅ SPECIAL HANDLING за conversion
+                    if selected_transition['to_status'] == 'converted':
+                        return self._handle_conversion_transition(document, selected_transition, user)
 
-                    # 1.3 ✅ ИЗПОЛЗВАМЕ WorkflowService за approval transitions
-                    return WorkflowService.transition_document(
+                    # 1.4 Изпълняваме обикновен approval transition
+                    return ApprovalService.execute_transition(
                         document=document,
-                        to_status=target_status,
+                        to_status=selected_transition['to_status'],
                         user=user,
-                        comments=f"Via approval rule: {selected_transition['rule'].name}"
+                        comments=f"Via rule: {selected_transition['rule'].name}"
                     )
 
             # 2. Ако не се изисква одобрение — следваме DocumentType transitions
-            print("🚀 DEBUG: Document does NOT require approval - using direct workflow")
-
             next_statuses = document.get_next_statuses()
             if not next_statuses:
                 return {
@@ -164,7 +152,6 @@ class DynamicApprovalMixin:
 
             # 2.1 Smart selection за DocumentType transitions
             target_status = self._select_best_next_status(next_statuses, document.status)
-            print(f"🎯 DEBUG: Selected direct transition: {document.status} → {target_status}")
 
             # 2.2 ✅ SPECIAL HANDLING за conversion
             if target_status == 'converted':
@@ -180,22 +167,19 @@ class DynamicApprovalMixin:
             if hasattr(document, 'lines') and not document.lines.exists():
                 return {
                     'success': False,
-                    'message': '⚠️ Cannot process document without lines. Add products first!'
+                    'message': 'Cannot submit document without lines.'
                 }
 
-            # 2.4 ✅ ИЗПОЛЗВАМЕ WorkflowService за non-approval transitions
-            print(f"✅ DEBUG: Executing transition via WorkflowService")
+
+
             return WorkflowService.transition_document(
                 document=document,
                 to_status=target_status,
                 user=user,
                 comments="Via admin approval action"
-            )
+                )
 
         except Exception as e:
-            print(f"❌ DEBUG: Exception in _handle_document_approval: {e}")
-            import traceback
-            traceback.print_exc()
             return {
                 'success': False,
                 'message': f'Error during approval: {str(e)}'
