@@ -115,15 +115,8 @@ class DynamicApprovalMixin:
         return approval_action
 
     def _handle_document_approval(self, document, user):
-
-        print(f"\n🎯 === ADMIN ACTION DEBUG START ===")
-        print(f"🎯 Document: {document.document_number}")
-        print(f"🎯 Current status: {document.status}")
-        print(f"🎯 User: {user}")
-        print(f"🎯 Method called from: ADMIN")
-
         """
-        ✅ COMPLETE: Handle document approval with conversion support
+        ✅ FINAL: Clean approval handling with proper ValidationError propagation
         """
         try:
             # 1. Проверка за нужда от одобрение
@@ -135,11 +128,13 @@ class DynamicApprovalMixin:
 
                 if document.needs_approval(amount):
                     # 1.1 Вземаме всички възможни преходи за потребителя
+                    # ValidationError ще се propagate от ApprovalService ако няма правила
                     transitions = ApprovalService.get_available_transitions(document, user)
+
                     if not transitions:
                         return {
                             'success': False,
-                            'message': 'Document requires approval but no applicable transition was found.'
+                            'message': 'No approval transitions available for current user.'
                         }
 
                     # 1.2 Избираме най-подходящия преход
@@ -185,30 +180,29 @@ class DynamicApprovalMixin:
                     'message': 'Cannot submit document without lines.'
                 }
 
-
-
             return WorkflowService.transition_document(
                 document=document,
                 to_status=target_status,
                 user=user,
                 comments="Via admin approval action"
-                )
+            )
 
+        except ValidationError as e:
+            # ✅ ValidationError от ApprovalService или WorkflowService
+            print(f"🚨 VALIDATION ERROR: {e}")
+            return {
+                'success': False,
+                'message': str(e)  # Точната грешка: "DocumentType requires approval but no ApprovalRule configured"
+            }
 
         except Exception as e:
-
+            # ✅ Technical errors
             print(f"❌ ADMIN DEBUG: Exception in _handle_document_approval: {e}")
-
             import traceback
-
             traceback.print_exc()
-
             return {
-
                 'success': False,
-
                 'message': f'Error during approval: {str(e)}'
-
             }
 
     def _select_best_transition(self, transitions, current_status):

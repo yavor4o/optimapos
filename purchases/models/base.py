@@ -315,21 +315,14 @@ class BaseDocument(models.Model):
         return self.document_type.get_inventory_movement_type()
 
     def can_be_edited(self):
-        """Check if document can be edited based on DocumentType and status"""
+        """
+        ГЛАВНАТА ЛОГИКА: Може да се редактира ако има възможни преходи
+        """
         if not self.document_type:
-            return True  # Fallback
+            return True
 
-        # Check if status is final
-        if self.is_final_status():
-            return False
-
-        # Check DocumentType rules
-        workflow_rules = self.get_workflow_rules()
-        if workflow_rules.get('auto_confirm') and self.status != self.document_type.default_status:
-            return False
-
-        # Default logic
-        return self.status in ['draft', 'submitted']
+        next_statuses = self.get_next_statuses()
+        return len(next_statuses) > 0
 
     def can_be_cancelled(self):
         """Check if document can be cancelled"""

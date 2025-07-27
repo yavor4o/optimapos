@@ -29,7 +29,7 @@ class ApprovalService:
     @staticmethod
     def get_available_transitions(document, user) -> List[Dict]:
         """
-        FIXED: Debug version с детайлно логване
+        FIXED: Proper ValidationError propagation
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -67,6 +67,15 @@ class ApprovalService:
             )
 
             logger.info(f"After DocumentType filtering: {applicable_rules.count()} rules")
+
+            # ✅ ПРОВЕРКА ЗА ЛИПСВАЩИ ПРАВИЛА - ТУК СЕ ХВЪРЛЯ ValidationError!
+            if not applicable_rules.exists():
+                # Тук проверяваме дали документът изисква approval
+                if document.document_type and document.document_type.requires_approval:
+                    from purchases.services.workflow_service import WorkflowService
+                    # Това ще хвърли ValidationError ако няма правила!
+                    for next_status in document_allowed_transitions:
+                        WorkflowService._needs_approval(document, next_status)
 
             # Филтрираме по сума ако документът има такава
             if hasattr(document, 'get_estimated_total'):
@@ -118,6 +127,9 @@ class ApprovalService:
 
             return available_transitions
 
+        except ValidationError:
+            # ✅ ValidationError се propagate - конфигурационна грешка!
+            raise
         except Exception as e:
             logger.error(f"Error getting available transitions: {e}")
             return []

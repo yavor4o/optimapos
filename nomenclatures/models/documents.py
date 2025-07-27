@@ -428,7 +428,9 @@ class DocumentType(BaseNomenclature):
 
     def is_final_status(self, status: str) -> bool:
         """Check if status is final (no further transitions)"""
-        return status in self.final_statuses
+        transitions = self.get_allowed_transitions()
+        outgoing_transitions = transitions.get(status, [])
+        return len(outgoing_transitions) == 0
 
     # =====================
     # BUSINESS LOGIC METHODS

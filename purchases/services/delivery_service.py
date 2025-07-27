@@ -115,15 +115,28 @@ class DeliveryService:
 
     @staticmethod
     @transaction.atomic
-    def add_lines_to_delivery(delivery: DeliveryReceipt, lines_data: List[Dict]) -> List[DeliveryLine]:
-        """Add lines to delivery receipt"""
+    def add_lines_to_delivery(delivery: DeliveryReceipt, lines_data: List[Dict], user=None) -> List[DeliveryLine]:
+        """
+        Add lines to delivery receipt with auto-confirm support
+
+        Args:
+            delivery: DeliveryReceipt instance
+            lines_data: List of line data dictionaries
+            user: User who is adding the lines (needed for auto-confirm)
+
+        Returns:
+            List[DeliveryLine]: Created delivery lines
+        """
+        import logging
+        logger = logging.getLogger(__name__)
 
         if delivery.is_final_status():
-            raise ValidationError("Cannot modify...")
+            raise ValidationError("Cannot modify delivery in final status")
 
         lines = []
         existing_lines_count = delivery.lines.count()
 
+        # Create lines
         for i, line_data in enumerate(lines_data, existing_lines_count + 1):
             line = DeliveryLine.objects.create(
                 document=delivery,
@@ -144,7 +157,68 @@ class DeliveryService:
         # Recalculate totals
         delivery.recalculate_totals()
 
+        # ✅ NEW: Auto-confirm logic
+        try:
+            DeliveryService._check_auto_confirm(delivery, user)
+        except Exception as e:
+            # Log auto-confirm errors but don't fail the line creation
+            logger.warning(f"Auto-confirm failed for delivery {delivery.document_number}: {e}")
+
         return lines
+
+    @staticmethod
+    def _check_auto_confirm(delivery: DeliveryReceipt, user):
+        """
+        Check and execute auto-confirm if conditions are met
+
+        Args:
+            delivery: DeliveryReceipt to check for auto-confirm
+            user: User to associate with the transition
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Check if auto-confirm is enabled
+        if not (delivery.document_type and delivery.document_type.auto_confirm):
+            logger.debug(f"Auto-confirm disabled for delivery {delivery.document_number}")
+            return
+
+        # Check if document is in default status
+        if delivery.status != delivery.document_type.default_status:
+            logger.debug(f"Delivery {delivery.document_number} not in default status ({delivery.status})")
+            return
+
+        # Check if delivery has lines
+        if not delivery.lines.exists():
+            logger.debug(f"Delivery {delivery.document_number} has no lines yet")
+            return
+
+        # Get next allowed statuses
+        next_statuses = delivery.get_next_statuses()
+        if not next_statuses:
+            logger.warning(f"No next statuses available for delivery {delivery.document_number}")
+            return
+
+        # Execute auto-confirm transition
+        from purchases.services.workflow_service import WorkflowService
+
+        target_status = next_statuses[0]  # Take first available status
+
+        logger.info(f"Auto-confirming delivery {delivery.document_number}: {delivery.status} → {target_status}")
+
+        result = WorkflowService.transition_document(
+            document=delivery,
+            to_status=target_status,
+            user=user,
+            comments="Auto-confirm: lines added to delivery"
+        )
+
+        if result['success']:
+            logger.info(f"✅ Successfully auto-confirmed delivery {delivery.document_number} to {target_status}")
+        else:
+            logger.error(f"❌ Auto-confirm failed for delivery {delivery.document_number}: {result['message']}")
+            # Re-raise as warning exception so it doesn't break the line creation
+            raise ValidationError(f"Auto-confirm failed: {result['message']}")
 
     @staticmethod
     @transaction.atomic

@@ -20,6 +20,8 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 import logging
 
+from nomenclatures.models import ApprovalRule
+
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
@@ -201,17 +203,33 @@ class WorkflowService:
             }
 
     @staticmethod
-    def _needs_approval(document, to_status: str) -> bool:
-        # 1) ако документът въобще не изисква approval по тип → False
-        if not (document.document_type and document.document_type.requires_approval):
+    def _needs_approval(document, to_status: str) -> bool:  # ← ТУК ТРЯБВА ДА Е!
+        if not document.document_type:
             return False
 
-        # 2) ако няма правило за този преход → False (няма как да одобряваме)
-        from nomenclatures.models.approvals import ApprovalRule
-        return ApprovalRule.objects.for_document(document).filter(
+        has_rules = ApprovalRule.objects.for_document(document).filter(
             from_status=document.status,
             to_status=to_status
         ).exists()
+
+        requires_approval = document.document_type.requires_approval
+
+        # CONSISTENCY CHECKS
+        if requires_approval and not has_rules:
+            raise ValidationError(
+                f"DocumentType '{document.document_type.name}' requires approval "
+                f"for transition '{document.status}' → '{to_status}' "
+                f"but no ApprovalRule configured."
+            )
+
+        if not requires_approval and has_rules:
+            raise ValidationError(
+                f"ApprovalRule exists for transition '{document.status}' → '{to_status}' "
+                f"but DocumentType '{document.document_type.name}' has requires_approval=False. "
+                f"Either remove the rule or enable requires_approval."
+            )
+
+        return requires_approval and has_rules
 
     def _handle_approval_transition(document, to_status, user=None, **kwargs):
         from nomenclatures.services.approval_service import ApprovalService
