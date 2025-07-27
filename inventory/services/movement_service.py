@@ -273,6 +273,9 @@ class MovementService:
             else:
                 new_avg_cost = new_cost
 
+            new_avg_cost = new_avg_cost.quantize(Decimal('0.0001'))
+            new_cost = new_cost.quantize(Decimal('0.0001'))
+
             # Обновяваме purchase fields
             product.last_purchase_cost = new_cost
             product.last_purchase_date = timezone.now().date()
