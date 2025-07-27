@@ -1,4 +1,5 @@
 # purchases/models/deliveries.py - FIXED WITH NEW ARCHITECTURE
+from datetime import timedelta
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -44,7 +45,7 @@ class DeliveryReceiptManager(models.Manager):
 
     def overdue_processing(self, days=1):
         """Deliveries received but not processed within timeframe"""
-        cutoff_date = timezone.now().date() - timezone.timedelta(days=days)
+        cutoff_date = timezone.now().date() - timedelta(days=days)
         return self.filter(
             status='delivered',
             delivery_date__lte=cutoff_date
@@ -240,23 +241,17 @@ class DeliveryReceipt(SmartDocumentTypeMixin,BaseDocument, FinancialMixin, Payme
     # BUSINESS LOGIC CHECKS
     # =====================
     def can_be_edited(self):
-        """Override with delivery-specific logic"""
-        return self.status in [self.DRAFT, self.DELIVERED]
+        return not self.is_final_status()
 
     def can_be_received(self):
-        """Check if delivery can be received"""
-        return (
-                self.status == self.DELIVERED and
-                self.lines.exists()
-        )
+        return 'received' in self.get_next_statuses() and self.lines.exists()
 
     def can_be_completed(self):
-        """Check if delivery can be completed"""
-        return self.status in [self.RECEIVED, self.PROCESSED]
+        next_statuses = self.get_next_statuses()
+        return 'completed' in next_statuses or 'accepted' in next_statuses
 
     def can_be_cancelled(self):
-        """Override with delivery-specific logic"""
-        return self.status not in [self.COMPLETED, self.CANCELLED]
+        return not self.is_final_status()
 
     # =====================
     # PROPERTIES
@@ -605,7 +600,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         """Does the product expire soon?"""
         if not self.expiry_date:
             return False
-        cutoff_date = timezone.now().date() + timezone.timedelta(days=days)
+        cutoff_date = timezone.now().date() + timedelta(days=days)
         return self.expiry_date <= cutoff_date
 
     @property

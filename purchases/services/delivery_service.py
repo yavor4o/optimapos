@@ -118,8 +118,8 @@ class DeliveryService:
     def add_lines_to_delivery(delivery: DeliveryReceipt, lines_data: List[Dict]) -> List[DeliveryLine]:
         """Add lines to delivery receipt"""
 
-        if not delivery.can_be_edited():
-            raise ValidationError("Cannot modify delivery in current state")
+        if delivery.is_final_status():
+            raise ValidationError("Cannot modify...")
 
         lines = []
         existing_lines_count = delivery.lines.count()
