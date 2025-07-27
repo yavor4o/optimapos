@@ -175,7 +175,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = [
         'code', 'name_display', 'brand', 'product_group',
         'lifecycle_status', 'lifecycle_status_display', 'restrictions_display',
-        'unit_info', 'barcode_count', 'packaging_count'
+        'unit_info', 'barcode_count', 'packaging_count','current_stock_qty',
     ]
 
     list_filter = [
@@ -224,9 +224,9 @@ class ProductAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         (_('Summaries'), {
-            'fields': ('barcode_summary', 'packaging_summary'),
-            'classes': ('collapse',),
+            'fields': ('barcode_summary', 'packaging_summary','current_stock_qty','current_avg_cost','last_purchase_cost'),
             'description': _('Auto-generated summaries of related data')
+
         }),
         (_('System Information'), {
             'fields': ('created_at', 'updated_at'),
