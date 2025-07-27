@@ -472,10 +472,11 @@ class BaseDocument(models.Model):
             # Determine document type based on model name
             model_name = self._meta.model_name.lower()
 
-            if 'purchase' in model_name or 'request' in model_name:
-                return getattr(self.location, 'purchase_prices_include_vat', False)
-            elif 'sale' in model_name or 'invoice' in model_name:
-                return getattr(self.location, 'sales_prices_include_vat', True)
+            # ИЗПОЛЗВАЙ app_name от DocumentType:
+            if self.document_type and self.document_type.app_name == 'purchases':
+                return self.location.purchase_prices_include_vat
+            elif self.document_type and self.document_type.app_name == 'sales':
+                return self.location.sales_prices_include_vat
 
         # Last fallback - prices without VAT
         return False
