@@ -57,15 +57,23 @@ class DynamicApprovalMixin:
         def approval_action(modeladmin, request, queryset):
             """Динамична approval action"""
 
+            print(f"\n📋 === APPROVAL ACTION DEBUG ===")
+            print(f"📋 Action type: {action_type}")
+            print(f"📋 Documents count: {queryset.count()}")
+            print(f"📋 User: {request.user}")
+
             success_count = 0
             error_count = 0
 
             for document in queryset:
+                print(f"\n📄 Processing document: {document.document_number}")
                 try:
                     if action_type == 'approve':
+                        print(f"📄 Calling _handle_document_approval...")
                         result = self._handle_document_approval(document, request.user)
                     elif action_type == 'reject':
                         result = self._handle_document_rejection(document, request.user, request)
+                        print(f"📄 Result from _handle_document_approval: {result}")
 
                     if result.get('success'):
                         success_count += 1
@@ -107,6 +115,13 @@ class DynamicApprovalMixin:
         return approval_action
 
     def _handle_document_approval(self, document, user):
+
+        print(f"\n🎯 === ADMIN ACTION DEBUG START ===")
+        print(f"🎯 Document: {document.document_number}")
+        print(f"🎯 Current status: {document.status}")
+        print(f"🎯 User: {user}")
+        print(f"🎯 Method called from: ADMIN")
+
         """
         ✅ COMPLETE: Handle document approval with conversion support
         """
@@ -179,10 +194,21 @@ class DynamicApprovalMixin:
                 comments="Via admin approval action"
                 )
 
+
         except Exception as e:
+
+            print(f"❌ ADMIN DEBUG: Exception in _handle_document_approval: {e}")
+
+            import traceback
+
+            traceback.print_exc()
+
             return {
+
                 'success': False,
+
                 'message': f'Error during approval: {str(e)}'
+
             }
 
     def _select_best_transition(self, transitions, current_status):

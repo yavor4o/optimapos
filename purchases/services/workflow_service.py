@@ -325,21 +325,37 @@ class WorkflowService:
     @staticmethod
     def _handle_inventory_movements(document, to_status: str):
         """Handles inventory movements based on DocumentType configuration"""
+        print(f"\n📦 === INVENTORY MOVEMENTS DEBUG ===")
+        print(f"📦 Document: {document.document_number}")
+        print(f"📦 To status: {to_status}")
+        print(f"📦 Document type: {document.document_type}")
+        print(
+            f"📦 Affects inventory: {document.document_type.affects_inventory if document.document_type else 'No DocumentType'}")
         try:
             if not document.document_type or not document.document_type.affects_inventory:
+                print(f"📦 SKIPPING: Document does not affect inventory")
                 return
 
             # Check timing according to DocumentType
             should_create = document.document_type.should_affect_inventory(to_status)
+            print(f"📦 Should create movement for '{to_status}': {should_create}")
 
             if should_create:
+                print(f"📦 CREATING MOVEMENTS...")
                 from inventory.services import MovementService
                 movements = MovementService.create_from_document(document)
+                print(f"📦 CREATED {len(movements)} movements!")
+
+                for movement in movements:
+                    print(f"📦   - {movement.movement_type}: {movement.product.code} x {movement.quantity}")
+                else:
+                    print(f"📦 NOT CREATING: Timing condition not met")
 
                 if movements:
                     logger.info(f"📦 Created {len(movements)} inventory movements for {document.document_number}")
 
         except Exception as e:
+            print(f"❌ INVENTORY ERROR: {e}")
             logger.error(f"❌ Error handling inventory movements: {e}")
             # НЕ re-raise - inventory errors не трябва да спират workflow
 

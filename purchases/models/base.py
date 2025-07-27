@@ -357,8 +357,7 @@ class BaseDocument(models.Model):
         """
         super().clean()
 
-        # ПРЕМАХНАТО: if not self.document_type validation
-        # SmartDocumentTypeMixin се грижи за document_type в save()
+
 
         # Validate status against DocumentType САМО ако document_type вече е налично
         if self.document_type and self.status:
@@ -632,38 +631,152 @@ class BaseDocumentLine(models.Model):
             return Decimal('0.000')
 
     def clean(self):
-        """Validation based on document's DocumentType requirements"""
+        """Smart validation според DocumentType → Product hierarchy"""
         super().clean()
 
         # Get document's DocumentType for validation
         document = getattr(self, 'document', None)
-        if document and document.document_type:
-            doc_type = document.document_type
+        if not document or not document.document_type:
+            return  # Няма DocumentType - skip validation
 
-            # Batch tracking validation
-            if doc_type.requires_batch_tracking and not self.batch_number:
-                raise ValidationError({
-                    'batch_number': _('Batch number is required for this document type')
-                })
+        doc_type = document.document_type
+        product = self.product
 
-            # Expiry date validation
-            if doc_type.requires_expiry_dates and not self.expiry_date:
-                raise ValidationError({
-                    'expiry_date': _('Expiry date is required for this document type')
-                })
+        # =====================
+        # BATCH TRACKING VALIDATION
+        # =====================
+        batch_required = self._is_batch_required(doc_type, product)
 
-            # Serial number validation
-            if doc_type.requires_serial_numbers and not self.serial_numbers:
-                raise ValidationError({
-                    'serial_numbers': _('Serial numbers are required for this document type')
-                })
+        if batch_required and not self.batch_number:
+            raise ValidationError({
+                'batch_number': self._get_batch_error_message(doc_type, product)
+            })
 
-            # Quality check validation
-            if doc_type.requires_quality_check and not hasattr(self, '_skip_quality_check'):
-                if not self.quality_approved and not self.quality_notes:
-                    raise ValidationError({
-                        'quality_notes': _('Quality notes required when not approved')
-                    })
+        if not batch_required and self.batch_number:
+            # Optional: Warning за ненужни batches
+            pass
+
+        # =====================
+        # EXPIRY DATE VALIDATION
+        # =====================
+        expiry_required = self._is_expiry_required(doc_type, product)
+
+        if expiry_required and not self.expiry_date:
+            raise ValidationError({
+                'expiry_date': self._get_expiry_error_message(doc_type, product)
+            })
+
+        # =====================
+        # SERIAL NUMBER VALIDATION
+        # =====================
+        serial_required = self._is_serial_required(doc_type, product)
+
+        if serial_required and not self.serial_number:
+            raise ValidationError({
+                'serial_number': self._get_serial_error_message(doc_type, product)
+            })
+
+    def _is_batch_required(self, doc_type, product) -> bool:
+        """
+        Определя дали batch е задължителен според йерархията:
+        1. DocumentType.requires_batch_tracking = True → ЗАДЪЛЖИТЕЛНО
+        2. DocumentType.requires_batch_tracking = False → Проверява Product.track_batches
+        """
+
+        # НИВО 1: DocumentType настройка
+        if hasattr(doc_type, 'requires_batch_tracking'):
+            if doc_type.requires_batch_tracking == True:
+                return True  # ✅ Документът изисква batch за ВСИЧКИ продукти
+            elif doc_type.requires_batch_tracking == False:
+                # ✅ Document е False → проверява product ниво
+                if product and hasattr(product, 'track_batches'):
+                    return product.track_batches
+
+        # FALLBACK: Default False
+        return False
+
+    def _is_expiry_required(self, doc_type, product) -> bool:
+        """Определя дали expiry date е задължителен"""
+
+        # НИВО 1: DocumentType настройка
+        if hasattr(doc_type, 'requires_expiry_dates'):
+            if doc_type.requires_expiry_dates == True:
+                return True
+            elif doc_type.requires_expiry_dates == False:
+                # Document е False → проверява product ниво
+                if product and hasattr(product, 'requires_expiry_date'):
+                    return product.requires_expiry_date
+
+        return False
+
+    def _is_serial_required(self, doc_type, product) -> bool:
+        """Определя дали serial number е задължителен"""
+
+        # НИВО 1: DocumentType настройка
+        if hasattr(doc_type, 'requires_serial_numbers'):
+            if doc_type.requires_serial_numbers == True:
+                return True
+            elif doc_type.requires_serial_numbers == False:
+                # Document е False → проверява product ниво
+                if product and hasattr(product, 'track_serial_numbers'):
+                    return product.track_serial_numbers
+
+        return False
+
+    def _get_batch_error_message(self, doc_type, product) -> str:
+        """Генерира подходящо съобщение за грешка"""
+
+        if doc_type.requires_batch_tracking:
+            return f'Batch number is required for document type "{doc_type.name}"'
+        elif product.track_batches:
+            return f'Batch number is required for product "{product.code}" ({product.name})'
+        else:
+            return 'Batch number is required'
+
+    def _get_expiry_error_message(self, doc_type, product) -> str:
+        """Генерира подходящо съобщение за expiry date"""
+
+        if doc_type.requires_expiry_dates:
+            return f'Expiry date is required for document type "{doc_type.name}"'
+        elif product.requires_expiry_date:
+            return f'Expiry date is required for product "{product.code}" ({product.name})'
+        else:
+            return 'Expiry date is required'
+
+    def _get_serial_error_message(self, doc_type, product) -> str:
+        """Генерира подходящо съобщение за serial number"""
+
+        if doc_type.requires_serial_numbers:
+            return f'Serial number is required for document type "{doc_type.name}"'
+        elif product.track_serial_numbers:
+            return f'Serial number is required for product "{product.code}" ({product.name})'
+        else:
+            return 'Serial number is required'
+
+    # =====================
+    # HELPER METHODS ЗА UI/SERVICES
+    # =====================
+
+    def get_validation_requirements(self) -> dict:
+        """
+        Връща validation requirements за UI
+        Полезно за dynamic form validation
+        """
+        document = getattr(self, 'document', None)
+        if not document or not document.document_type:
+            return {}
+
+        doc_type = document.document_type
+        product = self.product
+
+        return {
+            'batch_required': self._is_batch_required(doc_type, product),
+            'expiry_required': self._is_expiry_required(doc_type, product),
+            'serial_required': self._is_serial_required(doc_type, product),
+            'batch_reason': 'document' if doc_type.requires_batch_tracking else 'product',
+            'expiry_reason': 'document' if doc_type.requires_expiry_dates else 'product',
+            'serial_reason': 'document' if doc_type.requires_serial_numbers else 'product'
+        }
 
     def save(self, *args, **kwargs):
         """Auto-set line number - ПРОФЕСИОНАЛЕН ПОДХОД"""

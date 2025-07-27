@@ -497,11 +497,22 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         if self.received_quantity and not self.received_quantity:
             self.quantity = self.received_quantity
 
-        # Received quantity must be positive
-        if self.received_quantity <= 0:
-            raise ValidationError({
-                'received_quantity': _('Received quantity must be greater than zero')
-            })
+        # НОВ КОД (правилен):
+        if self.document and self.document.document_type:
+            direction = self.document.document_type.inventory_direction
+
+            if direction == 'both':
+                # За "both" direction позволяваме negative values
+                if self.received_quantity == 0:
+                    raise ValidationError({
+                        'received_quantity': _('Received quantity cannot be zero')
+                    })
+            else:
+                # За "in"/"out" direction винаги positive
+                if self.received_quantity <= 0:
+                    raise ValidationError({
+                        'received_quantity': _('Received quantity must be greater than zero')
+                    })
 
         # Quality issue validation
         if not self.quality_approved and not self.quality_issue_type:
@@ -519,6 +530,15 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         if self.expiry_date and self.expiry_date <= timezone.now().date():
             # Just warn, don't prevent saving - might be receiving expired goods for disposal
             pass
+
+        # Unit validation
+        if self.product and self.unit:
+            valid_units = self.product.get_valid_purchase_units()
+            if self.unit not in valid_units:
+                unit_names = [u.name for u in valid_units]
+                raise ValidationError({
+                    'unit': f'Invalid unit. Valid units: {", ".join(unit_names)}'
+                })
 
     def save(self, *args, **kwargs):
         """Enhanced save with variance calculation"""

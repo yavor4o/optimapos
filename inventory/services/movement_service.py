@@ -4,7 +4,7 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 from typing import Dict, List, Optional, Tuple
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
 
@@ -57,7 +57,7 @@ class MovementService:
         )
 
         # Update product's moving average cost
-        MovementService._update_product_moving_average(product, quantity, cost_price)
+        MovementService._update_product_moving_average(product, quantity, cost_price, movement_type='IN')
 
         return movement
 
@@ -72,68 +72,57 @@ class MovementService:
             movement_date=None,
             reason: str = '',
             created_by=None,
-            use_fifo: bool = True
+            use_fifo: bool = True,
+            allow_negative_stock: bool = False,
+            manual_cost_price: Decimal = None,  # ← НОВА ОПЦИЯ!
+            batch_number: str = None  # ← НОВА ОПЦИЯ!
     ) -> List[InventoryMovement]:
         """
-        Create outgoing inventory movement (sales, issues, consumption)
-        Handles FIFO logic for batch-tracked products
+        Create outgoing inventory movements - UPDATED със smart cost price
         """
         if movement_date is None:
             movement_date = timezone.now().date()
 
         movements = []
 
-        if product.track_batches and use_fifo:
-            # FIFO consumption from batches
-            remaining_to_consume = quantity
+        # Stock availability check
+        if not allow_negative_stock:
+            from .inventory_service import InventoryService
+            availability = InventoryService.check_availability(location, product, quantity)
+            if not availability['can_fulfill']:
+                raise ValueError(
+                    f"Insufficient stock for {product.code} at {location.code}. "
+                    f"Available: {availability['available_qty']}, Required: {quantity}"
+                )
 
-            # Get batches in FIFO order (oldest first, expiring first)
-            batches = InventoryBatch.objects.filter(
+        # =====================
+        # BATCH TRACKING vs SIMPLE STOCK
+        # =====================
+        if product.track_batches and use_fifo and not manual_cost_price:
+            # За FIFO batch movements - използваме batch цените
+            movements = MovementService._create_fifo_outgoing_movements(
+                location, product, quantity, source_document_type,
+                source_document_number, movement_date, reason, created_by
+            )
+
+            if movements:
+                total_out_qty = sum(m.quantity for m in movements)
+                avg_cost = sum(
+                    m.quantity * m.cost_price for m in movements) / total_out_qty if total_out_qty > 0 else Decimal('0')
+                MovementService._update_product_moving_average(
+                    product, total_out_qty, avg_cost, movement_type='OUT'
+                )
+        else:
+            # =====================
+            # SMART COST PRICE ЛОГИКА
+            # =====================
+            cost_price = MovementService._get_smart_cost_price(
                 location=location,
                 product=product,
-                remaining_qty__gt=0
-            ).order_by('received_date', 'expiry_date')
-
-            for batch in batches:
-                if remaining_to_consume <= 0:
-                    break
-
-                # How much to consume from this batch
-                consume_qty = min(remaining_to_consume, batch.remaining_qty)
-
-                # Create movement for this batch
-                movement = InventoryMovement.objects.create(
-                    location=location,
-                    product=product,
-                    movement_type=InventoryMovement.OUT,
-                    quantity=consume_qty,
-                    cost_price=batch.cost_price,  # Use batch-specific cost
-                    batch_number=batch.batch_number,
-                    expiry_date=batch.expiry_date,
-                    source_document_type=source_document_type,
-                    source_document_number=source_document_number,
-                    movement_date=movement_date,
-                    reason=reason,
-                    created_by=created_by
-                )
-
-                movements.append(movement)
-                remaining_to_consume -= consume_qty
-
-            # Check if we consumed everything
-            if remaining_to_consume > 0:
-                raise ValueError(
-                    f"Insufficient stock: {remaining_to_consume} units could not be fulfilled"
-                )
-
-        else:
-            # Simple movement without FIFO (non-batch products or override)
-            # Get average cost for non-batch products
-            try:
-                item = InventoryItem.objects.get(location=location, product=product)
-                cost_price = item.avg_cost
-            except InventoryItem.DoesNotExist:
-                cost_price = product.current_avg_cost
+                manual_price=manual_cost_price,
+                batch_number=batch_number,
+                movement_type='OUT'
+            )
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -141,6 +130,7 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=quantity,
                 cost_price=cost_price,
+                batch_number=batch_number,  # ← ДОБАВЯМЕ
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
                 movement_date=movement_date,
@@ -150,7 +140,13 @@ class MovementService:
 
             movements.append(movement)
 
+            # Update product
+            MovementService._update_product_moving_average(
+                product, quantity, cost_price, movement_type='OUT'
+            )
+
         return movements
+
 
     @staticmethod
     @transaction.atomic
@@ -255,32 +251,53 @@ class MovementService:
         return movement
 
     @staticmethod
-    def _update_product_moving_average(product, new_qty: Decimal, new_cost: Decimal):
+    def _update_product_moving_average(product, new_qty: Decimal, new_cost: Decimal, movement_type: str = 'IN'):
         """
-        Update product's moving average cost
+        Update product's moving average cost - FIXED за правилни quantities
         """
         old_qty = product.current_stock_qty
         old_cost = product.current_avg_cost
         old_total_value = old_qty * old_cost
 
-        new_total_value = new_qty * new_cost
-        new_total_qty = old_qty + new_qty
+        # =====================
+        # ФИКС: Правилно обработваме IN vs OUT movements
+        # =====================
+        if movement_type == 'IN':
+            # За входящи движения - ДОБАВЯМЕ
+            new_total_qty = old_qty + new_qty
+            new_total_value = old_total_value + (new_qty * new_cost)
 
-        if new_total_qty > 0:
-            new_avg_cost = (old_total_value + new_total_value) / new_total_qty
-        else:
-            new_avg_cost = new_cost
+            # Пресмятаме новата средна цена
+            if new_total_qty > 0:
+                new_avg_cost = new_total_value / new_total_qty
+            else:
+                new_avg_cost = new_cost
 
-        # Update product fields
+            # Обновяваме purchase fields
+            product.last_purchase_cost = new_cost
+            product.last_purchase_date = timezone.now().date()
+
+            update_fields = [
+                'current_avg_cost', 'current_stock_qty',
+                'last_purchase_cost', 'last_purchase_date'
+            ]
+
+        else:  # movement_type == 'OUT'
+            # За изходящи движения - ИЗВАЖДАМЕ
+            new_total_qty = old_qty - new_qty  # ← КЛЮЧОВАТА ПРОМЯНА!
+
+            # За OUT movements не променяме avg_cost
+            new_avg_cost = product.current_avg_cost
+
+            update_fields = ['current_stock_qty']
+
+        # Обновяваме Product
         product.current_avg_cost = new_avg_cost
         product.current_stock_qty = new_total_qty
-        product.last_purchase_cost = new_cost
-        product.last_purchase_date = timezone.now().date()
 
-        product.save(update_fields=[
-            'current_avg_cost', 'current_stock_qty',
-            'last_purchase_cost', 'last_purchase_date'
-        ])
+        product.save(update_fields=update_fields)
+
+        print(f"🔄 Updated Product {product.code}: {old_qty} → {new_total_qty} ({movement_type})")
 
     @staticmethod
     def get_movement_history(
@@ -496,9 +513,7 @@ class MovementService:
     @staticmethod
     def _create_from_delivery(delivery) -> List[InventoryMovement]:
         """
-        Създава IN движения от доставка
-
-        За всеки ред от доставката създава входящо движение
+        Създава движения от доставка - FIXED за multiple lines
         """
         movements = []
 
@@ -507,37 +522,112 @@ class MovementService:
             logger.error(f"Delivery {delivery.document_number} has no lines")
             return movements
 
-        # За всеки ред от доставката
+        # Получаваме direction от DocumentType
+        direction = getattr(delivery.document_type, 'inventory_direction', 'in')
+
+        # =====================
+        # ФИКС: ОБРАБОТВАМЕ ВСЕКИ РЕД ОТДЕЛНО!
+        # =====================
         for line in delivery.lines.all():
             # Пропускаме редове без количество
-            if not line.received_quantity or line.received_quantity <= 0:
+            if not line.received_quantity:
                 continue
+
+            print(f"🔄 Processing line {line.line_number}: {line.product.code} qty={line.received_quantity}")
 
             try:
-                movement = MovementService.create_incoming_movement(
-                    location=delivery.location,
-                    product=line.product,
-                    quantity=line.received_quantity,
-                    cost_price=line.unit_price or Decimal('0.00'),
-                    source_document_type='PURCHASE',
-                    source_document_number=delivery.document_number,
-                    movement_date=delivery.delivery_date or timezone.now().date(),
-                    batch_number=getattr(line, 'batch_number', None),
-                    expiry_date=getattr(line, 'expiry_date', None),
-                    reason=f"Delivery receipt {delivery.document_number}",
-                    created_by=delivery.updated_by or delivery.created_by
+                # =====================
+                # ЛОГИКА за both direction
+                # =====================
+                if direction == 'both':
+                    # За both direction: positive = IN, negative = OUT
+                    if line.received_quantity > 0:
+                        # Positive количество = получаваме стока
+                        movement = MovementService.create_incoming_movement(
+                            location=delivery.location,
+                            product=line.product,
+                            quantity=abs(line.received_quantity),  # Винаги positive
+                            cost_price=line.unit_price or Decimal('0.00'),
+                            source_document_type='PURCHASE',
+                            source_document_number=delivery.document_number,
+                            movement_date=delivery.document_date,
+                            batch_number=line.batch_number,
+                            expiry_date=line.expiry_date,
+                            reason=f"Delivery receipt - incoming (line {line.line_number})",
+                            created_by=delivery.updated_by or delivery.created_by
+                        )
+                        movements.append(movement)
+                        print(f"✅ Created IN movement: +{movement.quantity}")
+
+                    elif line.received_quantity < 0:
+                        # Negative количество = връщаме стока
+                        movements_out = MovementService.create_outgoing_movement(
+                            location=delivery.location,
+                            product=line.product,
+                            quantity=abs(line.received_quantity),  # Винаги positive
+                            source_document_type='PURCHASE',
+                            source_document_number=delivery.document_number,
+                            movement_date=delivery.document_date,
+                            reason=f"Delivery receipt - return/correction (line {line.line_number})",
+                            created_by=delivery.updated_by or delivery.created_by,
+                            allow_negative_stock=True
+                        )
+                        # create_outgoing_movement връща списък
+                        movements.extend(movements_out)
+                        print(f"✅ Created OUT movement(s): {[m.quantity for m in movements_out]}")
+
+                else:
+                    # =====================
+                    # ЛОГИКА за in/out direction
+                    # =====================
+                    if direction == 'in':
+                        # За IN direction - винаги incoming movement
+                        movement = MovementService.create_incoming_movement(
+                            location=delivery.location,
+                            product=line.product,
+                            quantity=abs(line.received_quantity),  # ФИКС: abs()
+                            cost_price=line.unit_price or Decimal('0.00'),
+                            source_document_type='PURCHASE',
+                            source_document_number=delivery.document_number,
+                            movement_date=delivery.document_date,
+                            batch_number=line.batch_number,
+                            expiry_date=line.expiry_date,
+                            reason=f"Delivery receipt (line {line.line_number})",
+                            created_by=delivery.updated_by or delivery.created_by
+                        )
+                        movements.append(movement)
+
+                    elif direction == 'out':
+                        # За OUT direction - винаги outgoing movement
+                        movements_out = MovementService.create_outgoing_movement(
+                            location=delivery.location,
+                            product=line.product,
+                            quantity=abs(line.received_quantity),  # ФИКС: abs()
+                            source_document_type='PURCHASE',
+                            source_document_number=delivery.document_number,
+                            movement_date=delivery.document_date,
+                            reason=f"Delivery dispatch (line {line.line_number})",
+                            created_by=delivery.updated_by or delivery.created_by
+                        )
+                        movements.extend(movements_out)
+
+                logger.debug(
+                    f"Processed line {line.line_number}: {line.product.code} "
+                    f"qty={line.received_quantity} → {len(movements)} total movements"
                 )
-                movements.append(movement)
 
             except Exception as e:
-                logger.error(
-                    f"Error creating movement for line {line.line_number} "
-                    f"of delivery {delivery.document_number}: {e}"
-                )
-                # Продължаваме с другите редове
+                logger.error(f"Error creating movement for delivery line {line.line_number}: {e}")
                 continue
 
+        print(f"🎯 Total movements created for {delivery.document_number}: {len(movements)}")
         return movements
+
+    # =====================
+    # DEBUG HELPER FUNCTION
+    # =====================
+
+
 
     @staticmethod
     def _create_from_purchase_order(order) -> List[InventoryMovement]:
@@ -611,3 +701,61 @@ class MovementService:
         # TODO: Implement when adjustment module is added
         logger.warning("Stock adjustment inventory integration not yet implemented")
         return []
+
+    @staticmethod
+    def _get_smart_cost_price(
+            location: InventoryLocation,
+            product,
+            manual_price: Decimal = None,
+            batch_number: str = None,
+            movement_type: str = 'OUT'
+    ) -> Decimal:
+        """
+        Интелигентно определяне на cost_price според приоритети:
+        1. Ръчно въведена цена (от оператора)
+        2. Batch цена (ако има batch_number)
+        3. Последна покупна цена (last_purchase_cost)
+        4. Средна цена (avg_cost)
+        """
+
+        # ПРИОРИТЕТ 1: Ръчно въведена цена
+        if manual_price is not None and manual_price > 0:
+            print(f"💰 Using MANUAL price: {manual_price}")
+            return manual_price
+
+        # ПРИОРИТЕТ 2: Batch цена
+        if batch_number and product.track_batches:
+            try:
+                from ..models import InventoryBatch
+                batch = InventoryBatch.objects.filter(
+                    location=location,
+                    product=product,
+                    batch_number=batch_number,
+                    remaining_qty__gt=0
+                ).first()
+
+                if batch and batch.cost_price:
+                    print(f"📦 Using BATCH price: {batch.cost_price} (batch: {batch_number})")
+                    return batch.cost_price
+            except Exception as e:
+                print(f"⚠️ Batch price lookup failed: {e}")
+
+        # ПРИОРИТЕТ 3: Последна покупна цена
+        if hasattr(product, 'last_purchase_cost') and product.last_purchase_cost:
+            print(f"🛒 Using LAST PURCHASE price: {product.last_purchase_cost}")
+            return product.last_purchase_cost
+
+        # ПРИОРИТЕТ 4: Средна цена от InventoryItem
+        try:
+            from ..models import InventoryItem
+            item = InventoryItem.objects.get(location=location, product=product)
+            if item.avg_cost > 0:
+                print(f"📊 Using AVERAGE price: {item.avg_cost}")
+                return item.avg_cost
+        except InventoryItem.DoesNotExist:
+            pass
+
+        # FALLBACK: Product средна цена
+        fallback_price = product.current_avg_cost or Decimal('0.00')
+        print(f"🆘 Using FALLBACK price: {fallback_price}")
+        return fallback_price

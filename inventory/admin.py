@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.urls import reverse
-from django.utils.safestring import mark_safe
+from django.utils.safestring import mark_safe, SafeString
 from django.db.models import Count, Sum, Q, F
 
 from .models import InventoryLocation, InventoryItem, InventoryMovement, InventoryBatch
@@ -158,7 +158,7 @@ class InventoryLocationAdmin(admin.ModelAdmin):
             return format_html(
                 '<strong>{}</strong> products<br>'
                 '<span style="color: green;">{:.2f} лв</span> value',
-                total_products, total_value
+                total_products, float(total_value)  # ← ДОБАВИ float()
             )
         except:
             return '-'
@@ -294,23 +294,25 @@ class InventoryItemAdmin(admin.ModelAdmin):
 
     def current_qty_display(self, obj):
         """Current quantity with color coding"""
-        qty = obj.current_qty
-        color = 'green' if qty > obj.min_stock_level else 'orange' if qty > 0 else 'red'
+        try:
+            qty = float(obj.current_qty or 0)
+            min_qty = float(obj.min_stock_level or 0)
+            color = 'green' if qty > min_qty else 'orange' if qty > 0 else 'red'
 
-        return format_html(
-            '<strong style="color: {};">{:.3f}</strong>',
-            color, qty
-        )
+            return format_html(
+                '<strong style="color: {};">{:.3f}</strong>',
+                color, qty
+            )
+        except (TypeError, ValueError) as e:
+            return format_html('<span style="color: red;">ERR</span>')
 
     current_qty_display.short_description = _('Current Qty')
 
     def avg_cost_display(self, obj):
-        return format_html(
-            '<span style="color: blue;">{:.4f} лв</span>',
-            obj.avg_cost
-        )
+        return obj.avg_cost
 
-    avg_cost_display.short_description = _('Avg Cost')
+    avg_cost_display.short_description = "Средна цена"
+    avg_cost_display.admin_order_field = "avg_cost"
 
     def stock_status(self, obj):
         """Stock status indicator"""
