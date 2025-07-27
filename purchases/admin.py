@@ -538,7 +538,7 @@ class PurchaseOrderAdmin(DynamicPurchaseRequestAdmin):
 class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
     list_display = [
         'document_number', 'supplier', 'delivery_date', 'status_display',
-        'lines_count', 'total_display', 'quality_status', 'received_by'  # ✅ FIXED: total_display
+        'lines_count', 'total_display', 'quality_status', 'inventory_status', 'received_by'
     ]
 
     list_filter = [
@@ -551,15 +551,21 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
     ]
 
     readonly_fields = [
-        'document_number', 'document_type', 'status',
-        'subtotal', 'discount_total', 'vat_total', 'total',  # ✅ FIXED: total
+        'document_number', 'document_type', 'status',  # ✅ STATUS Е READONLY!
+        'subtotal', 'discount_total', 'vat_total', 'total',
         'received_at', 'processed_at',
-        'created_at', 'updated_at', 'created_by', 'updated_by'
+        'created_at', 'updated_at', 'created_by', 'updated_by',
+        'inventory_movements_display', 'workflow_status_display'  # НОВИ
     ]
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('supplier', 'location', 'status', 'prices_entered_with_vat')  # ✅ ADDED VAT control
+            'fields': ('supplier', 'location', 'prices_entered_with_vat')
+            # ✅ БЕЗ STATUS тук - той е readonly
+        }),
+        ('Document Status', {  # ✅ НОВА СЕКЦИЯ за статус
+            'fields': ('status', 'workflow_status_display'),
+            'description': 'Status се контролира автоматично от системата'
         }),
         ('Delivery Details', {
             'fields': (
@@ -573,16 +579,12 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
                 'quality_notes'
             )
         }),
-        ('Variances', {
-            'fields': ('has_variances',),
+        ('Inventory Movements', {
+            'fields': ('inventory_movements_display',),
             'classes': ('collapse',)
         }),
         ('Financial Summary', {
-            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),  # ✅ FIXED: total
-            'classes': ('collapse',)
-        }),
-        ('Payment Information', {
-            'fields': ('is_paid', 'payment_date', 'payment_method'),
+            'fields': ('subtotal', 'discount_total', 'vat_total', 'total'),
             'classes': ('collapse',)
         }),
         ('System Info', {
@@ -596,32 +598,59 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
 
     inlines = [DeliveryLineInline]
 
-    def status_display(self, obj):
-        # ✅ FIXED: Safe status display
-        try:
-            status_value = obj.status
-            status_label = obj.get_status_display() if hasattr(obj, 'get_status_display') else status_value.title()
-        except:
-            status_value = 'unknown'
-            status_label = 'Unknown'
+    # ЧИСТИ ACTIONS
+    actions = [
+        'complete_delivery_workflow',
+        'show_inventory_preview',
+        'mark_quality_checked'
+    ]
 
+    # =====================
+    # DISPLAY МЕТОДИ
+    # =====================
+
+    def status_display(self, obj):
+        """Красив display на статуса"""
         colors = {
             'draft': '#757575',
-            'delivered': '#FF9800',
-            'received': '#2196F3',
-            'processed': '#9C27B0',
             'completed': '#4CAF50',
-            'unknown': '#9E9E9E'
+            'cancelled': '#F44336',
         }
-        color = colors.get(status_value, '#757575')
+        color = colors.get(obj.status, '#757575')
 
         return format_html(
             '<span style="background-color: {}; color: white; padding: 3px 8px; '
             'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, status_label
+            color, obj.status.title()
         )
 
     status_display.short_description = 'Status'
+
+    def workflow_status_display(self, obj):
+        """Показва workflow информация"""
+        if not obj.document_type:
+            return format_html('<span style="color: red;">❌ No DocumentType</span>')
+
+        next_statuses = obj.get_next_statuses()
+        auto_confirm = obj.document_type.auto_confirm
+
+        html = f'<div style="font-family: monospace; font-size: 12px;">'
+        html += f'<div><strong>Current:</strong> {obj.status}</div>'
+
+        if auto_confirm:
+            html += f'<div><strong>Auto-confirm:</strong> <span style="color: green;">✅ Enabled</span></div>'
+        else:
+            html += f'<div><strong>Auto-confirm:</strong> <span style="color: orange;">⚠️ Disabled</span></div>'
+
+        if next_statuses:
+            html += f'<div><strong>Next possible:</strong> {", ".join(next_statuses)}</div>'
+        else:
+            html += f'<div><strong>Next possible:</strong> <span style="color: red;">None (final status)</span></div>'
+
+        html += '</div>'
+        return format_html(html)
+
+    workflow_status_display.short_description = 'Workflow Info'
 
     def lines_count(self, obj):
         return format_html('<strong>{}</strong>', obj.lines.count())
@@ -629,8 +658,7 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
     lines_count.short_description = 'Lines'
 
     def total_display(self, obj):
-        # ✅ FIXED: Use total instead of grand_total
-        return float(obj.total)
+        return f"{float(obj.total):.2f} лв"
 
     total_display.short_description = 'Total'
 
@@ -643,6 +671,175 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
             return format_html('<span style="color: orange;">⏳ Pending</span>')
 
     quality_status.short_description = 'Quality'
+
+    def inventory_status(self, obj):
+        """Показва дали има създадени inventory движения"""
+        from inventory.models import InventoryMovement
+
+        count = InventoryMovement.objects.filter(
+            source_document_number=obj.document_number
+        ).count()
+
+        if count > 0:
+            return format_html('<span style="color: green;">🏭 {} movements</span>', count)
+        else:
+            return format_html('<span style="color: orange;">⚠️ No movements</span>')
+
+    inventory_status.short_description = 'Inventory'
+
+    def inventory_movements_display(self, obj):
+        """Показва детайли за създадените inventory движения"""
+        from inventory.models import InventoryMovement
+
+        movements = InventoryMovement.objects.filter(
+            source_document_number=obj.document_number
+        ).order_by('-created_at')
+
+        if not movements.exists():
+            return format_html('<span style="color: orange;">Няма създадени движения</span>')
+
+        html_parts = ['<div style="font-family: monospace; font-size: 12px;">']
+        for movement in movements:
+            icon = "📈" if movement.movement_type == "IN" else "📉"
+            html_parts.append(
+                f'<div>{icon} {movement.movement_type}: '
+                f'{movement.product.code} x {movement.quantity} '
+                f'({movement.created_at.strftime("%H:%M")})</div>'
+            )
+        html_parts.append('</div>')
+        return format_html(''.join(html_parts))
+
+    inventory_movements_display.short_description = 'Inventory Movements'
+
+    # =====================
+    # ADMIN ACTIONS
+    # =====================
+
+    @admin.action(description='🔄 Complete delivery workflow (Auto-confirm)')
+    def complete_delivery_workflow(self, request, queryset):
+        """
+        ЕДИНСТВЕН ACTION за завършване на доставка
+
+        Извиква само DeliveryService._check_auto_confirm()
+        """
+        from purchases.services.delivery_service import DeliveryService
+
+        success_count = 0
+
+        for delivery in queryset:
+            try:
+                if delivery.status != 'draft':
+                    self.message_user(
+                        request,
+                        f'⚠️ {delivery.document_number}: Статус "{delivery.status}" - очаква се "draft"',
+                        level='WARNING'
+                    )
+                    continue
+
+                if not delivery.lines.exists():
+                    self.message_user(
+                        request,
+                        f'⚠️ {delivery.document_number}: Няма редове',
+                        level='WARNING'
+                    )
+                    continue
+
+                # ИЗВИКВАМЕ САМО DeliveryService._check_auto_confirm
+                DeliveryService._check_auto_confirm(delivery, request.user)
+
+                # Refresh обекта от базата да видим промените
+                delivery.refresh_from_db()
+
+                success_count += 1
+                self.message_user(
+                    request,
+                    f'✅ {delivery.document_number}: Обработен (статус: {delivery.status})'
+                )
+
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f'❌ {delivery.document_number}: {str(e)}',
+                    level='ERROR'
+                )
+
+        if success_count > 0:
+            self.message_user(
+                request,
+                f'🎯 Успешно обработени: {success_count} доставки'
+            )
+
+    @admin.action(description='📊 Preview inventory impact')
+    def show_inventory_preview(self, request, queryset):
+        """Preview на inventory движенията"""
+        for delivery in queryset:
+            if not delivery.document_type or not delivery.document_type.affects_inventory:
+                self.message_user(
+                    request,
+                    f'ℹ️ {delivery.document_number}: Не влияе на inventory',
+                    level='INFO'
+                )
+                continue
+
+            preview_details = []
+            for line in delivery.lines.all():
+                if hasattr(line, 'received_quantity') and line.received_quantity:
+                    direction = "увеличава" if line.received_quantity > 0 else "намалява"
+                    preview_details.append(
+                        f"{line.product.code}: {direction} {abs(line.received_quantity)}"
+                    )
+
+            if preview_details:
+                self.message_user(
+                    request,
+                    f'🔍 {delivery.document_number} ще създаде: {", ".join(preview_details)}',
+                    level='INFO'
+                )
+
+    @admin.action(description='✅ Mark quality checked')
+    def mark_quality_checked(self, request, queryset):
+        count = queryset.update(
+            quality_checked=True,
+            quality_inspector=request.user
+        )
+        self.message_user(request, f'✅ Quality checked {count} deliveries.')
+
+    # =====================
+    # OVERRIDE save_model за auto-confirm при добавяне на редове
+    # =====================
+
+    def save_formset(self, request, form, formset, change):
+        """
+        Override за автоматично извикване на auto-confirm при добавяне на редове
+
+        Този метод се извиква когато се записват inline формите (редовете)
+        """
+        # Първо записваме формите
+        super().save_formset(request, form, formset, change)
+
+        # След това проверяваме за auto-confirm
+        if formset.model == DeliveryLine and hasattr(form, 'instance'):
+            delivery = form.instance
+
+            try:
+                from purchases.services.delivery_service import DeliveryService
+                DeliveryService._check_auto_confirm(delivery, request.user)
+
+                # Refresh delivery за да видим промените
+                delivery.refresh_from_db()
+
+                if delivery.status != 'draft':
+                    self.message_user(
+                        request,
+                        f'🔄 Автоматично: {delivery.document_number} → статус {delivery.status}'
+                    )
+
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f'⚠️ Auto-confirm проблем: {str(e)}',
+                    level='WARNING'
+                )
 
 
 # =================================================================
