@@ -808,38 +808,64 @@ class DeliveryReceiptAdmin(DynamicPurchaseRequestAdmin):
     # OVERRIDE save_model за auto-confirm при добавяне на редове
     # =====================
 
+    # В DeliveryReceiptAdmin - ЗАМЕНИ save_formset метода:
+
+    # АЛТЕРНАТИВА - по-проста версия без броене на нови редове:
+
     def save_formset(self, request, form, formset, change):
         """
-        Override за автоматично извикване на auto-confirm при добавяне на редове
+        Enhanced save_formset with clearer immediate vs workflow processing
 
-        Този метод се извиква когато се записват inline формите (редовете)
+        SIMPLIFIED: Without counting new objects
         """
-        # Първо записваме формите
+
+        # Store original status
+        original_status = form.instance.status if form.instance.pk else None
+
+        # 1. Save all formset data first
         super().save_formset(request, form, formset, change)
 
-        # След това проверяваме за auto-confirm
+        # 2. Handle timing-specific processing
         if formset.model == DeliveryLine and hasattr(form, 'instance'):
             delivery = form.instance
 
-            try:
-                from purchases.services.delivery_service import DeliveryService
-                DeliveryService._check_auto_confirm(delivery, request.user)
+            # Check document type configuration
+            if not (delivery.document_type and delivery.document_type.affects_inventory):
+                return
 
-                # Refresh delivery за да видим промените
-                delivery.refresh_from_db()
+            timing = delivery.document_type.inventory_timing
 
-                if delivery.status != 'draft':
-                    self.message_user(
-                        request,
-                        f'🔄 Автоматично: {delivery.document_number} → статус {delivery.status}'
-                    )
-
-            except Exception as e:
+            if timing == 'immediate':
+                # For immediate timing: Signal already processed new lines
                 self.message_user(
                     request,
-                    f'⚠️ Auto-confirm проблем: {str(e)}',
-                    level='WARNING'
+                    f'⚡ {delivery.document_number}: Lines processed immediately by inventory system.',
+                    level='SUCCESS'
                 )
+
+            else:
+                # For other timings: Use auto-confirm workflow
+                try:
+                    from purchases.services.delivery_service import DeliveryService
+                    DeliveryService._check_auto_confirm(delivery, request.user)
+
+                    # Refresh to see any status changes
+                    delivery.refresh_from_db()
+
+                    # Show appropriate message based on status change
+                    if original_status != delivery.status:
+                        self.message_user(
+                            request,
+                            f'🔄 {delivery.document_number}: Status changed {original_status} → {delivery.status}',
+                            level='SUCCESS'
+                        )
+
+                except Exception as e:
+                    self.message_user(
+                        request,
+                        f'⚠️ Auto-confirm error for {delivery.document_number}: {str(e)}',
+                        level='WARNING'
+                    )
 
 
 # =================================================================

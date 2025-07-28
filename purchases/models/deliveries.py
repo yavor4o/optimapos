@@ -488,26 +488,46 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         """Delivery line specific validation"""
         super().clean()
 
-        # Set quantity from received_quantity for base validation
-        if self.received_quantity and not self.received_quantity:
-            self.quantity = self.received_quantity
-
-        # НОВ КОД (правилен):
+        # =====================
+        # INVENTORY DIRECTION VALIDATION
+        # =====================
         if self.document and self.document.document_type:
             direction = self.document.document_type.inventory_direction
 
-            if direction == 'both':
-                # За "both" direction позволяваме negative values
-                if self.received_quantity == 0:
-                    raise ValidationError({
-                        'received_quantity': _('Received quantity cannot be zero')
-                    })
-            else:
-                # За "in"/"out" direction винаги positive
+            if direction == 'in':
+                # За "in" direction - САМО positive количества
                 if self.received_quantity <= 0:
                     raise ValidationError({
-                        'received_quantity': _('Received quantity must be greater than zero')
+                        'received_quantity': _(
+                            'For incoming documents, received quantity must be greater than zero. '
+                            'Negative quantities are not allowed.'
+                        )
                     })
+
+            elif direction == 'out':
+                # За "out" direction - САМО positive количества
+                if self.received_quantity <= 0:
+                    raise ValidationError({
+                        'received_quantity': _(
+                            'For outgoing documents, received quantity must be greater than zero. '
+                            'Negative quantities are not allowed.'
+                        )
+                    })
+
+            elif direction == 'both':
+                # За "both" direction - позволяваме negative values за корекции
+                if self.received_quantity == 0:
+                    raise ValidationError({
+                        'received_quantity': _(
+                            'Received quantity cannot be zero. '
+                            'Use positive values for incoming stock, negative for returns/corrections.'
+                        )
+                    })
+                # ✅ За 'both' направление negative values са разрешени!
+
+        # =====================
+        # BUSINESS LOGIC VALIDATION
+        # =====================
 
         # Quality issue validation
         if not self.quality_approved and not self.quality_issue_type:
@@ -532,7 +552,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
             if self.unit not in valid_units:
                 unit_names = [u.name for u in valid_units]
                 raise ValidationError({
-                    'unit': f'Invalid unit. Valid units: {", ".join(unit_names)}'
+                    'unit': f'Invalid unit. Valid options: {", ".join(unit_names)}'
                 })
 
     def save(self, *args, **kwargs):

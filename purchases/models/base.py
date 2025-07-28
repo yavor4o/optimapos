@@ -1077,17 +1077,37 @@ class FinancialLineMixin(models.Model):
 
     def _process_entered_price(self):
         """
-        Convert entered_price to unit_price - SIMPLIFIED using SmartVATService
-        """
-        if not self.entered_price or not hasattr(self, 'document'):
-            return
+        Process entered price → unit price (VAT-aware)
 
+        FIXED: Handle zero entered_price with smart fallback logic
+        """
         try:
-            # Delegate to SmartVATService - no duplication!
             from purchases.services.vat_service import SmartVATService
 
+            # =====================
+            # SMART FALLBACK for zero entered_price
+            # =====================
+            effective_entered_price = self.entered_price
+
+            if not self.entered_price or self.entered_price == 0:
+                # Try to get fallback price using smart logic
+                fallback_price = self._get_fallback_price()
+
+                if fallback_price and fallback_price > 0:
+                    effective_entered_price = fallback_price
+                    # Optional: Log that we used fallback
+                    print(f"💡 Using fallback price {fallback_price} for {self.product.code}")
+                else:
+                    # No fallback available - set minimal values and return
+                    self.unit_price = Decimal('0.00')
+                    self.vat_rate = self._get_default_vat_rate()
+                    return
+
+            # =====================
+            # NORMAL VAT PROCESSING
+            # =====================
             result = SmartVATService.calculate_line_vat(
-                self, self.entered_price, self.document
+                self, effective_entered_price, self.document
             )
 
             # Apply results
@@ -1095,10 +1115,74 @@ class FinancialLineMixin(models.Model):
             self.vat_rate = result['vat_rate']
             # Note: vat_amount and gross_amount calculated in calculate_totals()
 
+            # Update entered_price if we used fallback
+            if effective_entered_price != self.entered_price:
+                self.entered_price = effective_entered_price
+
         except ImportError:
             # Fallback if SmartVATService not available
-            self.unit_price = self.entered_price
-            self.vat_rate = Decimal('0.00')
+            if self.entered_price:
+                self.unit_price = self.entered_price
+            else:
+                self.unit_price = self._get_fallback_price() or Decimal('0.00')
+            self.vat_rate = self._get_default_vat_rate()
+
+    def _get_fallback_price(self) -> Decimal:
+        """
+        Get fallback price when entered_price is zero
+
+        IMPORTANT: Adjusts for VAT entry mode using existing system methods!
+        """
+        if not self.product:
+            return Decimal('0.00')
+
+        # Get base price (always excluding VAT from database)
+        base_price_excl_vat = None
+
+        # PRIORITY 1: Last purchase cost
+        if hasattr(self.product, 'last_purchase_cost') and self.product.last_purchase_cost:
+            base_price_excl_vat = self.product.last_purchase_cost
+
+        # PRIORITY 2: Current average cost
+        elif hasattr(self.product, 'current_avg_cost') and self.product.current_avg_cost:
+            base_price_excl_vat = self.product.current_avg_cost
+
+        # PRIORITY 3: Source order line price (for delivery lines)
+        elif hasattr(self, 'source_order_line') and self.source_order_line:
+            if hasattr(self.source_order_line, 'unit_price') and self.source_order_line.unit_price:
+                base_price_excl_vat = self.source_order_line.unit_price
+
+        # PRIORITY 4: Try product's get_estimated_purchase_price if available
+        elif hasattr(self.product, 'get_estimated_purchase_price'):
+            try:
+                estimated = self.product.get_estimated_purchase_price(self.unit)
+                if estimated and estimated > 0:
+                    base_price_excl_vat = estimated
+            except:
+                pass
+
+        if not base_price_excl_vat or base_price_excl_vat <= 0:
+            return Decimal('0.00')
+
+        # =====================
+        # ADJUST FOR VAT ENTRY MODE using existing system
+        # =====================
+        prices_entered_with_vat = self.document.get_price_entry_mode()
+
+        if prices_entered_with_vat:
+            # User enters prices INCLUDING VAT, so convert database price (excl VAT) → incl VAT
+            from purchases.services.vat_service import SmartVATService
+            vat_rate = SmartVATService._get_product_vat_rate(self)
+            fallback_price_incl_vat = base_price_excl_vat * (1 + vat_rate / 100)
+            return fallback_price_incl_vat
+        else:
+            # User enters prices EXCLUDING VAT, so use database price directly
+            return base_price_excl_vat
+
+    def _get_default_vat_rate(self) -> Decimal:
+        """Get default VAT rate using existing system method"""
+        from purchases.services.vat_service import SmartVATService
+        return SmartVATService._get_product_vat_rate(self)
 
     def calculate_totals(self):
         """

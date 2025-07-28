@@ -115,8 +115,16 @@ def update_order_totals_on_line_save(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender=DeliveryLine)
-def update_delivery_totals_on_line_save(sender, instance, **kwargs):
-    """ЗАПАЗВАМЕ - Recalculate totals when line is saved"""
+def handle_delivery_line_processing(sender, instance, created, **kwargs):
+    """
+    Enhanced DeliveryLine processing with immediate inventory support
+
+    Handles:
+    1. Document totals recalculation (existing functionality)
+    2. Immediate inventory movements (NEW for immediate timing)
+    """
+
+    # 1. EXISTING: Recalculate document totals
     if instance.document_id:
         try:
             instance.document.recalculate_totals()
@@ -124,6 +132,63 @@ def update_delivery_totals_on_line_save(sender, instance, **kwargs):
         except Exception as e:
             logger.error(f"❌ Error recalculating delivery totals: {e}")
 
+    # 2. NEW: Handle immediate inventory movements for new lines
+    if created:  # Only for newly created lines
+        try:
+            _handle_immediate_inventory_for_line(instance)
+        except Exception as e:
+            logger.error(f"❌ Error processing immediate inventory for line {instance.pk}: {e}")
+            # Don't re-raise - inventory errors shouldn't break line creation
+
+
+def _should_process_immediate_inventory(line) -> bool:
+    """Check if immediate inventory processing should be performed"""
+    if not (line.document and line.document.document_type):
+        return False
+    if not line.document.document_type.affects_inventory:
+        return False
+    if not line.received_quantity:
+        return False
+    if line.document.document_type.inventory_timing == 'immediate':
+        return True
+    return False
+
+
+def _handle_immediate_inventory_for_line(line):
+    """Handle immediate inventory processing for a delivery line"""
+    if not _should_process_immediate_inventory(line):
+        return
+
+    from inventory.services.movement_service import MovementService
+    from django.utils import timezone
+    from decimal import Decimal
+
+    logger.info(
+        f"🔄 Processing immediate inventory for line {line.line_number}: {line.product.code} qty={line.received_quantity}")
+
+    direction = line.document.document_type.inventory_direction
+
+    try:
+        if direction == 'in':
+            movement = MovementService.create_incoming_movement(
+                location=line.document.location,
+                product=line.product,
+                quantity=abs(line.received_quantity),
+                cost_price=line.unit_price or Decimal('0.00'),
+                source_document_type='PURCHASE',
+                source_document_number=line.document.document_number,
+                movement_date=getattr(line.document, 'delivery_date', None) or timezone.now().date(),
+                batch_number=line.batch_number,
+                expiry_date=line.expiry_date,
+                reason=f"Immediate processing - line {line.line_number}",
+                created_by=getattr(line.document, 'updated_by', None)
+            )
+            logger.info(f"✅ Created immediate IN movement for line {line.line_number}: +{movement.quantity}")
+
+        # Add other directions (both, out) if needed
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create immediate inventory movement for line {line.line_number}: {e}")
 
 # =================================================================
 # CLEANUP SIGNALS - ЗАПАЗВАМЕ
@@ -246,48 +311,3 @@ def _log_document_action(document, action, extra_data=None):
         logger.error(f"❌ Error logging document action: {e}")
 
 
-# =================================================================
-# ПРЕМАХНАТИ SIGNALS - СЕГА СА В WorkflowService
-# =================================================================
-
-# ПРЕМАХНАТО: handle_request_status_changes - business logic
-# ПРЕМАХНАТО: _handle_request_approved - business logic
-# ПРЕМАХНАТО: _handle_request_converted - business logic
-# ПРЕМАХНАТО: _handle_order_sent - business logic
-# ПРЕМАХНАТО: _handle_order_confirmed - business logic
-# ПРЕМАХНАТО: _handle_delivery_completed - business logic
-# ПРЕМАХНАТО: handle_delivery_source_orders_changed - business logic
-# ПРЕМАХНАТО: MovementService calls - сега в WorkflowService
-# ПРЕМАХНАТО: Workflow transitions - сега в WorkflowService
-# ПРЕМАХНАТО: Auto-conversions - сега в WorkflowService
-
-# ВСЯ BUSINESS LOGIC Е ПРЕМЕСТЕНА В WorkflowService!
-
-
-# =================================================================
-# DEPRECATED COMMENT - INFORMATION ABOUT MIGRATION
-# =================================================================
-
-"""
-MIGRATION NOTES:
-
-Премахнати business logic signals:
-- handle_request_status_changes() → WorkflowService
-- _handle_request_approved() → WorkflowService._execute_post_transition_actions() 
-- _handle_request_converted() → WorkflowService._handle_document_conversions()
-- _handle_order_sent() → WorkflowService
-- _handle_order_confirmed() → WorkflowService
-- _handle_delivery_completed() → WorkflowService + MovementService
-
-Запазени signals:
-✅ Audit logging (post_save document signals)
-✅ Totals recalculation (post_save line signals)  
-✅ Cleanup operations (pre_delete/post_delete line signals)
-✅ Status tracking (pre_save for logging)
-
-Новото место за business logic:
-🎯 WorkflowService.transition_document()
-🎯 WorkflowService._execute_post_transition_actions()
-🎯 WorkflowService._handle_inventory_movements()
-🎯 WorkflowService._handle_document_conversions()
-"""
