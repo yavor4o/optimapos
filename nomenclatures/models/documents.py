@@ -367,29 +367,27 @@ class DocumentType(BaseNomenclature):
     # =====================
 
     def get_next_number(self) -> str:
-        """Generate next sequential document number"""
-        current_year = timezone.now().year
+        """Thread-safe number generation"""
+        from django.db import transaction
 
-        # Check if we need yearly reset
-        if (self.reset_numbering_yearly and
-                self.last_reset_year and
-                self.last_reset_year != current_year):
-            self.current_number = 0
-            self.last_reset_year = current_year
-        elif not self.last_reset_year:
-            self.last_reset_year = current_year
+        with transaction.atomic():
+            # Use select_for_update to prevent race conditions
+            doc_type = DocumentType.objects.select_for_update().get(pk=self.pk)
 
-        self.current_number += 1
-        self.save(update_fields=['current_number', 'last_reset_year'])
+            current_year = timezone.now().year
+            if (doc_type.reset_numbering_yearly and
+                    doc_type.last_reset_year != current_year):
+                doc_type.current_number = 0
+                doc_type.last_reset_year = current_year
 
-        # Format the number
-        return self.number_format.format(
-            prefix=self.number_prefix,
-            year=current_year,
-            month=timezone.now().month,
-            day=timezone.now().day,
-            number=self.current_number
-        )
+            doc_type.current_number += 1
+            doc_type.save(update_fields=['current_number', 'last_reset_year'])
+
+            return doc_type.number_format.format(
+                prefix=doc_type.number_prefix,
+                year=current_year,
+                number=doc_type.current_number
+            )
 
     def reset_numbering(self, start_from: int = 0):
         """Reset numbering sequence"""
@@ -473,13 +471,6 @@ class DocumentType(BaseNomenclature):
         """Check if document needs approval based on amount"""
         if not self.requires_approval:
             return False
-
-        # ПРЕМАХНИ тази логика - approval_limit не съществува:
-        # if not amount or not self.approval_limit:
-        #     return self.requires_approval
-        # return amount >= self.approval_limit
-
-        # НОВА ЛОГИКА: Винаги изисква approval ако requires_approval=True
         return True
 
     def validate_document_data(self, data: dict) -> list:
