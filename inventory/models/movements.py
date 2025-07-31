@@ -130,7 +130,7 @@ class InventoryMovement(models.Model):
         _('Source Document Type'),
         max_length=20,
         choices=[
-            ('PURCHASE', _('Purchase Order')),
+            ('PURCHASES', _('Purchase Order')),
             ('SALE', _('Sale')),
             ('TRANSFER', _('Transfer Order')),
             ('ADJUSTMENT', _('Adjustment')),

@@ -54,10 +54,16 @@ class MovementService:
             movement_date=movement_date,
             reason=reason,
             created_by=created_by
+
+
+
         )
 
-        # Update product's moving average cost
+
         MovementService._update_product_moving_average(product, quantity, cost_price, movement_type='IN')
+
+
+
 
         return movement
 

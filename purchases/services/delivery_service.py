@@ -6,6 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
+from inventory.models import InventoryMovement
+from inventory.services import MovementService
 from purchases.models.deliveries import DeliveryReceipt, DeliveryLine
 from purchases.models.orders import PurchaseOrder
 
@@ -662,3 +664,93 @@ class DeliveryService:
         except Exception as e:
             results['errors'].append(f"Document level error: {str(e)}")
             return results
+
+    @staticmethod
+    def process_immediate_inventory(delivery, user=None):
+        """
+        Автоматично създава инвентарни движения при статус "immediate",
+        според посоката, дефинирана в DocumentType:
+        - 'in' → IN движения
+        - 'out' → OUT движения
+        - 'adjustment' → по ред: qty > 0 → IN, qty < 0 → OUT
+        """
+        doc_type = delivery.document_type
+
+        # === Валидации ===
+        if not doc_type or not doc_type.affects_inventory:
+            return
+        if doc_type.inventory_timing != 'immediate':
+            return
+
+        # === Изтрий стари движения ===
+        InventoryMovement.objects.filter(
+            source_document_type=doc_type.app_name.upper(),
+            source_document_number=delivery.document_number
+        ).delete()
+
+        movement_type = doc_type.get_inventory_movement_type()
+
+        for line in delivery.lines.all():
+            qty = line.received_quantity or Decimal('0')
+            product = line.product
+
+            if not product or qty == 0:
+                continue
+
+            if movement_type == 'IN' and qty > 0:
+                movement = MovementService.create_incoming_movement(
+                    location=delivery.location,
+                    product=product,
+                    quantity=qty,
+                    cost_price=line.unit_price or Decimal('0'),
+                    source_document_type=doc_type.app_name.upper(),
+                    source_document_number=delivery.document_number,
+                    movement_date=delivery.delivery_date,
+                    reason="Auto IN from process_immediate_inventory",
+                    created_by=user
+                )
+
+
+
+            elif movement_type == 'OUT' and qty > 0:
+                movements = MovementService.create_outgoing_movement(
+                    location=delivery.location,
+                    product=product,
+                    quantity=qty,
+                    source_document_type=doc_type.app_name.upper(),
+                    source_document_number=delivery.document_number,
+                    movement_date=delivery.delivery_date,
+                    reason="Auto OUT from process_immediate_inventory",
+                    created_by=user
+                )
+
+
+            elif movement_type == 'ADJUSTMENT':
+                if qty > 0:
+                    movement = MovementService.create_incoming_movement(
+                        location=delivery.location,
+                        product=product,
+                        quantity=qty,
+                        cost_price=line.unit_price or Decimal('0'),
+                        source_document_type=doc_type.app_name.upper(),
+                        source_document_number=delivery.document_number,
+                        movement_date=delivery.delivery_date,
+                        reason="Adjustment IN (qty > 0)",
+                        created_by=user
+                    )
+
+
+                elif qty < 0:
+                    movements = MovementService.create_outgoing_movement(
+                        location=delivery.location,
+                        product=product,
+                        quantity=abs(qty),
+                        source_document_type=doc_type.app_name.upper(),
+                        source_document_number=delivery.document_number,
+                        movement_date=delivery.delivery_date,
+                        reason="Adjustment OUT (qty < 0)",
+                        created_by=user,
+                        allow_negative_stock=True
+                    )
+
+

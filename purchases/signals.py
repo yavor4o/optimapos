@@ -154,6 +154,38 @@ def _should_process_immediate_inventory(line) -> bool:
     return False
 
 
+# В purchases/signals.py
+
+@receiver(post_save, sender=DeliveryLine)
+def handle_delivery_line_processing(sender, instance, created, **kwargs):
+    """
+    Basic processing on DeliveryLine save:
+    - Totals recalculation
+    - Logging
+    """
+
+    if instance.document_id:
+        try:
+            instance.document.recalculate_totals()
+        except Exception as e:
+            logger.error(f"❌ Error recalculating delivery totals: {e}")
+
+
+
+
+def _should_process_immediate_inventory(line) -> bool:
+    """Check if immediate inventory processing should be performed"""
+    if not (line.document and line.document.document_type):
+        return False
+    if not line.document.document_type.affects_inventory:
+        return False
+    if not line.received_quantity:
+        return False
+    if line.document.document_type.inventory_timing == 'immediate':
+        return True
+    return False
+
+
 def _handle_immediate_inventory_for_line(line):
     """Handle immediate inventory processing for a delivery line"""
     if not _should_process_immediate_inventory(line):
@@ -168,28 +200,97 @@ def _handle_immediate_inventory_for_line(line):
 
     direction = line.document.document_type.inventory_direction
 
+    # Провери и ограничи cost_price
+    cost_price = line.unit_price or Decimal('0.00')
+
+    # Ограничи до максимум 8 цифри преди десетичната запетая
+    if cost_price > Decimal('99999999.99'):
+        cost_price = Decimal('99999999.99')
+        logger.warning(f"Cost price truncated for line {line.line_number}: {line.unit_price} → {cost_price}")
+
     try:
+        # ========== IN DIRECTION ==========
         if direction == 'in':
+            if line.received_quantity <= 0:
+                logger.warning(f"Skipping IN movement - quantity {line.received_quantity} <= 0")
+                return
+
             movement = MovementService.create_incoming_movement(
                 location=line.document.location,
                 product=line.product,
                 quantity=abs(line.received_quantity),
-                cost_price=line.unit_price or Decimal('0.00'),
+                cost_price=cost_price,
                 source_document_type='PURCHASE',
                 source_document_number=line.document.document_number,
                 movement_date=getattr(line.document, 'delivery_date', None) or timezone.now().date(),
                 batch_number=line.batch_number,
                 expiry_date=line.expiry_date,
-                reason=f"Immediate processing - line {line.line_number}",
-                created_by=getattr(line.document, 'updated_by', None)
+                reason=f"Immediate IN - line {line.line_number}",
+                created_by=getattr(line.document, 'updated_by', None) or getattr(line.document, 'created_by', None)
             )
-            logger.info(f"✅ Created immediate IN movement for line {line.line_number}: +{movement.quantity}")
+            logger.info(f"✅ Created IN movement: +{movement.quantity}")
 
-        # Add other directions (both, out) if needed
+        # ========== OUT DIRECTION ==========
+        elif direction == 'out':
+            if line.received_quantity <= 0:
+                logger.warning(f"Skipping OUT movement - quantity {line.received_quantity} <= 0")
+                return
+
+            movements = MovementService.create_outgoing_movement(
+                location=line.document.location,
+                product=line.product,
+                quantity=abs(line.received_quantity),
+                source_document_type='PURCHASE',
+                source_document_number=line.document.document_number,
+                movement_date=getattr(line.document, 'delivery_date', None) or timezone.now().date(),
+                reason=f"Immediate OUT - line {line.line_number}",
+                created_by=getattr(line.document, 'updated_by', None) or getattr(line.document, 'created_by', None)
+            )
+            logger.info(f"✅ Created OUT movement(s): -{abs(line.received_quantity)}")
+
+        # ========== BOTH DIRECTION ==========
+        elif direction == 'both':
+            if line.received_quantity == 0:
+                logger.warning("Skipping BOTH movement - quantity is 0")
+                return
+
+            if line.received_quantity > 0:
+                # Positive = incoming
+                movement = MovementService.create_incoming_movement(
+                    location=line.document.location,
+                    product=line.product,
+                    quantity=abs(line.received_quantity),
+                    cost_price=cost_price,
+                    source_document_type='PURCHASE',
+                    source_document_number=line.document.document_number,
+                    movement_date=getattr(line.document, 'delivery_date', None) or timezone.now().date(),
+                    batch_number=line.batch_number,
+                    expiry_date=line.expiry_date,
+                    reason=f"Immediate IN (both) - line {line.line_number}",
+                    created_by=getattr(line.document, 'updated_by', None) or getattr(line.document, 'created_by', None)
+                )
+                logger.info(f"✅ Created IN movement (both): +{movement.quantity}")
+
+            else:  # line.received_quantity < 0
+                # Negative = outgoing/return
+                movements = MovementService.create_outgoing_movement(
+                    location=line.document.location,
+                    product=line.product,
+                    quantity=abs(line.received_quantity),
+                    source_document_type='PURCHASE',
+                    source_document_number=line.document.document_number,
+                    movement_date=getattr(line.document, 'delivery_date', None) or timezone.now().date(),
+                    reason=f"Immediate OUT (both) - line {line.line_number}",
+                    created_by=getattr(line.document, 'updated_by', None) or getattr(line.document, 'created_by', None)
+                )
+                logger.info(f"✅ Created OUT movement (both): -{abs(line.received_quantity)}")
+
+        else:
+            logger.error(f"❌ Unknown inventory direction: {direction}")
 
     except Exception as e:
-        logger.error(f"❌ Failed to create immediate inventory movement for line {line.line_number}: {e}")
-
+        logger.error(f"❌ Failed to create immediate inventory movement: {e}")
+        raise  # Re-raise за да видиш грешката
 # =================================================================
 # CLEANUP SIGNALS - ЗАПАЗВАМЕ
 # =================================================================
