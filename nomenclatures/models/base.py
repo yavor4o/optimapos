@@ -35,39 +35,6 @@ class BaseNomenclatureManager(models.Manager):
             models.Q(name__icontains=query)
         )
 
-    def validate_code_uniqueness_across_nomenclatures(self, code, exclude_pk=None):
-        """
-        Check if code is unique across ALL nomenclature types
-
-        Returns:
-            tuple: (is_unique: bool, conflicts: list)
-        """
-        from django.apps import apps
-
-        conflicts = []
-
-        # Get all models that inherit from BaseNomenclature
-        nomenclature_models = []
-        for model in apps.get_models():
-            if (hasattr(model, '_meta') and
-                    hasattr(model._meta, 'abstract') and
-                    not model._meta.abstract and
-                    issubclass(model, BaseNomenclature)):
-                nomenclature_models.append(model)
-
-        # Check each model for conflicts
-        for model_class in nomenclature_models:
-            existing = model_class.objects.filter(code__iexact=code)
-            if exclude_pk:
-                existing = existing.exclude(pk=exclude_pk)
-
-            if existing.exists():
-                conflicts.append({
-                    'model': model_class.__name__,
-                    'objects': list(existing.values('id', 'code', 'name'))
-                })
-
-        return len(conflicts) == 0, conflicts
 
 
 class BaseNomenclature(models.Model):
@@ -184,99 +151,36 @@ class BaseNomenclature(models.Model):
     # VALIDATION
     # =====================
     def clean(self):
-        """Enhanced validation with cross-model checks - FIXED"""
+        """Minimal validation - only normalization and system protection"""
         super().clean()
         errors = {}
 
-        # =====================
-        # 1. CODE VALIDATION
-        # =====================
+        # Normalization
         if self.code:
-            # Normalize code
             self.code = self.code.upper().strip()
-
-            # Check format
-            if not re.match(self.CODE_REGEX, self.code):
-                errors['code'] = _(
-                    'Code must contain only uppercase letters, numbers, '
-                    'underscore and dash (max 20 characters)'
-                )
-
-            # Check reserved words
             reserved_codes = ['NULL', 'NONE', 'DEFAULT', 'SYSTEM', 'ADMIN', 'TEST']
             if self.code in reserved_codes:
-                errors['code'] = _(f'Code "{self.code}" is reserved and cannot be used')
+                errors['code'] = _(f'Code "{self.code}" is reserved')
 
-            # Check cross-model uniqueness - FIXED: використовуємо клас, не instance
-            if not errors.get('code'):  # Only if format is valid
-                is_unique, conflicts = self.__class__.objects.validate_code_uniqueness_across_nomenclatures(
-                    self.code, exclude_pk=self.pk
-                )
-                if not is_unique:
-                    conflict_info = []
-                    for conflict in conflicts:
-                        conflict_info.append(f"{conflict['model']}: {len(conflict['objects'])} records")
-                    errors['code'] = _(
-                        f'Code "{self.code}" already exists in: {", ".join(conflict_info)}'
-                    )
-        else:
-            errors['code'] = _('Code is required')
-
-        # =====================
-        # 2. NAME VALIDATION - същото
-        # =====================
         if self.name:
             self.name = ' '.join(self.name.split())
 
-            if len(self.name) < 2:
-                errors['name'] = _('Name must be at least 2 characters long')
-            elif len(self.name) > 100:
-                errors['name'] = _('Name cannot exceed 100 characters')
-        else:
-            errors['name'] = _('Name is required')
-
-        # =====================
-        # 3. BUSINESS RULES - същото
-        # =====================
-
-        if hasattr(self, 'pk') and self.pk and not self.is_active:
-            usage_count = self._get_usage_count()
-            if usage_count > 0:
-                errors['is_active'] = _(
-                    f'Cannot deactivate: this nomenclature is used in {usage_count} records'
-                )
-
+        # System protection only
         if self.is_system and not self.is_active:
             errors['is_active'] = _('System nomenclatures cannot be deactivated')
 
         if errors:
             raise ValidationError(errors)
 
-    def _get_usage_count(self):
-        """
-        Count how many times this nomenclature is used in other models
-        Override in subclasses for specific counting logic
-        """
-        # Default implementation - override in subclasses
-        return 0
+
 
     # =====================
     # ENHANCED SAVE
     # =====================
     def save(self, *args, **kwargs):
-        """Enhanced save with validation and audit"""
-
-        # Force full clean before save
-        self.full_clean()
-
-        # Auto-generate sort_order if not set
-        if self.sort_order == 0 and not self.pk:
-            max_order = self.__class__.objects.aggregate(
-                max_order=models.Max('sort_order')
-            )['max_order'] or 0
-            self.sort_order = max_order + 10
-
+        """Simple save without extra logic"""
         super().save(*args, **kwargs)
+        # ТОВА Е! Просто и работи.
 
     # =====================
     # BUSINESS METHODS
@@ -286,10 +190,7 @@ class BaseNomenclature(models.Model):
         if self.is_system:
             return False, _('System nomenclatures cannot be deleted')
 
-        usage_count = self._get_usage_count()
-        if usage_count > 0:
-            return False, _(f'Cannot delete: used in {usage_count} records')
-
+        # Database constraints ще хвърлят грешка ако има usage
         return True, ''
 
     def activate(self):
@@ -307,12 +208,11 @@ class BaseNomenclature(models.Model):
         return f"{self.code} - {self.name}"
 
     def get_usage_summary(self):
-        """Get summary of where this nomenclature is used"""
-        # Override in subclasses for detailed usage info
+        """Get summary - simplified without usage count"""
         return {
-            'total_usage': self._get_usage_count(),
             'can_delete': self.can_delete()[0],
+            'is_system': self.is_system,
+            'is_active': self.is_active,
             'details': {}
         }
-
 

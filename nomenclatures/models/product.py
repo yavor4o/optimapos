@@ -59,9 +59,7 @@ class ProductGroup(MPTTModel):
         # Само основна нормализация - BaseNomenclature.save() прави останалото
         super().save(*args, **kwargs)
 
-    def _get_usage_count(self):
-        """Override от BaseNomenclature - брой продукти в групата"""
-        return getattr(self, 'product_set', self.product).count() if hasattr(self, 'product') else 0
+
 
 
 class Brand(BaseNomenclature):
