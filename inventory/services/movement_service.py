@@ -557,7 +557,7 @@ class MovementService:
                             product=line.product,
                             quantity=abs(line.received_quantity),  # Винаги positive
                             cost_price=line.unit_price or Decimal('0.00'),
-                            source_document_type='PURCHASE',
+                            source_document_type='PURCHASES',
                             source_document_number=delivery.document_number,
                             movement_date=delivery.document_date,
                             batch_number=line.batch_number,
@@ -574,7 +574,7 @@ class MovementService:
                             location=delivery.location,
                             product=line.product,
                             quantity=abs(line.received_quantity),  # Винаги positive
-                            source_document_type='PURCHASE',
+                            source_document_type='PURCHASES',
                             source_document_number=delivery.document_number,
                             movement_date=delivery.document_date,
                             reason=f"Delivery receipt - return/correction (line {line.line_number})",
@@ -596,7 +596,7 @@ class MovementService:
                             product=line.product,
                             quantity=abs(line.received_quantity),  # ФИКС: abs()
                             cost_price=line.unit_price or Decimal('0.00'),
-                            source_document_type='PURCHASE',
+                            source_document_type='PURCHASES',
                             source_document_number=delivery.document_number,
                             movement_date=delivery.document_date,
                             batch_number=line.batch_number,

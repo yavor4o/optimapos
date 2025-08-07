@@ -364,7 +364,7 @@ class BaseDocument(models.Model):
         if self.document_date:
             try:
                 # FIX: Конвертираме и двете към date за сравнение
-                today = timezone.now().date()
+                today = timezone.localtime().date()
 
                 # Ако document_date е datetime, вземи само date частта
                 if isinstance(self.document_date, datetime):

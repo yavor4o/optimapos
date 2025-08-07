@@ -1,6 +1,7 @@
 # inventory/models/items.py
 
 from django.db import models
+from django.db.models import ExpressionWrapper, F, DecimalField, Sum
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from decimal import Decimal
@@ -175,14 +176,22 @@ class InventoryItem(models.Model):
 
         # Calculate weighted average cost
         in_movements = movements.filter(movement_type__in=['IN', 'PRODUCTION'])
-        if in_movements.exists():
-            total_cost = sum(
-                m.quantity * m.cost_price for m in in_movements
+
+        annotated = in_movements.annotate(
+            line_total=ExpressionWrapper(
+                F('quantity') * F('cost_price'),
+                output_field=DecimalField()
             )
-            total_qty = sum(m.quantity for m in in_movements)
-            avg_cost = total_cost / total_qty if total_qty > 0 else Decimal('0')
-        else:
-            avg_cost = Decimal('0')
+        )
+
+        aggregated = annotated.aggregate(
+            total_cost=Sum('line_total'),
+            total_qty=Sum('quantity')
+        )
+
+        total_cost = aggregated['total_cost'] or Decimal('0')
+        total_qty = aggregated['total_qty'] or Decimal('0')
+        avg_cost = total_cost / total_qty if total_qty > 0 else Decimal('0')
 
         # Get last movement
         last_movement = movements.order_by('-created_at').first()
