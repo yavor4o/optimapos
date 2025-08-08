@@ -24,7 +24,7 @@ class ProductPriceAdmin(admin.ModelAdmin):
             'fields': ('location', 'product', 'is_active')
         }),
         (_('Pricing'), {
-            'fields': ('pricing_method', 'base_price', 'markup_percentage', 'effective_price')
+            'fields': ('pricing_method', 'base_price', 'markup_percentage', 'effective_price',)
         }),
     )
 

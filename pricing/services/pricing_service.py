@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Optional, Dict, List
 
 from ..models import (
-    ProductPrice, PriceGroup, ProductPriceByGroup,
+    ProductPrice, ProductPriceByGroup,
     ProductStepPrice, PromotionalPrice, PackagingPrice
 )
 

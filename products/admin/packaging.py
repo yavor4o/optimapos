@@ -1,201 +1,244 @@
-# products/admin/packaging.py - ОТДЕЛЕН ФАЙЛ ЗА PACKAGING ADMINS
+# products/admin/packaging.py
 
 from django.contrib import admin
+from django.db import models
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.db import models
-from django.urls import reverse
+from django.db.models import Count, Q
+from decimal import Decimal
 
-from ..models import ProductPackaging, ProductBarcode
+from ..models import ProductPackaging, ProductBarcode, ProductPLU
 
 
 @admin.register(ProductPackaging)
 class ProductPackagingAdmin(admin.ModelAdmin):
-    """Standalone admin for product packaging"""
+    """Admin for Product Packaging"""
 
     list_display = [
-        'product_display', 'unit', 'conversion_factor', 'base_equivalent',
-        'is_default_sale_unit', 'is_default_purchase_unit',
-        'product_sellable', 'is_active'
+        'product_display',
+        'unit',
+        'conversion_display',
+        'type_badges',
+        'physical_properties',
+        'barcode_count',
+        'is_active'
     ]
 
     list_filter = [
-        'is_default_sale_unit', 'is_default_purchase_unit', 'is_active',
-        'unit', 'product__lifecycle_status', 'product__brand'
+        'is_active',
+        'is_default_sale_unit',
+        'is_default_purchase_unit',
+        'allow_sale',
+        'allow_purchase',
+        'unit',
+        ('product__product_group', admin.RelatedOnlyFieldListFilter),
     ]
 
     search_fields = [
-        'product__code', 'product__name', 'unit__name', 'unit__code'
+        'product__code',
+        'product__name',
+        'unit__code',
+        'unit__name'
     ]
 
-    list_editable = [
-        'conversion_factor', 'is_default_sale_unit',
-        'is_default_purchase_unit', 'is_active'
-    ]
-
-    readonly_fields = ['created_at']
+    list_editable = ['is_active']
 
     fieldsets = (
-        (_('Basic Information'), {
+        (_('Product & Unit'), {
             'fields': ('product', 'unit', 'conversion_factor')
         }),
         (_('Usage Settings'), {
-            'fields': ('is_default_sale_unit', 'is_default_purchase_unit')
+            'fields': (
+                ('allow_purchase', 'allow_sale'),
+                ('is_default_purchase_unit', 'is_default_sale_unit')
+            )
         }),
         (_('Physical Properties'), {
-            'fields': ('weight_kg',),
+            'fields': (
+                'weight_kg',
+                'volume_m3',
+                ('length_cm', 'width_cm', 'height_cm')
+            ),
             'classes': ('collapse',)
         }),
         (_('Status'), {
-            'fields': ('is_active', 'created_at')
-        }),
+            'fields': ('is_active',)
+        })
     )
 
     def product_display(self, obj):
-        """Product with lifecycle badge"""
-        badge_class = obj.product.lifecycle_badge_class
-        product_url = reverse('admin:products_product_change', args=[obj.product.pk])
+        """Display product with link"""
         return format_html(
-            '<a href="{}">{}</a> <span class="badge {}">{}</span>',
-            product_url,
+            '<a href="/admin/products/product/{}/change/">{} - {}</a>',
+            obj.product.id,
             obj.product.code,
-            badge_class,
-            obj.product.get_lifecycle_status_display()
+            obj.product.name[:30]
         )
 
     product_display.short_description = _('Product')
     product_display.admin_order_field = 'product__code'
 
-    def base_equivalent(self, obj):
-        """Show base unit equivalent"""
+    def conversion_display(self, obj):
+        """Display conversion with base unit"""
         return format_html(
-            '= {} {}',
+            '1 {} = <strong>{}</strong> {}',
+            obj.unit.code,
             obj.conversion_factor,
             obj.product.base_unit.code
         )
 
-    base_equivalent.short_description = _('Base Equivalent')
+    conversion_display.short_description = _('Conversion')
 
-    def product_sellable(self, obj):
-        """Show if product is sellable"""
-        if obj.product.is_sellable:
-            return format_html('<span style="color: green;">✅ Sellable</span>')
-        else:
-            return format_html('<span style="color: red;">❌ Not Sellable</span>')
+    def type_badges(self, obj):
+        """Display type badges"""
+        badges = []
 
-    product_sellable.short_description = _('Sellable')
-    product_sellable.admin_order_field = 'product__is_sellable'
+        if obj.is_default_sale_unit:
+            badges.append('<span class="badge badge-success">Default Sale</span>')
+        elif obj.allow_sale:
+            badges.append('<span class="badge badge-info">Can Sell</span>')
+
+        if obj.is_default_purchase_unit:
+            badges.append('<span class="badge badge-warning">Default Purchase</span>')
+        elif obj.allow_purchase:
+            badges.append('<span class="badge badge-secondary">Can Purchase</span>')
+
+        return format_html(' '.join(badges)) if badges else '-'
+
+    type_badges.short_description = _('Type')
+
+    def physical_properties(self, obj):
+        """Display physical properties summary"""
+        props = []
+
+        if obj.weight_kg:
+            props.append(f'⚖️ {obj.weight_kg}kg')
+
+        if obj.calculated_volume:
+            props.append(f'📦 {obj.calculated_volume:.4f}m³')
+
+        if obj.length_cm and obj.width_cm and obj.height_cm:
+            props.append(f'📏 {obj.length_cm}×{obj.width_cm}×{obj.height_cm}cm')
+
+        return ' | '.join(props) if props else '-'
+
+    physical_properties.short_description = _('Physical')
+
+    def barcode_count(self, obj):
+        """Count of barcodes for this packaging"""
+        count = obj.product.barcodes.filter(packaging=obj).count()
+        if count > 0:
+            return format_html(
+                '<a href="/admin/products/productbarcode/?packaging__id__exact={}">{} barcode(s)</a>',
+                obj.id,
+                count
+            )
+        return '-'
+
+    barcode_count.short_description = _('Barcodes')
 
     def get_queryset(self, request):
         """Optimize queries"""
         return super().get_queryset(request).select_related(
-            'product', 'unit', 'product__base_unit', 'product__brand'
+            'product', 'unit', 'product__base_unit'
+        ).annotate(
+            barcode_count=Count('product__barcodes', filter=Q(product__barcodes__packaging_id=models.F('id')))
         )
-
-    class Media:
-        css = {
-            'all': ('admin/css/packaging_admin.css',)
-        }
 
 
 @admin.register(ProductBarcode)
 class ProductBarcodeAdmin(admin.ModelAdmin):
-    """Standalone admin for product barcodes"""
+    """Admin for Product Barcodes"""
 
     list_display = [
-        'barcode', 'product_display', 'barcode_type', 'packaging_info',
-        'is_primary', 'product_sellable', 'is_active'
+        'barcode',
+        'product_display',
+        'barcode_type_display',
+        'packaging_display',
+        'is_primary',
+        'quantity_display',
+        'is_active'
     ]
 
     list_filter = [
-        'barcode_type', 'is_primary', 'is_active',
-        'product__lifecycle_status', 'product__unit_type'
+        'barcode_type',
+        'is_primary',
+        'is_active',
+        ('product__product_group', admin.RelatedOnlyFieldListFilter),
     ]
 
     search_fields = [
-        'barcode', 'product__code', 'product__name'
+        'barcode',
+        'product__code',
+        'product__name'
     ]
 
     list_editable = ['is_primary', 'is_active']
 
-    readonly_fields = ['created_at', 'decoded_weight_info']
-
     fieldsets = (
-        (_('Basic Information'), {
-            'fields': ('product', 'barcode', 'barcode_type')
+        (_('Barcode Information'), {
+            'fields': ('barcode', 'barcode_type', 'product')
         }),
         (_('Packaging Link'), {
             'fields': ('packaging',),
-            'description': _('Link barcode to specific packaging unit')
+            'description': _('Optional: Link to specific packaging')
         }),
         (_('Settings'), {
             'fields': ('is_primary', 'is_active')
-        }),
-        (_('Weight Barcode Info'), {
-            'fields': ('decoded_weight_info',),
-            'classes': ('collapse',),
-            'description': _('Auto-decoded information for weight barcodes')
-        }),
-        (_('Meta'), {
-            'fields': ('created_at',),
-            'classes': ('collapse',)
-        }),
+        })
     )
 
     def product_display(self, obj):
-        """Product with lifecycle info"""
-        badge_class = obj.product.lifecycle_badge_class
-        product_url = reverse('admin:products_product_change', args=[obj.product.pk])
+        """Display product info"""
         return format_html(
-            '<a href="{}">{}</a> <span class="badge {}">{}</span>',
-            product_url,
+            '<a href="/admin/products/product/{}/change/">{}</a><br><small>{}</small>',
+            obj.product.id,
             obj.product.code,
-            badge_class,
-            obj.product.get_lifecycle_status_display()
+            obj.product.name[:40]
         )
 
     product_display.short_description = _('Product')
     product_display.admin_order_field = 'product__code'
 
-    def packaging_info(self, obj):
-        """Packaging information"""
-        if obj.packaging:
-            return format_html(
-                '{} (×{})',
-                obj.packaging.unit.name,
-                obj.packaging.conversion_factor
-            )
-        return format_html('<em>Base unit</em>')
+    def barcode_type_display(self, obj):
+        """Display barcode type with icon"""
+        icons = {
+            'STANDARD': '📊',
+            'WEIGHT': '⚖️',
+            'INTERNAL': '🏷️'
+        }
+        icon = icons.get(obj.barcode_type, '❓')
 
-    packaging_info.short_description = _('Packaging')
-
-    def product_sellable(self, obj):
-        """Product sellable status"""
-        if obj.product.is_sellable:
-            return format_html('<span style="color: green;">✅</span>')
-        else:
-            return format_html('<span style="color: red;">❌</span>')
-
-    product_sellable.short_description = _('Sellable')
-    product_sellable.admin_order_field = 'product__is_sellable'
-
-    def decoded_weight_info(self, obj):
-        """Show decoded weight barcode info"""
+        # For weight barcodes, decode if possible
+        extra = ''
         if obj.barcode_type == 'WEIGHT':
             decoded = obj.decode_weight_barcode()
             if decoded:
-                return format_html(
-                    '<strong>Product Code:</strong> {}<br>'
-                    '<strong>Weight:</strong> {} г ({} кг)',
-                    decoded['product_code'],
-                    decoded['weight_grams'],
-                    decoded['weight_kg']
-                )
-            else:
-                return format_html('<span style="color: red;">Invalid weight barcode format</span>')
+                extra = f"<br><small>PLU: {decoded['product_code']}, Weight: {decoded['weight_kg']}kg</small>"
+
+        return format_html(
+            '{} {}{}'.format(icon, obj.get_barcode_type_display(), extra)
+        )
+
+    barcode_type_display.short_description = _('Type')
+
+    def packaging_display(self, obj):
+        """Display packaging if linked"""
+        if obj.packaging:
+            return format_html(
+                '{} × {}',
+                obj.packaging.unit.code,
+                obj.packaging.conversion_factor
+            )
         return '-'
 
-    decoded_weight_info.short_description = _('Weight Info')
+    packaging_display.short_description = _('Packaging')
+
+    def quantity_display(self, obj):
+        """Display quantity this barcode represents"""
+        return f"{obj.quantity_in_base_units} {obj.display_unit.code}"
+
+    quantity_display.short_description = _('Quantity')
 
     def get_queryset(self, request):
         """Optimize queries"""
@@ -203,70 +246,85 @@ class ProductBarcodeAdmin(admin.ModelAdmin):
             'product', 'packaging', 'packaging__unit', 'product__base_unit'
         )
 
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """Customize ForeignKey fields"""
-        if db_field.name == "packaging":
-            # Filter packaging options based on selected product
-            # This will be enhanced with JavaScript in the template
-            kwargs["queryset"] = ProductPackaging.objects.select_related('unit')
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-    class Media:
-        css = {
-            'all': ('admin/css/barcode_admin.css',)
-        }
-        js = ('admin/js/barcode_admin.js',)
+@admin.register(ProductPLU)
+class ProductPLUAdmin(admin.ModelAdmin):
+    """Admin for Product PLU codes"""
 
+    list_display = [
+        'plu_code',
+        'product_display',
+        'is_primary',
+        'priority',
+        'description',
+        'weight_product_check',
+        'is_active'
+    ]
 
-# === CUSTOM ACTIONS ===
+    list_filter = [
+        'is_primary',
+        'is_active',
+        'priority',
+        ('product__product_group', admin.RelatedOnlyFieldListFilter),
+    ]
 
-@admin.action(description='Activate selected packagings')
-def activate_packagings(modeladmin, request, queryset):
-    """Activate selected packagings"""
-    updated = queryset.update(is_active=True)
-    modeladmin.message_user(request, f'{updated} packagings activated.')
+    search_fields = [
+        'plu_code',
+        'product__code',
+        'product__name',
+        'description'
+    ]
 
+    list_editable = ['is_primary', 'priority', 'is_active']
 
-@admin.action(description='Deactivate selected packagings')
-def deactivate_packagings(modeladmin, request, queryset):
-    """Deactivate selected packagings"""
-    updated = queryset.update(is_active=False)
-    modeladmin.message_user(request, f'{updated} packagings deactivated.')
+    fieldsets = (
+        (_('PLU Information'), {
+            'fields': ('plu_code', 'product', 'description')
+        }),
+        (_('Settings'), {
+            'fields': ('is_primary', 'priority', 'is_active')
+        })
+    )
 
+    def product_display(self, obj):
+        """Display product with weight indicator"""
+        weight_icon = '⚖️' if obj.product.unit_type == 'WEIGHT' else '❌'
+        return format_html(
+            '{} <a href="/admin/products/product/{}/change/">{}</a><br><small>{}</small>',
+            weight_icon,
+            obj.product.id,
+            obj.product.code,
+            obj.product.name[:40]
+        )
 
-@admin.action(description='Set as default sale unit')
-def set_default_sale_unit(modeladmin, request, queryset):
-    """Set selected packagings as default sale units"""
-    for packaging in queryset:
-        # Clear other default sale units for the same product
-        ProductPackaging.objects.filter(
-            product=packaging.product,
-            is_default_sale_unit=True
-        ).update(is_default_sale_unit=False)
+    product_display.short_description = _('Product')
+    product_display.admin_order_field = 'product__code'
 
-        # Set this one as default
-        packaging.is_default_sale_unit = True
-        packaging.save()
+    def weight_product_check(self, obj):
+        """Check if product is weight-based"""
+        if obj.product.unit_type == 'WEIGHT':
+            return format_html('<span style="color: green;">✅ Weight Product</span>')
+        else:
+            return format_html('<span style="color: red;">❌ Not Weight Product</span>')
 
-    modeladmin.message_user(request, f'{queryset.count()} default sale units set.')
+    weight_product_check.short_description = _('Valid')
 
+    def get_queryset(self, request):
+        """Optimize queries"""
+        return super().get_queryset(request).select_related(
+            'product', 'product__base_unit'
+        )
 
-# Add actions to admin classes
-ProductPackagingAdmin.actions = [activate_packagings, deactivate_packagings, set_default_sale_unit]
+    def save_model(self, request, obj, form, change):
+        """Validate PLU assignment"""
+        from ..services import ProductValidationService
 
+        is_valid, error_msg = ProductValidationService.validate_plu_assignment(
+            obj.product, obj.plu_code
+        )
 
-@admin.action(description='Activate selected barcodes')
-def activate_barcodes(modeladmin, request, queryset):
-    """Activate selected barcodes"""
-    updated = queryset.update(is_active=True)
-    modeladmin.message_user(request, f'{updated} barcodes activated.')
+        if not is_valid:
+            self.message_user(request, error_msg, level='ERROR')
+            return
 
-
-@admin.action(description='Deactivate selected barcodes')
-def deactivate_barcodes(modeladmin, request, queryset):
-    """Deactivate selected barcodes"""
-    updated = queryset.update(is_active=False)
-    modeladmin.message_user(request, f'{updated} barcodes deactivated.')
-
-
-ProductBarcodeAdmin.actions = [activate_barcodes, deactivate_barcodes]
+        super().save_model(request, obj, form, change)

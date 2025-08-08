@@ -1,26 +1,46 @@
-# products/models/products.py - LIFECYCLE VERSION
+# products/models/products.py
 
+from django.conf import settings
 from django.db import models
+from django.db.models import Sum, Avg, F
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.urls import reverse
 from decimal import Decimal
-from typing import Tuple
+from typing import Tuple, Optional, Dict, List
+
+from nomenclatures.models import (
+    Brand, ProductGroup, ProductType,
+    UnitOfMeasure, TaxGroup
+)
 
 
+# === CHOICES ===
 class ProductLifecycleChoices(models.TextChoices):
-    """Product lifecycle status choices"""
-    DRAFT = 'DRAFT', _('Draft - In Development')
-    ACTIVE = 'ACTIVE', _('Active - Normal Sales')
-    PHASE_OUT = 'PHASE_OUT', _('Phase Out - Limited Sales')
-    DISCONTINUED = 'DISCONTINUED', _('Discontinued - No Sales')
+    """Product lifecycle stages"""
+    NEW = 'NEW', _('New Product')
+    ACTIVE = 'ACTIVE', _('Active')
+    PHASE_OUT = 'PHASE_OUT', _('Phasing Out')
+    DISCONTINUED = 'DISCONTINUED', _('Discontinued')
+    ARCHIVED = 'ARCHIVED', _('Archived')
 
 
+# === MANAGERS ===
 class ProductManager(models.Manager):
-    """Enhanced manager with lifecycle filtering"""
+    """Enhanced Product Manager"""
+
+    def active(self):
+        """Get active products only"""
+        return self.filter(
+            lifecycle_status__in=[
+                ProductLifecycleChoices.ACTIVE,
+                ProductLifecycleChoices.NEW
+            ]
+        )
 
     def sellable(self):
-        """Products that can be sold"""
+        """Get products that can be sold"""
         return self.filter(
             lifecycle_status__in=[
                 ProductLifecycleChoices.ACTIVE,
@@ -30,45 +50,31 @@ class ProductManager(models.Manager):
         )
 
     def purchasable(self):
-        """Products that can be purchased from suppliers"""
+        """Get products that can be purchased"""
         return self.filter(
             lifecycle_status__in=[
-                ProductLifecycleChoices.DRAFT,
-                ProductLifecycleChoices.ACTIVE
+                ProductLifecycleChoices.ACTIVE,
+                ProductLifecycleChoices.NEW
             ],
             purchase_blocked=False
         )
 
-    def active(self):
-        """Only active products"""
-        return self.filter(lifecycle_status=ProductLifecycleChoices.ACTIVE)
-
-    def phase_out(self):
-        """Products being phased out"""
-        return self.filter(lifecycle_status=ProductLifecycleChoices.PHASE_OUT)
-
-    def discontinued(self):
-        """Discontinued products"""
-        return self.filter(lifecycle_status=ProductLifecycleChoices.DISCONTINUED)
-
-    def draft(self):
-        """Products in development"""
-        return self.filter(lifecycle_status=ProductLifecycleChoices.DRAFT)
-
-    def search(self, query):
-        """Search with lifecycle consideration"""
-        if not query:
-            return self.none()
-
+    def with_stock(self):
+        """Get products with stock in any location"""
+        from inventory.models import InventoryItem
         return self.filter(
-            models.Q(code__icontains=query) |
-            models.Q(name__icontains=query) |
-            models.Q(barcodes__barcode=query)
-        ).distinct()
+            id__in=InventoryItem.objects.filter(
+                current_qty__gt=0
+            ).values('product_id').distinct()
+        )
 
 
 class Product(models.Model):
-    """Enhanced Product model with lifecycle management"""
+    """
+    Core Product model - REFACTORED
+    Stores only static product definitions
+    Dynamic data (stock, costs) moved to InventoryItem
+    """
 
     # === UNIT TYPES ===
     PIECE = 'PIECE'
@@ -171,55 +177,7 @@ class Product(models.Model):
         help_text=_('Product requires expiry date tracking')
     )
 
-    # === COST & STOCK DATA ===
-    current_avg_cost = models.DecimalField(
-        _('Current Average Cost'),
-        max_digits=10,
-        decimal_places=4,
-        default=Decimal('0.0000'),
-        help_text=_('Moving average cost')
-    )
-
-    current_stock_qty = models.DecimalField(
-        _('Current Stock Quantity'),
-        max_digits=12,
-        decimal_places=3,
-        default=Decimal('0.000'),
-        help_text=_('Total quantity across all locations')
-    )
-
-    # === TRANSACTION HISTORY ===
-    last_purchase_cost = models.DecimalField(
-        _('Last Purchase Cost'),
-        max_digits=10,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text=_('Cost from last purchase')
-    )
-
-    last_purchase_date = models.DateTimeField(
-        _('Last Purchase Date'),
-        null=True,
-        blank=True
-    )
-
-    last_sale_date = models.DateTimeField(
-        _('Last Sale Date'),
-        null=True,
-        blank=True
-    )
-
-    last_sale_price = models.DecimalField(
-        _('Last Sale Price'),
-        max_digits=10,
-        decimal_places=4,
-        null=True,
-        blank=True
-    )
-
-    # === NEW LIFECYCLE FIELDS ===
-
+    # === LIFECYCLE MANAGEMENT ===
     lifecycle_status = models.CharField(
         _('Lifecycle Status'),
         max_length=20,
@@ -308,7 +266,154 @@ class Product(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # === COMPUTED PROPERTIES ===
+    # === COMPUTED PROPERTIES FOR COMPATIBILITY ===
+
+    @property
+    def total_stock(self) -> Decimal:
+        """
+        Get total stock across all locations
+        Replaces old current_stock_qty field
+        """
+        from inventory.models import InventoryItem
+        total = InventoryItem.objects.filter(
+            product=self
+        ).aggregate(
+            total=Sum('current_qty')
+        )['total']
+        return total or Decimal('0')
+
+    @property
+    def stock_by_location(self) -> Dict[str, Decimal]:
+        """
+        Get stock quantities by location
+        Returns: {location_code: quantity}
+        """
+        from inventory.models import InventoryItem
+        items = InventoryItem.objects.filter(
+            product=self
+        ).select_related('location')
+
+        return {
+            item.location.code: item.current_qty
+            for item in items
+        }
+
+    @property
+    def avg_cost_by_location(self) -> Dict[str, Decimal]:
+        """
+        Get average costs by location
+        Returns: {location_code: avg_cost}
+        """
+        from inventory.models import InventoryItem
+        items = InventoryItem.objects.filter(
+            product=self
+        ).select_related('location')
+
+        return {
+            item.location.code: item.avg_cost
+            for item in items if item.avg_cost > 0
+        }
+
+    @property
+    def weighted_avg_cost(self) -> Decimal:
+        """
+        Calculate weighted average cost across all locations
+        Replaces old current_avg_cost field
+        """
+        from inventory.models import InventoryItem
+        items = InventoryItem.objects.filter(
+            product=self,
+            current_qty__gt=0
+        )
+
+        total_value = Decimal('0')
+        total_qty = Decimal('0')
+
+        for item in items:
+            total_value += item.current_qty * item.avg_cost
+            total_qty += item.current_qty
+
+        if total_qty > 0:
+            return (total_value / total_qty).quantize(Decimal('0.0001'))
+        return Decimal('0')
+
+    @property
+    def has_stock(self) -> bool:
+        """Check if product has any stock"""
+        return self.total_stock > 0
+
+    @property
+    def stock_value(self) -> Decimal:
+        """Calculate total stock value across all locations"""
+        from inventory.models import InventoryItem
+        items = InventoryItem.objects.filter(
+            product=self,
+            current_qty__gt=0
+        )
+
+        total_value = Decimal('0')
+        for item in items:
+            total_value += item.current_qty * item.avg_cost
+
+        return total_value.quantize(Decimal('0.01'))
+
+    # === HELPER METHODS ===
+
+    def get_stock_info(self, location=None) -> Dict:
+        """
+        Get comprehensive stock information
+        Args:
+            location: Optional specific location
+        Returns:
+            Dict with stock details
+        """
+        from inventory.models import InventoryItem
+
+        if location:
+            try:
+                item = InventoryItem.objects.get(
+                    product=self,
+                    location=location
+                )
+                return {
+                    'location': location.code,
+                    'current_qty': item.current_qty,
+                    'available_qty': item.available_qty,
+                    'reserved_qty': item.reserved_qty,
+                    'avg_cost': item.avg_cost,
+                    'last_movement': item.last_movement_date,
+                    'last_purchase_cost': item.last_purchase_cost,
+                    'last_sale_price': item.last_sale_price,
+                }
+            except InventoryItem.DoesNotExist:
+                return {
+                    'location': location.code,
+                    'current_qty': Decimal('0'),
+                    'available_qty': Decimal('0'),
+                    'reserved_qty': Decimal('0'),
+                    'avg_cost': Decimal('0'),
+                    'last_movement': None,
+                    'last_purchase_cost': None,
+                    'last_sale_price': None,
+                }
+        else:
+            # Aggregate across all locations
+            items = InventoryItem.objects.filter(product=self)
+            return {
+                'total_qty': sum(i.current_qty for i in items),
+                'total_available': sum(i.available_qty for i in items),
+                'total_reserved': sum(i.reserved_qty for i in items),
+                'locations': [
+                    {
+                        'code': i.location.code,
+                        'qty': i.current_qty,
+                        'cost': i.avg_cost
+                    }
+                    for i in items if i.current_qty > 0
+                ]
+            }
+
+    # === STATUS PROPERTIES ===
 
     @property
     def is_sellable(self) -> bool:
@@ -326,21 +431,11 @@ class Product(models.Model):
         """Can this product be purchased from suppliers?"""
         return (
                 self.lifecycle_status in [
-            ProductLifecycleChoices.DRAFT,
-            ProductLifecycleChoices.ACTIVE
+            ProductLifecycleChoices.ACTIVE,
+            ProductLifecycleChoices.NEW
         ] and
                 not self.purchase_blocked
         )
-
-    @property
-    def lifecycle_badge_class(self) -> str:
-        """CSS class for status display"""
-        return {
-            ProductLifecycleChoices.DRAFT: 'badge-warning',
-            ProductLifecycleChoices.ACTIVE: 'badge-success',
-            ProductLifecycleChoices.PHASE_OUT: 'badge-info',
-            ProductLifecycleChoices.DISCONTINUED: 'badge-danger'
-        }.get(self.lifecycle_status, 'badge-secondary')
 
     @property
     def has_restrictions(self) -> bool:
@@ -351,24 +446,26 @@ class Product(models.Model):
                 self.lifecycle_status != ProductLifecycleChoices.ACTIVE
         )
 
-    # === EXISTING PROPERTIES (keeping all) ===
+    @property
+    def lifecycle_badge_class(self) -> str:
+        """CSS class for lifecycle status badge"""
+        classes = {
+            ProductLifecycleChoices.NEW: 'badge-info',
+            ProductLifecycleChoices.ACTIVE: 'badge-success',
+            ProductLifecycleChoices.PHASE_OUT: 'badge-warning',
+            ProductLifecycleChoices.DISCONTINUED: 'badge-danger',
+            ProductLifecycleChoices.ARCHIVED: 'badge-secondary',
+        }
+        return classes.get(self.lifecycle_status, 'badge-secondary')
+
+    # === EXISTING PROPERTIES (keeping for compatibility) ===
 
     @property
-    def full_name(self):
+    def full_name(self) -> str:
         """Full name with brand"""
         if self.brand:
             return f"{self.brand.name} {self.name}"
         return self.name
-
-    @property
-    def has_stock(self):
-        """Has any stock"""
-        return self.current_stock_qty > 0
-
-    @property
-    def stock_value(self):
-        """Total stock value"""
-        return self.current_stock_qty * self.current_avg_cost
 
     @property
     def primary_barcode(self):
@@ -407,192 +504,70 @@ class Product(models.Model):
             if quantity != int(quantity):
                 return False, "Piece products must be whole numbers"
 
+        # Stock check if location provided
+        if location and not self.allow_negative_sales:
+            from inventory.models import InventoryItem
+            try:
+                item = InventoryItem.objects.get(
+                    product=self,
+                    location=location
+                )
+                if item.available_qty < quantity:
+                    return False, f"Insufficient stock. Available: {item.available_qty}"
+            except InventoryItem.DoesNotExist:
+                if not location.allow_negative_stock:
+                    return False, "No stock available"
+
         return True, "OK"
 
-    # В Product модела - добавяме helper method
-    def get_valid_purchase_units(self):
-        """Връща всички валидни units за покупки"""
-        from nomenclatures.models import UnitOfMeasure
+    def get_valid_purchase_units(self) -> List:
+        """Get valid units for purchasing"""
+        units = [self.base_unit]
 
-        # Започваме с base_unit
-        unit_ids = [self.base_unit.id]
+        # Add packaging units
+        for pkg in self.packagings.filter(is_active=True, allow_purchase=True):
+            if pkg.unit not in units:
+                units.append(pkg.unit)
 
-        # Добавяме активни packaging units
-        packaging_unit_ids = self.packagings.filter(
-            is_active=True
-        ).values_list('unit_id', flat=True)
+        return units
 
-        unit_ids.extend(packaging_unit_ids)
+    def get_valid_sale_units(self) -> List:
+        """Get valid units for selling"""
+        units = [self.base_unit]
 
-        return UnitOfMeasure.objects.filter(id__in=unit_ids)
+        # Add packaging units
+        for pkg in self.packagings.filter(is_active=True, allow_sale=True):
+            if pkg.unit not in units:
+                units.append(pkg.unit)
 
-    def get_preferred_purchase_unit(self):
-        """Връща preferred unit за покупки"""
-        # Първо търси default purchase unit
-        default_packaging = self.packagings.filter(
-            is_default_purchase_unit=True,
-            is_active=True
-        ).first()
+        return units
 
-        if default_packaging:
-            return default_packaging.unit
-
-        # Иначе base_unit
-        return self.base_unit
-
-    # В Product модела - добавяме helper method
-    def get_estimated_purchase_price(self, unit=None):
-        """Връща estimated purchase price за дадения unit"""
-
-        # Първо опитваме последната доставна цена
-        if self.last_purchase_cost:
-            price = self.last_purchase_cost
-        else:
-            # Fallback към current_avg_cost
-            price = self.current_avg_cost or Decimal('0')
-
-        # Ако няма цена, връщаме 0
-        if price <= 0:
-            return Decimal('0')
-
-        # last_purchase_cost е за base_unit
-        # Ако unit е различен от base_unit, правим conversion
-        if unit and unit != self.base_unit:
-            packaging = self.packagings.filter(
-                unit=unit,
-                is_active=True
-            ).first()
-
-            if packaging:
-                # conversion_factor показва колко base_unit има в packaging
-                # Ако base_unit е 1 лв/бр, а packaging е кашон=12бр
-                # То цената за кашон е 1 * 12 = 12 лв
-                price = price * packaging.conversion_factor
-
-        return price
-
-    def get_restrictions_summary(self) -> str:
-        """Human-readable restrictions"""
-        restrictions = []
-
-        if not self.is_sellable:
-            if self.sales_blocked:
-                restrictions.append("Sales blocked")
-            else:
-                restrictions.append(f"Not sellable ({self.get_lifecycle_status_display()})")
-
-        if not self.is_purchasable:
-            if self.purchase_blocked:
-                restrictions.append("Purchases blocked")
-            else:
-                restrictions.append("Not purchasable")
-
-        if self.lifecycle_status == ProductLifecycleChoices.PHASE_OUT:
-            restrictions.append("Phase-out: sell existing stock only")
-
-        return "; ".join(restrictions) if restrictions else "No restrictions"
-
-    # === LIFECYCLE MANAGEMENT ===
-
-    def set_lifecycle_status(self, new_status: str, user=None, reason: str = ""):
-        """Change lifecycle status with validation"""
-        if new_status not in ProductLifecycleChoices.values:
-            raise ValueError(f"Invalid lifecycle status: {new_status}")
-
-        old_status = self.lifecycle_status
-        self.lifecycle_status = new_status
-        self.save()
-
-        # TODO: Add audit logging in Phase 2
-        return f"Lifecycle changed: {old_status} → {new_status}"
-
-    def block_sales(self, reason: str = ""):
-        """Block all sales"""
-        self.sales_blocked = True
-        self.save()
-        return f"Sales blocked for {self.code}"
-
-    def unblock_sales(self):
-        """Unblock sales"""
-        self.sales_blocked = False
-        self.save()
-        return f"Sales unblocked for {self.code}"
-
-    def block_purchases(self, reason: str = ""):
-        """Block all purchases"""
-        self.purchase_blocked = True
-        self.save()
-        return f"Purchases blocked for {self.code}"
-
-    def unblock_purchases(self):
-        """Unblock purchases"""
-        self.purchase_blocked = False
-        self.save()
-        return f"Purchases unblocked for {self.code}"
-
-    # === EXISTING BUSINESS METHODS (keeping all) ===
-
-    def update_average_cost(self, new_qty, new_cost):
-        """Update moving average cost"""
-        if new_qty <= 0:
-            return
-
-        existing_value = self.current_stock_qty * self.current_avg_cost
-        new_value = new_qty * new_cost
-        total_qty = self.current_stock_qty + new_qty
-
-        if total_qty > 0:
-            self.current_avg_cost = (existing_value + new_value) / total_qty
-            self.current_stock_qty = total_qty
-
-        self.last_purchase_cost = new_cost
-        self.last_purchase_date = timezone.now()
-        self.save(update_fields=[
-            'current_avg_cost', 'current_stock_qty',
-            'last_purchase_cost', 'last_purchase_date'
-        ])
-
-    def add_stock(self, quantity, cost_per_unit=None):
-        """Add stock quantity"""
-        if quantity <= 0:
-            raise ValueError("Quantity must be positive")
-
-        if cost_per_unit:
-            self.update_average_cost(quantity, cost_per_unit)
-        else:
-            self.current_stock_qty += quantity
-            self.save(update_fields=['current_stock_qty'])
-
-    def remove_stock(self, quantity):
-        """Remove stock quantity"""
-        if quantity <= 0:
-            raise ValueError("Quantity must be positive")
-
-        if quantity > self.current_stock_qty:
-            raise ValueError("Insufficient stock")
-
-        self.current_stock_qty -= quantity
-        self.last_sale_date = timezone.now()
-        self.save(update_fields=['current_stock_qty', 'last_sale_date'])
-
-    def get_active_barcodes(self):
+    def get_active_barcodes(self) -> models.QuerySet:
         """Get all active barcodes"""
         return self.barcodes.filter(is_active=True)
 
-    def get_active_packagings(self):
+    def get_active_packagings(self) -> models.QuerySet:
         """Get all active packagings"""
         return self.packagings.filter(is_active=True)
 
-    def can_be_sold_by_weight(self):
+    def can_be_sold_by_weight(self) -> bool:
         """Can be sold by weight"""
         return self.unit_type == self.WEIGHT and self.has_plu_codes()
 
-    def has_plu_codes(self):
+    def has_plu_codes(self) -> bool:
         """Has any PLU codes"""
         return self.plu_codes.filter(is_active=True).exists()
 
+    def get_absolute_url(self):
+        """Get URL for product detail view"""
+        return reverse('products:product_detail', kwargs={'pk': self.pk})
+
+
 class ProductPLU(models.Model):
-    """PLU кодове за продукти (главно за везни)"""
+    """
+    PLU кодове за продукти (главно за везни)
+    PLU = Price Look-Up codes за продукти продавани на тегло
+    """
 
     product = models.ForeignKey(
         Product,
@@ -600,28 +575,40 @@ class ProductPLU(models.Model):
         related_name='plu_codes',
         verbose_name=_('Product')
     )
+
     plu_code = models.CharField(
         _('PLU Code'),
         max_length=10,
         help_text=_('PLU код за везни продукти')
     )
+
     is_primary = models.BooleanField(
         _('Is Primary'),
         default=False,
         help_text=_('Основен PLU код за този продукт')
     )
+
     priority = models.IntegerField(
         _('Priority'),
         default=0,
         help_text=_('По-висок приоритет = предпочитан при конфликти')
     )
+
     description = models.CharField(
         _('Description'),
         max_length=100,
         blank=True
     )
-    is_active = models.BooleanField(_('Is Active'), default=True)
-    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+
+    is_active = models.BooleanField(
+        _('Is Active'),
+        default=True
+    )
+
+    created_at = models.DateTimeField(
+        _('Created At'),
+        auto_now_add=True
+    )
 
     class Meta:
         verbose_name = _('Product PLU Code')

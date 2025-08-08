@@ -1,68 +1,133 @@
 # products/models/packaging.py
+
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
+"""
+ВАЖНО: Този файл НЕ се променя при рефакторинга!
+Packaging и Barcode модели не пазят динамични данни.
+Те са само дефиниции на опаковки и баркодове.
+"""
+
 
 class ProductPackaging(models.Model):
     """
-    Опаковки на продукти
+    Опаковки на продукти (кашон, палет, и др.)
 
     Концепция:
-    - Всеки продукт има base_unit (например "кг")
-    - Може да има опаковки: кашон 12кг, палет 500кг и т.н.
-    - conversion_factor показва колко base_unit има в опаковката
-
-    Примери:
-    - Продукт: Кока-Кола (base_unit: бутилка)
-    - Опаковки: кашон=24 бутилки, палет=1200 бутилки
+    - Дефинира алтернативни единици за продукта
+    - Всяка опаковка има коефициент на преобразуване към базова единица
+    - Използва се за покупки и продажби в различни единици
     """
 
     product = models.ForeignKey(
-        'Product',
+        'products.Product',
         on_delete=models.CASCADE,
         related_name='packagings',
         verbose_name=_('Product')
     )
+
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
         on_delete=models.PROTECT,
-        verbose_name=_('Unit'),
-        help_text=_('Мерна единица за тази опаковка')
+        verbose_name=_('Packaging Unit'),
+        help_text=_('Unit for this packaging (e.g., Box, Pallet)')
     )
+
     conversion_factor = models.DecimalField(
         _('Conversion Factor'),
         max_digits=10,
         decimal_places=3,
-        help_text=_('Колко base_unit има в тази опаковка')
+        help_text=_('How many base units in one packaging unit')
     )
 
-    # Настройки за употреба
+    # Purchase/Sale flags
+    allow_purchase = models.BooleanField(
+        _('Allow Purchase'),
+        default=True,
+        help_text=_('Can be used for purchasing')
+    )
+
+    allow_sale = models.BooleanField(
+        _('Allow Sale'),
+        default=True,
+        help_text=_('Can be used for selling')
+    )
+
     is_default_sale_unit = models.BooleanField(
         _('Default Sale Unit'),
         default=False,
-        help_text=_('Основна единица за продажба')
+        help_text=_('Default unit for sales')
     )
+
     is_default_purchase_unit = models.BooleanField(
         _('Default Purchase Unit'),
         default=False,
-        help_text=_('Основна единица за покупка')
+        help_text=_('Default unit for purchases')
     )
 
-    # Физически характеристики (опционално)
+    # Physical properties
     weight_kg = models.DecimalField(
         _('Weight (kg)'),
         max_digits=8,
         decimal_places=3,
         null=True,
         blank=True,
-        help_text=_('Тегло на празната опаковка')
+        help_text=_('Weight of packaging in kilograms')
     )
 
-    # Статус
-    is_active = models.BooleanField(_('Is Active'), default=True)
-    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+    volume_m3 = models.DecimalField(
+        _('Volume (m³)'),
+        max_digits=8,
+        decimal_places=4,
+        null=True,
+        blank=True,
+        help_text=_('Volume of packaging in cubic meters')
+    )
+
+    # Dimensions
+    length_cm = models.DecimalField(
+        _('Length (cm)'),
+        max_digits=6,
+        decimal_places=1,
+        null=True,
+        blank=True
+    )
+
+    width_cm = models.DecimalField(
+        _('Width (cm)'),
+        max_digits=6,
+        decimal_places=1,
+        null=True,
+        blank=True
+    )
+
+    height_cm = models.DecimalField(
+        _('Height (cm)'),
+        max_digits=6,
+        decimal_places=1,
+        null=True,
+        blank=True
+    )
+
+    # Status
+    is_active = models.BooleanField(
+        _('Is Active'),
+        default=True
+    )
+
+    # Audit
+    created_at = models.DateTimeField(
+        _('Created At'),
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        _('Updated At'),
+        auto_now=True
+    )
 
     class Meta:
         verbose_name = _('Product Packaging')
@@ -103,23 +168,36 @@ class ProductPackaging(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # === СВОЙСТВА ===
+    # === HELPER METHODS ===
 
-    @property
-    def unit_price_from_base(self):
-        """Ако има базова цена, пресмята цената за опаковката"""
-        # Ще се използва от pricing модула
-        pass
-
-    # === МЕТОДИ ===
-
-    def convert_to_base_units(self, packaging_qty):
-        """Конвертира количество опаковки към базови единици"""
+    def convert_to_base_units(self, packaging_qty: Decimal) -> Decimal:
+        """
+        Конвертира количество опаковки към базови единици
+        Например: 5 кашона * 12 = 60 бройки
+        """
         return packaging_qty * self.conversion_factor
 
-    def convert_from_base_units(self, base_qty):
-        """Конвертира от базови единици към опаковки"""
-        return base_qty / self.conversion_factor
+    def convert_from_base_units(self, base_qty: Decimal) -> Decimal:
+        """
+        Конвертира от базови единици към опаковки
+        Например: 60 бройки / 12 = 5 кашона
+        """
+        if self.conversion_factor > 0:
+            return base_qty / self.conversion_factor
+        return Decimal('0')
+
+    @property
+    def calculated_volume(self) -> Decimal:
+        """Calculate volume from dimensions if not set"""
+        if self.volume_m3:
+            return self.volume_m3
+
+        if self.length_cm and self.width_cm and self.height_cm:
+            # Convert cm³ to m³
+            volume_cm3 = self.length_cm * self.width_cm * self.height_cm
+            return volume_cm3 / Decimal('1000000')
+
+        return Decimal('0')
 
 
 class ProductBarcode(models.Model):
@@ -144,38 +222,51 @@ class ProductBarcode(models.Model):
     ]
 
     product = models.ForeignKey(
-        'Product',
+        'products.Product',
         on_delete=models.CASCADE,
         related_name='barcodes',
         verbose_name=_('Product')
     )
+
     barcode = models.CharField(
         _('Barcode'),
-        max_length=50,
+        max_length=30,
         unique=True,
-        help_text=_('EAN13, UPC или вътрешен баркод')
+        db_index=True,
+        help_text=_('Barcode value (EAN-13, EAN-8, etc.)')
     )
+
     packaging = models.ForeignKey(
-        ProductPackaging,
+        'products.ProductPackaging',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         verbose_name=_('Packaging'),
         help_text=_('За коя опаковка е този баркод')
     )
+
     is_primary = models.BooleanField(
         _('Is Primary'),
         default=False,
         help_text=_('Основен баркод за този продукт')
     )
+
     barcode_type = models.CharField(
         _('Barcode Type'),
         max_length=10,
         choices=BARCODE_TYPE_CHOICES,
         default=STANDARD
     )
-    is_active = models.BooleanField(_('Is Active'), default=True)
-    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+
+    is_active = models.BooleanField(
+        _('Is Active'),
+        default=True
+    )
+
+    created_at = models.DateTimeField(
+        _('Created At'),
+        auto_now_add=True
+    )
 
     class Meta:
         verbose_name = _('Product Barcode')
@@ -190,9 +281,9 @@ class ProductBarcode(models.Model):
         ]
 
     def __str__(self):
-        packaging_info = f" ({self.packaging.unit.code})" if self.packaging else ""
-        primary_info = " (Primary)" if self.is_primary else ""
-        return f"{self.barcode}{packaging_info}{primary_info}"
+        primary = " (Primary)" if self.is_primary else ""
+        pkg = f" [{self.packaging.unit.code}]" if self.packaging else ""
+        return f"{self.barcode}{pkg}{primary}"
 
     def clean(self):
         super().clean()
@@ -200,7 +291,7 @@ class ProductBarcode(models.Model):
         if self.barcode:
             self.barcode = self.barcode.strip()
 
-        # Опаковката трябва да принадлежи на същия продукт
+        # Проверка дали packaging е от същия продукт
         if self.packaging and self.packaging.product != self.product:
             raise ValidationError({
                 'packaging': _('Packaging must belong to the same product')
@@ -218,11 +309,13 @@ class ProductBarcode(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # === СВОЙСТВА ===
+    # === HELPER METHODS ===
 
     @property
-    def quantity_in_base_units(self):
-        """Количество в базови единици, което представлява този баркод"""
+    def quantity_in_base_units(self) -> Decimal:
+        """
+        Количество в базови единици, което представлява този баркод
+        """
         if self.packaging:
             return self.packaging.conversion_factor
         return Decimal('1.000')
@@ -234,37 +327,59 @@ class ProductBarcode(models.Model):
             return self.packaging.unit
         return self.product.base_unit
 
-    # === МЕТОДИ ===
-
-    def decode_weight_barcode(self):
+    def decode_weight_barcode(self) -> dict:
         """
         Декодира везни баркод (28xxxxx)
 
-        Формат: 28PPPPPWWWWC
+        Формат: 28PPPPPWWWWWC
         - 28: префикс
-        - PPPPP: код на продукта  
-        - WWWW: тегло в грамове
+        - PPPPP: код на продукта
+        - WWWWW: тегло (в грамове или стотинки)
         - C: контролно число
 
-        Returns: (product_code, weight_grams) или None
+        Returns: dict с декодирани данни или None
         """
         if self.barcode_type != self.WEIGHT or len(self.barcode) != 13:
             return None
 
         try:
             product_code = self.barcode[2:7]
-            weight_str = self.barcode[7:11]
-            weight_grams = int(weight_str)
-            weight_kg = weight_grams / 1000.0
+            weight_str = self.barcode[7:12]
+            weight_value = int(weight_str)
+
+            # Обикновено е в грамове, но може да е и в стотинки (за цена)
+            weight_kg = weight_value / 1000.0
 
             return {
                 'product_code': product_code,
-                'weight_grams': weight_grams,
-                'weight_kg': weight_kg
+                'weight_value': weight_value,
+                'weight_kg': weight_kg,
+                'check_digit': self.barcode[12]
             }
         except (ValueError, IndexError):
             return None
 
-    def is_weight_barcode(self):
+    def is_weight_barcode(self) -> bool:
         """Проверява дали е везни баркод"""
         return self.barcode_type == self.WEIGHT
+
+    def get_product_from_weight_barcode(self):
+        """
+        Намира продукта от везни баркод
+        Returns: Product или None
+        """
+        if not self.is_weight_barcode():
+            return None
+
+        decoded = self.decode_weight_barcode()
+        if decoded:
+            # Търси продукт по PLU код
+            from .products import Product
+            try:
+                return Product.objects.get(
+                    plu_codes__plu_code=decoded['product_code'],
+                    plu_codes__is_active=True
+                )
+            except Product.DoesNotExist:
+                return None
+        return None
