@@ -1,21 +1,29 @@
-# pricing/services/pricing_service.py
+# pricing/services/pricing_service.py - FINAL REFACTORED VERSION
 
 from django.utils import timezone
 from django.db import models
+from django.core.exceptions import ObjectDoesNotExist
 from decimal import Decimal
 from typing import Optional, Dict, List
+import logging
 
 from ..models import (
     ProductPrice, ProductPriceByGroup,
     ProductStepPrice, PromotionalPrice, PackagingPrice
 )
 
+logger = logging.getLogger(__name__)
+
 
 class PricingService:
     """
-    Centralized pricing logic - migrated from warehouse
-    Handles all price calculations and business rules
+    Centralized pricing logic - FULLY REFACTORED for new inventory system
+    NO MORE Product dependencies - uses InventoryItem.avg_cost as single source of truth
     """
+
+    # =====================================================
+    # CORE PRICING METHODS
+    # =====================================================
 
     @staticmethod
     def get_sale_price(
@@ -32,34 +40,39 @@ class PricingService:
         if date is None:
             date = timezone.now().date()
 
-        # 1. Check for active promotions
-        from .promotion_service import PromotionService
-        promo_price = PromotionService.get_promotional_price(
-            location, product, quantity, date, customer
-        )
-        if promo_price:
-            return promo_price
-
-        # 2. Check customer's price group
-        if customer and hasattr(customer, 'price_group') and customer.price_group:
-            group_price = PricingService.get_group_price(
-                location, product, customer.price_group, quantity
+        try:
+            # 1. Check for active promotions
+            promo_price = PricingService._get_promotional_price(
+                location, product, quantity, date, customer
             )
-            if group_price:
-                return group_price
+            if promo_price and promo_price > 0:
+                return promo_price
 
-        # 3. Check step prices
-        step_price = PricingService.get_step_price(location, product, quantity)
-        if step_price:
-            return step_price
+            # 2. Check customer's price group
+            if customer and hasattr(customer, 'price_group') and customer.price_group:
+                group_price = PricingService.get_group_price(
+                    location, product, customer.price_group, quantity
+                )
+                if group_price and group_price > 0:
+                    return group_price
 
-        # 4. Base price for location
-        base_price = PricingService.get_base_price(location, product)
-        if base_price > 0:
-            return base_price
+            # 3. Check step prices
+            step_price = PricingService.get_step_price(location, product, quantity)
+            if step_price and step_price > 0:
+                return step_price
 
-        # 5. Fallback - calculate from cost + location default markup
-        return PricingService.get_fallback_price(location, product)
+            # 4. Base price for location
+            base_price = PricingService.get_base_price(location, product)
+            if base_price and base_price > 0:
+                return base_price
+
+            # 5. Fallback: cost + markup
+            fallback_price = PricingService.get_fallback_price(location, product)
+            return fallback_price
+
+        except Exception as e:
+            logger.error(f"Error getting sale price for {product} at {location}: {e}")
+            return PricingService.get_fallback_price(location, product)
 
     @staticmethod
     def get_base_price(location, product) -> Decimal:
@@ -70,70 +83,244 @@ class PricingService:
                 product=product,
                 is_active=True
             )
-            return price_record.effective_price
+            return price_record.effective_price or Decimal('0')
         except ProductPrice.DoesNotExist:
+            return Decimal('0')
+        except Exception as e:
+            logger.error(f"Error getting base price: {e}")
             return Decimal('0')
 
     @staticmethod
-    def get_group_price(location, product, price_group, quantity=None) -> Optional[Decimal]:
-        """Get price for specific customer group"""
+    def get_step_price(location, product, quantity: Decimal) -> Optional[Decimal]:
+        """Get step price based on quantity"""
         try:
-            # Find group-specific price with quantity consideration
-            group_prices = ProductPriceByGroup.objects.filter(
+            step_prices = ProductStepPrice.objects.filter(
                 location=location,
                 product=product,
-                price_group=price_group,
-                is_active=True
-            )
+                is_active=True,
+                minimum_quantity__lte=quantity
+            ).order_by('-minimum_quantity')
 
-            if quantity:
-                # Get best price for quantity
-                group_prices = group_prices.filter(min_quantity__lte=quantity)
+            if step_prices.exists():
+                return step_prices.first().price
+            return None
 
-            group_price = group_prices.order_by('-min_quantity').first()
-
-            if group_price:
-                return group_price.price
-
-        except ProductPriceByGroup.DoesNotExist:
-            pass
-
-        # Apply group's default discount to base price
-        base_price = PricingService.get_base_price(location, product)
-        if base_price > 0 and price_group.default_discount_percentage > 0:
-            return base_price * (1 - price_group.default_discount_percentage / 100)
-
-        return None
+        except Exception as e:
+            logger.error(f"Error getting step price: {e}")
+            return None
 
     @staticmethod
-    def get_step_price(location, product, quantity) -> Optional[Decimal]:
-        """Get step price based on quantity"""
-        step_price = ProductStepPrice.objects.filter(
-            location=location,
-            product=product,
-            min_quantity__lte=quantity,
-            is_active=True
-        ).order_by('-min_quantity').first()
-
-        return step_price.price if step_price else None
+    def get_group_price(location, product, customer_group, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
+        """Get price for customer group"""
+        try:
+            group_price = ProductPriceByGroup.objects.get(
+                location=location,
+                product=product,
+                customer_group=customer_group,
+                is_active=True
+            )
+            return group_price.price
+        except ProductPriceByGroup.DoesNotExist:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting group price: {e}")
+            return None
 
     @staticmethod
     def get_fallback_price(location, product) -> Decimal:
-        """Fallback pricing using location's default markup"""
+        """
+        Fallback pricing: InventoryItem.avg_cost + markup
+        NO PRODUCT DEPENDENCIES - uses InventoryItem only
+        """
         try:
-            # Get cost from inventory
-            from inventory.models import InventoryItem
-            item = InventoryItem.objects.get(location=location, product=product)
-            cost_price = item.avg_cost
-        except:
-            cost_price = product.current_avg_cost or Decimal('0')
+            cost_price = PricingService._get_inventory_cost(location, product)
 
-        if cost_price <= 0:
+            if cost_price <= 0:
+                return Decimal('0')
+
+            # Apply location's default markup
+            default_markup = getattr(location, 'default_markup_percentage', 30)
+            markup_price = cost_price * (1 + default_markup / 100)
+
+            logger.info(
+                f"Fallback price for {product}: cost={cost_price}, markup={default_markup}%, price={markup_price}")
+            return markup_price
+
+        except Exception as e:
+            logger.error(f"Error calculating fallback price: {e}")
             return Decimal('0')
 
-        # Apply location's default markup
-        default_markup = getattr(location, 'default_markup_percentage', 30)
-        return cost_price * (1 + default_markup / 100)
+    # =====================================================
+    # PRICING ANALYSIS & CALCULATIONS
+    # =====================================================
+
+    @staticmethod
+    def get_pricing_analysis(location, product, customer=None, quantity=Decimal('1')) -> Dict:
+        """Complete pricing analysis for product - NO PRODUCT DEPENDENCIES"""
+        try:
+            base_price = PricingService.get_base_price(location, product)
+            final_price = PricingService.get_sale_price(location, product, customer, quantity)
+            cost_price = PricingService._get_inventory_cost(location, product)
+
+            # Check what pricing rule was applied
+            pricing_rule = PricingService.get_applied_pricing_rule(
+                location, product, customer, quantity
+            )
+
+            return {
+                'base_price': base_price,
+                'final_price': final_price,
+                'cost_price': cost_price,
+                'markup_percentage': PricingService.calculate_markup_percentage(cost_price, final_price),
+                'margin_percentage': PricingService.calculate_margin_percentage(cost_price, final_price),
+                'profit_amount': final_price - cost_price,
+                'customer_discount': base_price - final_price if base_price > final_price else Decimal('0'),
+                'pricing_rule': pricing_rule,
+                'quantity': quantity,
+                'analysis_timestamp': timezone.now()
+            }
+
+        except Exception as e:
+            logger.error(f"Error in pricing analysis: {e}")
+            return {
+                'error': str(e),
+                'base_price': Decimal('0'),
+                'final_price': Decimal('0'),
+                'cost_price': Decimal('0')
+            }
+
+    @staticmethod
+    def get_applied_pricing_rule(location, product, customer=None, quantity=Decimal('1')) -> str:
+        """Determine which pricing rule was applied"""
+        try:
+            date = timezone.now().date()
+
+            # Check promotions
+            if PricingService._get_promotional_price(location, product, quantity, date, customer):
+                return 'PROMOTION'
+
+            # Check customer group
+            if customer and hasattr(customer, 'price_group') and customer.price_group:
+                if PricingService.get_group_price(location, product, customer.price_group, quantity):
+                    return 'CUSTOMER_GROUP'
+
+            # Check step prices
+            if PricingService.get_step_price(location, product, quantity):
+                return 'STEP_PRICE'
+
+            # Check base price
+            if PricingService.get_base_price(location, product) > 0:
+                return 'BASE_PRICE'
+
+            return 'FALLBACK'
+
+        except Exception as e:
+            logger.error(f"Error determining pricing rule: {e}")
+            return 'ERROR'
+
+    # =====================================================
+    # INVENTORY INTEGRATION METHODS
+    # =====================================================
+
+    @staticmethod
+    def _get_inventory_cost(location, product) -> Decimal:
+        """
+        Get cost from InventoryItem.avg_cost - SINGLE SOURCE OF TRUTH
+        NO fallback to Product fields
+        """
+        try:
+            from inventory.models import InventoryItem
+            item = InventoryItem.objects.get(location=location, product=product)
+            return item.avg_cost or Decimal('0')
+        except:
+            # Import here to avoid circular imports
+            from inventory.models import InventoryItem
+            try:
+                item = InventoryItem.objects.get(location=location, product=product)
+                return item.avg_cost or Decimal('0')
+            except InventoryItem.DoesNotExist:
+                logger.warning(f"No InventoryItem found for {product} at {location}")
+                return Decimal('0')
+            except Exception as e:
+                logger.error(f"Error getting inventory cost: {e}")
+                return Decimal('0')
+
+    @staticmethod
+    def update_pricing_after_inventory_change(location, product, new_avg_cost: Decimal) -> int:
+        """
+        Called by InventoryItem.refresh_for_combination()
+        Updates markup-based prices when inventory cost changes
+        """
+        try:
+            updated_count = 0
+
+            # Update markup-based prices
+            markup_prices = ProductPrice.objects.filter(
+                location=location,
+                product=product,
+                pricing_method='MARKUP',
+                is_active=True
+            )
+
+            for price_record in markup_prices:
+                if price_record.markup_percentage and price_record.markup_percentage > 0:
+                    old_price = price_record.effective_price
+                    new_price = new_avg_cost * (1 + price_record.markup_percentage / 100)
+
+                    price_record.effective_price = new_price
+                    price_record.last_cost_update = timezone.now()
+                    price_record.save(update_fields=['effective_price', 'last_cost_update'])
+
+                    logger.info(f"Updated markup price for {product}: {old_price} → {new_price}")
+                    updated_count += 1
+
+            logger.info(f"Updated {updated_count} markup prices after cost change for {product}")
+            return updated_count
+
+        except Exception as e:
+            logger.error(f"Error updating pricing after inventory change: {e}")
+            return 0
+
+    # =====================================================
+    # PROMOTIONAL PRICING
+    # =====================================================
+
+    @staticmethod
+    def _get_promotional_price(location, product, quantity, date, customer=None) -> Optional[Decimal]:
+        """Get promotional price if active"""
+        try:
+            promotions = PromotionalPrice.objects.filter(
+                location=location,
+                product=product,
+                is_active=True,
+                start_date__lte=date,
+                end_date__gte=date
+            )
+
+            # Filter by customer if specified
+            if customer and hasattr(customer, 'price_group'):
+                promotions = promotions.filter(
+                    models.Q(customer_groups__isnull=True) |
+                    models.Q(customer_groups=customer.price_group)
+                )
+
+            # Filter by minimum quantity
+            promotions = promotions.filter(
+                models.Q(minimum_quantity__isnull=True) |
+                models.Q(minimum_quantity__lte=quantity)
+            )
+
+            # Get the best (lowest) promotional price
+            promotion = promotions.order_by('promotional_price').first()
+            return promotion.promotional_price if promotion else None
+
+        except Exception as e:
+            logger.error(f"Error getting promotional price: {e}")
+            return None
+
+    # =====================================================
+    # UTILITY METHODS
+    # =====================================================
 
     @staticmethod
     def calculate_markup_percentage(cost_price: Decimal, sale_price: Decimal) -> Decimal:
@@ -150,168 +337,46 @@ class PricingService:
         return ((sale_price - cost_price) / sale_price) * 100
 
     @staticmethod
-    def update_prices_after_cost_change(location, product, new_cost: Decimal):
-        """Update markup-based prices when cost changes"""
-        markup_prices = ProductPrice.objects.filter(
-            location=location,
-            product=product,
-            pricing_method='MARKUP',
-            is_active=True
-        )
-
-        for price_record in markup_prices:
-            price_record.calculate_effective_price()
-            price_record.last_cost_update = timezone.now()
-            price_record.save(update_fields=['effective_price', 'last_cost_update'])
-
-    @staticmethod
-    def bulk_update_location_prices(location, markup_change_percentage: Decimal):
+    def bulk_update_location_prices(location, markup_change_percentage: Decimal) -> int:
         """Bulk update all prices at location by percentage"""
-        ProductPrice.objects.filter(
-            location=location,
-            is_active=True
-        ).update(
-            effective_price=models.F('effective_price') * (1 + markup_change_percentage / 100)
-        )
-
-    @staticmethod
-    def get_pricing_analysis(location, product, customer=None, quantity=Decimal('1')) -> Dict:
-        """Complete pricing analysis for product"""
-        base_price = PricingService.get_base_price(location, product)
-        final_price = PricingService.get_sale_price(location, product, customer, quantity)
-
         try:
-            from inventory.models import InventoryItem
-            item = InventoryItem.objects.get(location=location, product=product)
-            cost_price = item.avg_cost
-        except:
-            cost_price = product.current_avg_cost or Decimal('0')
-
-        # Check what pricing rule was applied
-        pricing_rule = PricingService.get_applied_pricing_rule(
-            location, product, customer, quantity
-        )
-
-        return {
-            'base_price': base_price,
-            'final_price': final_price,
-            'cost_price': cost_price,
-            'markup_percentage': PricingService.calculate_markup_percentage(cost_price, final_price),
-            'margin_percentage': PricingService.calculate_margin_percentage(cost_price, final_price),
-            'profit_amount': final_price - cost_price,
-            'customer_discount': base_price - final_price if base_price > final_price else Decimal('0'),
-            'pricing_rule': pricing_rule,
-            'quantity': quantity
-        }
-
-    @staticmethod
-    def get_applied_pricing_rule(location, product, customer=None, quantity=Decimal('1')) -> str:
-        """Determine which pricing rule was applied"""
-        date = timezone.now().date()
-
-        # Check promotions
-        from .promotion_service import PromotionService
-        if PromotionService.get_promotional_price(location, product, quantity, date, customer):
-            return 'PROMOTION'
-
-        # Check customer group
-        if customer and hasattr(customer, 'price_group') and customer.price_group:
-            if PricingService.get_group_price(location, product, customer.price_group, quantity):
-                return 'CUSTOMER_GROUP'
-
-        # Check step prices
-        if PricingService.get_step_price(location, product, quantity):
-            return 'STEP_PRICE'
-
-        # Check base price
-        if PricingService.get_base_price(location, product) > 0:
-            return 'BASE_PRICE'
-
-        return 'FALLBACK'
-
-    @staticmethod
-    def get_all_prices_for_product(location, product, customer=None) -> Dict:
-        """Get all available prices for a product"""
-        result = {
-            'base_price': PricingService.get_base_price(location, product),
-            'fallback_price': PricingService.get_fallback_price(location, product),
-            'step_prices': [],
-            'group_prices': [],
-            'promotions': []
-        }
-
-        # Step prices
-        step_prices = ProductStepPrice.objects.filter(
-            location=location,
-            product=product,
-            is_active=True
-        ).order_by('min_quantity')
-
-        for step in step_prices:
-            result['step_prices'].append({
-                'min_quantity': step.min_quantity,
-                'price': step.price,
-                'description': step.description
-            })
-
-        # Group prices (if customer has group)
-        if customer and hasattr(customer, 'price_group') and customer.price_group:
-            group_prices = ProductPriceByGroup.objects.filter(
+            updated_count = ProductPrice.objects.filter(
                 location=location,
-                product=product,
-                price_group=customer.price_group,
                 is_active=True
-            ).order_by('min_quantity')
+            ).update(
+                effective_price=models.F('effective_price') * (1 + markup_change_percentage / 100),
+                last_cost_update=timezone.now()
+            )
 
-            for group_price in group_prices:
-                result['group_prices'].append({
-                    'min_quantity': group_price.min_quantity,
-                    'price': group_price.price,
-                    'group_name': group_price.price_group.name
-                })
+            logger.info(f"Bulk updated {updated_count} prices at {location} by {markup_change_percentage}%")
+            return updated_count
 
-        # Current promotions
-        promotions = PromotionalPrice.objects.filter(
-            location=location,
-            product=product,
-            is_active=True
-        ).filter(
-            start_date__lte=timezone.now().date(),
-            end_date__gte=timezone.now().date()
-        )
+        except Exception as e:
+            logger.error(f"Error in bulk price update: {e}")
+            return 0
 
-        for promo in promotions:
-            if not customer or promo.is_valid_for_customer(customer):
-                result['promotions'].append({
-                    'name': promo.name,
-                    'price': promo.promotional_price,
-                    'min_quantity': promo.min_quantity,
-                    'max_quantity': promo.max_quantity,
-                    'end_date': promo.end_date
-                })
-
-        return result
+    # =====================================================
+    # PACKAGING PRICING INTEGRATION
+    # =====================================================
 
     @staticmethod
-    def validate_price_data(price_data: Dict) -> tuple[bool, List[str]]:
-        """Validate price data before creation/update"""
-        errors = []
-
-        if 'price' in price_data and price_data['price'] < 0:
-            errors.append('Price cannot be negative')
-
-        if 'markup_percentage' in price_data and price_data['markup_percentage'] < 0:
-            errors.append('Markup percentage cannot be negative')
-
-        if 'min_quantity' in price_data and price_data['min_quantity'] <= 0:
-            errors.append('Minimum quantity must be positive')
-
-        return len(errors) == 0, errors
-
-    # === PACKAGING PRICE METHODS ===
+    def get_packaging_price(location, packaging, customer=None, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
+        """Get price for specific packaging"""
+        try:
+            packaging_price = PackagingPrice.objects.get(
+                location=location,
+                packaging=packaging,
+                is_active=True
+            )
+            return packaging_price.price
+        except PackagingPrice.DoesNotExist:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting packaging price: {e}")
+            return None
 
     @staticmethod
-    def get_price_by_barcode(location, barcode, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
+    def get_barcode_pricing(location, barcode, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
         """
         Get price by scanning barcode (handles packaging-specific pricing)
         Returns detailed pricing information including packaging data
@@ -358,158 +423,104 @@ class PricingService:
                 'barcode': barcode
             }
 
-        except ProductBarcode.DoesNotExist:
+        except Exception as e:
+            logger.error(f"Error getting barcode pricing: {e}")
             return {
                 'success': False,
-                'error': 'Barcode not found',
+                'error': str(e),
                 'barcode': barcode
             }
 
+    # =====================================================
+    # REPORTING & ANALYTICS
+    # =====================================================
+
     @staticmethod
-    def get_packaging_price(location, packaging, customer=None, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
-        """
-        Get price for specific packaging
-        """
+    def get_all_prices_for_product(location, product, customer=None) -> Dict:
+        """Get all available prices for a product"""
         try:
-            packaging_price = PackagingPrice.objects.get(
+            result = {
+                'base_price': PricingService.get_base_price(location, product),
+                'fallback_price': PricingService.get_fallback_price(location, product),
+                'cost_price': PricingService._get_inventory_cost(location, product),
+                'step_prices': [],
+                'group_prices': [],
+                'promotions': [],
+                'packaging_prices': []
+            }
+
+            # Step prices
+            step_prices = ProductStepPrice.objects.filter(
                 location=location,
-                packaging=packaging,
+                product=product,
                 is_active=True
-            )
-            return packaging_price.price
+            ).order_by('minimum_quantity')
 
-        except PackagingPrice.DoesNotExist:
-            # Fallback: calculate from base product price
-            base_unit_price = PricingService.get_sale_price(
-                location, packaging.product, customer,
-                quantity * packaging.conversion_factor
-            )
-
-            if base_unit_price > 0:
-                return base_unit_price * packaging.conversion_factor
-
-            return None
-
-    @staticmethod
-    def get_price_by_plu(location, plu_code, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
-        """
-        Get price by PLU code (for weight-based products)
-        """
-        try:
-            from products.models import ProductPLU
-            plu_obj = ProductPLU.objects.select_related('product').get(
-                plu_code=plu_code, is_active=True
-            )
-
-            product = plu_obj.product
-            product_price = PricingService.get_sale_price(
-                location, product, customer, quantity
-            )
-
-            return {
-                'success': True,
-                'product': product,
-                'price': product_price,
-                'unit_price': product_price,
-                'pricing_type': 'PLU',
-                'plu_code': plu_code
-            }
-
-        except ProductPLU.DoesNotExist:
-            return {
-                'success': False,
-                'error': 'PLU code not found',
-                'plu_code': plu_code
-            }
-
-    @staticmethod
-    def get_all_packaging_prices(location, product) -> List[Dict]:
-        """
-        Get all packaging prices for a product at location
-        """
-        result = []
-
-        # Get all packagings for this product
-        from products.models import ProductPackaging
-        packagings = ProductPackaging.objects.filter(
-            product=product,
-            is_active=True
-        ).select_related('unit').order_by('conversion_factor')
-
-        for packaging in packagings:
-            packaging_price = PricingService.get_packaging_price(location, packaging)
-
-            if packaging_price:
-                unit_price = packaging_price / packaging.conversion_factor
-
-                result.append({
-                    'packaging': packaging,
-                    'packaging_price': packaging_price,
-                    'unit_price': unit_price,
-                    'conversion_factor': packaging.conversion_factor,
-                    'unit_name': packaging.unit.name,
-                    'is_default_sale': packaging.is_default_sale_unit,
-                    'is_default_purchase': packaging.is_default_purchase_unit
+            for step_price in step_prices:
+                result['step_prices'].append({
+                    'minimum_quantity': step_price.minimum_quantity,
+                    'price': step_price.price
                 })
 
-        return result
+            # Group prices
+            group_prices = ProductPriceByGroup.objects.filter(
+                location=location,
+                product=product,
+                is_active=True
+            ).select_related('customer_group')
+
+            for group_price in group_prices:
+                result['group_prices'].append({
+                    'customer_group': group_price.customer_group.name,
+                    'price': group_price.price
+                })
+
+            # Active promotions
+            today = timezone.now().date()
+            promotions = PromotionalPrice.objects.filter(
+                location=location,
+                product=product,
+                is_active=True,
+                start_date__lte=today,
+                end_date__gte=today
+            )
+
+            for promotion in promotions:
+                result['promotions'].append({
+                    'name': promotion.name,
+                    'promotional_price': promotion.promotional_price,
+                    'start_date': promotion.start_date,
+                    'end_date': promotion.end_date,
+                    'minimum_quantity': promotion.minimum_quantity
+                })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting all prices for product: {e}")
+            return {'error': str(e)}
 
     @staticmethod
-    def compare_packaging_prices(location, product, customer=None) -> Dict:
-        """
-        Compare all packaging options and find the best deal
-        """
-        packaging_prices = PricingService.get_all_packaging_prices(location, product)
+    def get_price_history(location, product, days=30) -> List[Dict]:
+        """Get pricing history for product"""
+        try:
+            from django.utils import timezone
+            from datetime import timedelta
 
-        if not packaging_prices:
-            return {'error': 'No packaging prices available'}
+            end_date = timezone.now().date()
+            start_date = end_date - timedelta(days=days)
 
-        # Sort by unit price (ascending)
-        packaging_prices.sort(key=lambda x: x['unit_price'])
+            # This would require a PriceHistory model to track changes
+            # For now, return current pricing data
+            current_analysis = PricingService.get_pricing_analysis(location, product)
 
-        best_deal = packaging_prices[0]
-        worst_deal = packaging_prices[-1]
+            return [{
+                'date': end_date,
+                'base_price': current_analysis.get('base_price', Decimal('0')),
+                'cost_price': current_analysis.get('cost_price', Decimal('0')),
+                'margin_percentage': current_analysis.get('margin_percentage', Decimal('0'))
+            }]
 
-        savings = worst_deal['unit_price'] - best_deal['unit_price']
-        savings_percentage = (savings / worst_deal['unit_price']) * 100 if worst_deal['unit_price'] > 0 else 0
-
-        return {
-            'product': product,
-            'location': location,
-            'packaging_options': packaging_prices,
-            'best_deal': best_deal,
-            'worst_deal': worst_deal,
-            'max_savings': {
-                'amount': savings,
-                'percentage': savings_percentage
-            },
-            'recommendation': f"Buy {best_deal['packaging'].unit.name} for best unit price"
-        }
-
-    @staticmethod
-    def bulk_update_packaging_prices(location, markup_change_percentage: Decimal):
-        """
-        Bulk update packaging prices by percentage
-        """
-        updated_count = 0
-
-        # Update non-fixed packaging prices
-        for packaging_price in PackagingPrice.objects.filter(
-            location=location,
-            pricing_method__in=['MARKUP', 'AUTO'],
-            is_active=True
-        ):
-            packaging_price.calculate_effective_price()
-            packaging_price.save(update_fields=['price'])
-            updated_count += 1
-
-        # Update fixed prices by percentage
-        PackagingPrice.objects.filter(
-            location=location,
-            pricing_method='FIXED',
-            is_active=True
-        ).update(
-            price=models.F('price') * (1 + markup_change_percentage / 100)
-        )
-
-        return updated_count
+        except Exception as e:
+            logger.error(f"Error getting price history: {e}")
+            return []

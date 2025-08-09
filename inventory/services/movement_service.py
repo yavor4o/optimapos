@@ -1,6 +1,8 @@
 # inventory/services/movement_service.py - ENHANCED WITH PRICING INTEGRATION
 
 import logging
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -149,6 +151,107 @@ class MovementService:
             f"✅ Created outgoing movement: {product.code} -{quantity} at {location.code}, "
             f"movements: {len(movements)}, total_profit: {total_profit}"
         )
+
+        return movements
+
+    @staticmethod
+    def _create_from_purchase_order(order) -> List[InventoryMovement]:
+        """
+        Create movements from purchase order (auto-receive scenario)
+        """
+        movements = []
+
+        # Check if auto-receive is enabled
+        if not getattr(order.document_type, 'auto_receive', False):
+            logger.debug(f"Order {order.document_number} does not have auto-receive enabled")
+            return movements
+
+        for line in order.lines.all():
+            if not line.ordered_quantity or line.ordered_quantity <= 0:
+                continue
+
+            try:
+                movement = MovementService.create_incoming_movement(
+                    location=order.location,
+                    product=line.product,
+                    quantity=line.ordered_quantity,
+                    cost_price=line.unit_price or Decimal('0.00'),
+                    source_document_type='PURCHASE_AUTO',
+                    source_document_number=order.document_number,
+                    source_document_line_id=getattr(line, 'line_number', None),
+                    movement_date=order.document_date,
+                    reason=f"Auto-receive from PO (line {getattr(line, 'line_number', '?')})",
+                    created_by=getattr(order, 'created_by', None)
+                )
+                movements.append(movement)
+
+            except Exception as e:
+                logger.error(f"Error in auto-receive for PO line {getattr(line, 'line_number', '?')}: {e}")
+                continue
+
+        return movements
+
+    @staticmethod
+    def _create_from_stock_transfer(transfer) -> List[InventoryMovement]:
+        """
+        Create movements from stock transfer document
+        """
+        movements = []
+
+        for line in transfer.lines.all():
+            if not line.quantity or line.quantity <= 0:
+                continue
+
+            try:
+                # Use the transfer method which handles both directions
+                outbound, inbound = MovementService.create_transfer_movement(
+                    from_location=transfer.from_location,
+                    to_location=transfer.to_location,
+                    product=line.product,
+                    quantity=line.quantity,
+                    source_document_type='TRANSFER',
+                    source_document_number=transfer.document_number,
+                    source_document_line_id=getattr(line, 'line_number', None),
+                    movement_date=transfer.document_date,
+                    reason=f"Stock transfer (line {getattr(line, 'line_number', '?')})",
+                    created_by=getattr(transfer, 'created_by', None)
+                )
+                movements.extend(outbound)
+                movements.extend(inbound)
+
+            except Exception as e:
+                logger.error(f"Error in transfer for line {getattr(line, 'line_number', '?')}: {e}")
+                continue
+
+        return movements
+
+    @staticmethod
+    def _create_from_stock_adjustment(adjustment) -> List[InventoryMovement]:
+        """
+        Create movements from stock adjustment document
+        """
+        movements = []
+
+        for line in adjustment.lines.all():
+            if not line.adjustment_quantity or line.adjustment_quantity == 0:
+                continue
+
+            try:
+                movement = MovementService.create_adjustment_movement(
+                    location=adjustment.location,
+                    product=line.product,
+                    adjustment_qty=line.adjustment_quantity,
+                    reason=f"Stock adjustment: {adjustment.reason} (line {getattr(line, 'line_number', '?')})",
+                    movement_date=adjustment.document_date,
+                    created_by=getattr(adjustment, 'created_by', None),
+                    manual_cost_price=getattr(line, 'cost_price', None),
+                    batch_number=getattr(line, 'batch_number', None)
+                )
+                movements.append(movement)
+
+            except Exception as e:
+                logger.error(f"Error in adjustment for line {getattr(line, 'line_number', '?')}: {e}")
+                continue
 
         return movements
 
