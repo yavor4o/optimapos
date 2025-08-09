@@ -1,233 +1,219 @@
-# inventory/admin.py
-from datetime import timedelta
+# inventory/admin.py - REFACTORED
 
-from django import forms
 from django.contrib import admin
-from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.urls import reverse
-from django.utils.safestring import mark_safe, SafeString
-from django.db.models import Count, Sum, Q, F
+from django.utils.safestring import mark_safe
+from django.db.models import Sum, Count, F, Q
+from django.utils import timezone
+from decimal import Decimal
 
-from .models import InventoryLocation, InventoryItem, InventoryMovement, InventoryBatch
-from .models.locations import POSLocation
-
-
-# === INVENTORY LOCATION ADMIN ===
-
-# inventory/admin.py - ФИКСИРАН InventoryItemInline
-
-class InventoryItemInline(admin.TabularInline):
-    """Inline за продукти в локацията"""
-    model = InventoryItem
-    extra = 0
-
-    fields = [
-        'product', 'current_qty', 'reserved_qty', 'avg_cost',
-        'min_stock_level', 'max_stock_level'
-    ]
-
-    readonly_fields = ['avg_cost', 'last_movement_date']
-    show_change_link = True
-
-    # ФИКСИРАНО: Премахваме slice и използваме ordering + limit в template/JavaScript
-    def get_queryset(self, request):
-        """
-        Оптимизиран queryset БЕЗ slice за да избегнем TypeError
-        """
-        return super().get_queryset(request).select_related(
-            'product'
-        ).filter(
-            current_qty__gt=0  # Показваме само продукти с наличност
-        ).order_by(
-            '-current_qty'  # Първо най-големите количества
-        )
-
-    # ДОБАВЯМЕ max_num за ограничаване на показаните записи
-    max_num = 20
+from .models import (
+    InventoryLocation, InventoryItem, InventoryBatch, InventoryMovement
+)
+from .services import InventoryService, MovementService
 
 
-
-    def has_add_permission(self, request, obj=None):
-        """Не позволяваме добавяне от inline - InventoryItem се създава автоматично"""
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        """Не позволяваме изтриване от inline - данните са кеширани"""
-        return False
-
+# =================================================================
+# INVENTORY LOCATION ADMIN
+# =================================================================
 
 @admin.register(InventoryLocation)
 class InventoryLocationAdmin(admin.ModelAdmin):
-    """Professional admin for Inventory Locations"""
+    """Enhanced admin for inventory locations with batch settings"""
 
     list_display = [
-        'code', 'name', 'location_type_display', 'manager_display',
-        'stock_summary', 'products_count', 'negative_stock_badge',
-        'is_active'
+        'code', 'name', 'location_type', 'is_active',
+        'allow_negative_stock', 'batch_tracking_display',
+        'inventory_summary', 'last_movement_display'
     ]
 
     list_filter = [
         'location_type', 'is_active', 'allow_negative_stock',
-        'created_at'
+        'batch_tracking_mode', 'force_batch_on_receive'
     ]
 
-    search_fields = [
-        'code', 'name', 'address', 'manager__first_name', 'manager__last_name'
-    ]
-
-    list_editable = ['is_active']
+    search_fields = ['code', 'name', 'description']
 
     readonly_fields = [
-        'created_at', 'updated_at', 'location_analytics'
+        'created_at', 'updated_at', 'inventory_analytics',
+        'location_health_score'
     ]
 
     fieldsets = (
         (_('Basic Information'), {
-            'fields': ('code', 'name', 'location_type', 'is_active')
-        }),
-        (_('Contact Information'), {
-            'fields': ('address', 'phone', 'email', 'manager'),
-            'classes': ('collapse',)
-        }),
-        (_('Inventory Settings'), {
             'fields': (
-                'default_markup_percentage',
-                'allow_negative_stock',
-                'sales_prices_include_vat',
-                'purchase_prices_include_vat'
+                'code', 'name', 'location_type',
+                'is_active', 'allow_negative_stock'
+            )
+        }),
+        (_('Batch Tracking Settings'), {
+            'fields': (
+                'batch_tracking_mode', 'force_batch_on_receive',
+                'allow_mixed_batches', 'default_expiry_days'
             ),
-            'description': _('Settings that affect inventory behavior')
+            'classes': ('collapse',)
         }),
         (_('Analytics'), {
-            'fields': ('location_analytics',),
-            'classes': ('collapse',),
-            'description': _('Automatically calculated location statistics')
+            'fields': ('inventory_analytics', 'location_health_score'),
+            'classes': ('collapse',)
         }),
-        (_('System Information'), {
+        (_('Audit'), {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
-        })
+        }),
     )
 
-    inlines = [InventoryItemInline]
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('manager').annotate(
-            products_count_ann=Count('inventory_items', distinct=True),
-            total_value_ann=Sum('inventory_items__current_qty') or 0
-        )
-
-    def location_type_display(self, obj):
-        """Location type with icon"""
+    def batch_tracking_display(self, obj):
+        """Display batch tracking configuration"""
         icons = {
-            'WAREHOUSE': '🏭',
-            'SHOP': '🏪',
-            'STORAGE': '📦',
-            'VIRTUAL': '☁️'
+            'DISABLED': '❌',
+            'OPTIONAL': '⚙️',
+            'ENFORCED': '✅'
         }
-        icon = icons.get(obj.location_type, '❓')
+
+        icon = icons.get(obj.batch_tracking_mode, '❓')
+        mode_text = obj.get_batch_tracking_mode_display()
+
+        extra_info = []
+        if obj.force_batch_on_receive:
+            extra_info.append('Force on receive')
+        if obj.allow_mixed_batches:
+            extra_info.append('Mixed batches')
+
+        extra = f" ({', '.join(extra_info)})" if extra_info else ""
+
         return format_html(
-            '{} {}',
-            icon, obj.get_location_type_display()
+            '{} {}<small style="color: gray;">{}</small>',
+            icon, mode_text, extra
         )
 
-    location_type_display.short_description = _('Type')
-    location_type_display.admin_order_field = 'location_type'
+    batch_tracking_display.short_description = _('Batch Tracking')
 
-    def manager_display(self, obj):
-        """Manager with link to user admin"""
-        if obj.manager:
-            url = reverse('admin:accounts_user_change', args=[obj.manager.pk])
-            return format_html(
-                '<a href="{}">{}</a>',
-                url, obj.manager.get_full_name() or obj.manager.username
-            )
-        return format_html('<span style="color: gray;">{}</span>', _('No manager'))
-
-    manager_display.short_description = _('Manager')
-
-    def stock_summary(self, obj):
-        """Stock summary for location"""
+    def inventory_summary(self, obj):
+        """Quick inventory summary for this location"""
         try:
-            items = obj.inventory_items.filter(current_qty__gt=0)
-            total_products = items.count()
-            total_value = sum(item.current_qty * item.avg_cost for item in items)
+            inventory = InventoryService.get_location_inventory(
+                location=obj,
+                include_zero_stock=False
+            )
+
+            if not inventory:
+                return format_html('<em style="color: gray;">No stock</em>')
+
+            total_products = len(inventory)
+            total_value = sum(item['total_value'] for item in inventory)
 
             return format_html(
                 '<strong>{}</strong> products<br>'
                 '<span style="color: green;">{:.2f} лв</span> value',
-                total_products, float(total_value)  # ← ДОБАВИ float()
+                total_products, total_value
             )
-        except:
-            return '-'
+        except Exception:
+            return format_html('<em style="color: red;">Error</em>')
 
-    stock_summary.short_description = _('Stock Summary')
+    inventory_summary.short_description = _('Inventory Summary')
 
-    def products_count(self, obj):
-        """Number of products in location"""
-        count = getattr(obj, 'products_count_ann', 0)
-        if count > 0:
+    def last_movement_display(self, obj):
+        """Display last movement information"""
+        try:
+            last_movement = InventoryMovement.objects.filter(
+                location=obj
+            ).order_by('-created_at').first()
+
+            if not last_movement:
+                return format_html('<em style="color: gray;">No movements</em>')
+
+            days_ago = (timezone.now().date() - last_movement.movement_date).days
+
+            color = 'green' if days_ago <= 1 else 'orange' if days_ago <= 7 else 'red'
+
             return format_html(
-                '<span style="color: blue;">📦 {}</span>',
-                count
+                '<span style="color: {};">{} days ago</span><br>'
+                '<small>{} {}</small>',
+                color, days_ago,
+                last_movement.get_movement_type_display(),
+                last_movement.product.code
             )
-        return format_html('<span style="color: gray;">0</span>')
+        except Exception:
+            return format_html('<em style="color: red;">Error</em>')
 
-    products_count.short_description = _('Products')
-    products_count.admin_order_field = 'products_count_ann'
+    last_movement_display.short_description = _('Last Movement')
 
-    def negative_stock_badge(self, obj):
-        """Shows if negative stock is allowed"""
-        if obj.allow_negative_stock:
-            return format_html(
-                '<span style="color: orange; font-weight: bold;">⚠️ Allowed</span>'
-            )
-        return format_html('<span style="color: green;">✅ Not Allowed</span>')
-
-    negative_stock_badge.short_description = _('Negative Stock')
-
-    def location_analytics(self, obj):
-        """Detailed location analytics"""
+    def inventory_analytics(self, obj):
+        """Comprehensive inventory analytics for this location"""
         if not obj.pk:
             return "Save location first to see analytics"
 
         try:
-            # Get inventory statistics
-            items = obj.inventory_items.filter(current_qty__gt=0)
-            total_products = items.count()
-            total_value = sum(item.current_qty * item.avg_cost for item in items)
-
-            # Get recent movements
-            recent_movements = obj.movements.filter(
-                created_at__gte=timezone.now() - timedelta(days=30)
-            ).count()
-
-            # Low stock items
-            low_stock = items.filter(
-                current_qty__lte=F('min_stock_level'),
-                min_stock_level__gt=0
-            ).count()
+            valuation = InventoryService.get_inventory_valuation(location=obj)
 
             analysis_parts = [
-                f"<strong>Total Products:</strong> {total_products}",
-                f"<strong>Total Inventory Value:</strong> {total_value:.2f} лв",
-                f"<strong>Recent Movements (30d):</strong> {recent_movements}",
-                f"<strong>Low Stock Items:</strong> {low_stock}",
-                f"<strong>Location Type:</strong> {obj.get_location_type_display()}",
-                f"<strong>Markup:</strong> {obj.default_markup_percentage}%",
+                f"<strong>Products:</strong> {valuation['total_products']}",
+                f"<strong>Total Value:</strong> {valuation['total_value']:.2f} лв",
             ]
 
-            if obj.manager:
-                analysis_parts.append(f"<strong>Manager:</strong> {obj.manager.get_full_name()}")
+            if valuation.get('recent_performance', {}).get('revenue_last_30_days', 0) > 0:
+                analysis_parts.append(
+                    f"<strong>Revenue (30d):</strong> {valuation['recent_performance']['revenue_last_30_days']:.2f} лв"
+                )
+                analysis_parts.append(
+                    f"<strong>Profit (30d):</strong> {valuation['recent_performance']['profit_last_30_days']:.2f} лв"
+                )
 
             return mark_safe('<br>'.join(analysis_parts))
 
         except Exception as e:
-            return f"Analysis error: {str(e)}"
+            return f"Analytics error: {e}"
 
-    location_analytics.short_description = _('Location Analytics')
+    inventory_analytics.short_description = _('Inventory Analytics')
+
+    def location_health_score(self, obj):
+        """Simple health indicator based on available data"""
+        if not obj.pk:
+            return "Save location first"
+
+        try:
+            # Simple health calculation based on available data
+            inventory = InventoryService.get_location_inventory(location=obj)
+
+            if not inventory:
+                return format_html(
+                    '<div style="text-align: center;">'
+                    '<div style="color: gray; font-size: 24px; font-weight: bold;">N/A</div>'
+                    '<div style="margin-top: 10px;">No inventory</div>'
+                    '</div>'
+                )
+
+            total_products = len(inventory)
+            low_stock_count = len([item for item in inventory if item.get('needs_reorder', False)])
+
+            # Simple health score: 100 - (low_stock_percentage * 2)
+            low_stock_percentage = (low_stock_count / total_products * 100) if total_products > 0 else 0
+            health_score = max(0, round(100 - (low_stock_percentage * 2)))
+
+            color = 'green' if health_score >= 80 else 'orange' if health_score >= 60 else 'red'
+
+            recommendations = []
+            if low_stock_count > 0:
+                recommendations.append(f"• {low_stock_count} products need reorder")
+            if not recommendations:
+                recommendations.append("• Inventory levels OK")
+
+            recommendations_html = '<br>'.join(recommendations[:2])
+
+            return format_html(
+                '<div style="text-align: center;">'
+                '<div style="color: {}; font-size: 24px; font-weight: bold;">{}/100</div>'
+                '<div style="margin-top: 10px; text-align: left;">{}</div>'
+                '</div>',
+                color, health_score, recommendations_html
+            )
+
+        except Exception as e:
+            return f"Health calculation error: {e}"
+
+    location_health_score.short_description = _('Health Score')
 
     # Actions
     actions = ['activate_locations', 'deactivate_locations', 'export_inventory']
@@ -257,16 +243,18 @@ class InventoryLocationAdmin(admin.ModelAdmin):
     export_inventory.short_description = _('Export inventory data')
 
 
-# === INVENTORY ITEM ADMIN ===
+# =================================================================
+# INVENTORY ITEM ADMIN
+# =================================================================
 
 @admin.register(InventoryItem)
 class InventoryItemAdmin(admin.ModelAdmin):
-    """Admin for inventory items (cached quantities)"""
+    """Enhanced admin for inventory items with profit tracking"""
 
     list_display = [
         'product_display', 'location', 'current_qty_display',
-        'reserved_qty', 'avg_cost_display', 'stock_status',
-        'last_movement_date'
+        'reserved_qty', 'avg_cost_display', 'profit_potential_display',
+        'stock_status', 'last_movement_date'
     ]
 
     list_filter = [
@@ -279,8 +267,38 @@ class InventoryItemAdmin(admin.ModelAdmin):
     ]
 
     readonly_fields = [
-        'current_qty', 'avg_cost', 'last_movement_date', 'updated_at'
+        'current_qty', 'avg_cost', 'last_movement_date', 'updated_at',
+        'stock_analytics', 'movement_history'
     ]
+
+    fieldsets = (
+        (_('Basic Information'), {
+            'fields': (
+                'location', 'product', 'current_qty', 'reserved_qty',
+                'avg_cost'
+            )
+        }),
+        (_('Cost Tracking'), {
+            'fields': (
+                'last_purchase_cost', 'last_purchase_date',
+                'last_sale_price', 'last_sale_date'
+            ),
+            'classes': ('collapse',)
+        }),
+        (_('Stock Management'), {
+            'fields': (
+                'min_stock_level', 'max_stock_level'
+            )
+        }),
+        (_('Analytics'), {
+            'fields': ('stock_analytics', 'movement_history'),
+            'classes': ('collapse',)
+        }),
+        (_('Audit'), {
+            'fields': ('last_movement_date', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -288,143 +306,231 @@ class InventoryItemAdmin(admin.ModelAdmin):
         ).filter(current_qty__gt=0)
 
     def product_display(self, obj):
-        return f"{obj.product.code} - {obj.product.name[:30]}"
+        """Enhanced product display with clickable link"""
+        return format_html(
+            '<a href="/admin/products/product/{}/change/" target="_blank">'
+            '<strong>{}</strong></a><br>'
+            '<small>{}</small>',
+            obj.product.id,
+            obj.product.code,
+            obj.product.name[:30] + ('...' if len(obj.product.name) > 30 else '')
+        )
 
     product_display.short_description = _('Product')
 
     def current_qty_display(self, obj):
-        """Current quantity with color coding"""
+        """Current quantity with color coding and trend"""
         try:
             qty = float(obj.current_qty or 0)
             min_qty = float(obj.min_stock_level or 0)
-            color = 'green' if qty > min_qty else 'orange' if qty > 0 else 'red'
+
+            if qty <= 0:
+                color = 'red'
+                icon = '❌'
+            elif qty <= min_qty:
+                color = 'orange'
+                icon = '⚠️'
+            elif obj.is_overstocked:
+                color = 'purple'
+                icon = '📈'
+            else:
+                color = 'green'
+                icon = '✅'
 
             return format_html(
-                '<strong style="color: {};">{:.3f}</strong>',
-                color, qty
+                '{} <strong style="color: {};">{:.3f}</strong><br>'
+                '<small>Available: {:.3f}</small>',
+                icon, color, qty, float(obj.available_qty)
             )
-        except (TypeError, ValueError) as e:
-            return format_html('<span style="color: red;">ERR</span>')
+        except (TypeError, ValueError):
+            return format_html('<span style="color: red;">ERROR</span>')
 
     current_qty_display.short_description = _('Current Qty')
 
     def avg_cost_display(self, obj):
-        return obj.avg_cost
+        """Average cost with purchase comparison"""
+        avg_cost = obj.avg_cost
+        last_purchase = obj.last_purchase_cost
 
-    avg_cost_display.short_description = "Средна цена"
-    avg_cost_display.admin_order_field = "avg_cost"
+        if last_purchase and avg_cost != last_purchase:
+            difference = last_purchase - avg_cost
+            arrow = '📈' if difference > 0 else '📉'
+
+            return format_html(
+                '<strong>{:.4f}</strong><br>'
+                '<small>{} Last: {:.4f}</small>',
+                avg_cost, arrow, last_purchase
+            )
+        else:
+            return format_html('<strong>{:.4f}</strong>', avg_cost)
+
+    avg_cost_display.short_description = _('Avg Cost')
+
+    def profit_potential_display(self, obj):
+        """Profit potential based on last sale price"""
+        if not obj.last_sale_price or obj.avg_cost <= 0:
+            return format_html('<em style="color: gray;">N/A</em>')
+
+        profit_per_unit = obj.last_sale_price - obj.avg_cost
+        total_profit = profit_per_unit * obj.current_qty
+        margin = (profit_per_unit / obj.last_sale_price * 100) if obj.last_sale_price > 0 else 0
+
+        color = 'green' if margin > 20 else 'orange' if margin > 10 else 'red'
+
+        return format_html(
+            '<strong style="color: {};">{:.2f} лв</strong><br>'
+            '<small>{:.1f}% margin</small>',
+            color, total_profit, margin
+        )
+
+    profit_potential_display.short_description = _('Profit Potential')
 
     def stock_status(self, obj):
-        """Stock status indicator"""
-        if obj.current_qty == 0:
-            return format_html('<span style="color: red;">❌ Out of Stock</span>')
-        elif obj.current_qty <= obj.min_stock_level and obj.min_stock_level > 0:
-            return format_html('<span style="color: orange;">⚠️ Low Stock</span>')
-        else:
-            return format_html('<span style="color: green;">✅ In Stock</span>')
+        """Stock status with actionable insights"""
+        status_parts = []
+
+        if obj.needs_reorder:
+            status_parts.append('<span style="color: red;">⚠️ Needs Reorder</span>')
+
+        if obj.is_overstocked:
+            status_parts.append('<span style="color: purple;">📈 Overstocked</span>')
+
+        if obj.reserved_qty > 0:
+            status_parts.append(f'<span style="color: blue;">🔒 Reserved: {obj.reserved_qty}</span>')
+
+        if not status_parts:
+            status_parts.append('<span style="color: green;">✅ OK</span>')
+
+        return format_html('<br>'.join(status_parts))
 
     stock_status.short_description = _('Status')
 
+    def stock_analytics(self, obj):
+        """Detailed stock analytics"""
+        if not obj.pk:
+            return "Save item first to see analytics"
 
-# === INVENTORY MOVEMENT ADMIN ===
+        try:
+            summary = InventoryService.get_stock_summary(obj.location, obj.product)
 
-@admin.register(InventoryMovement)
-class InventoryMovementAdmin(admin.ModelAdmin):
-    """Admin for inventory movements (audit trail)"""
+            analysis_parts = [
+                f"<strong>Stock Value:</strong> {summary['stock_value']:.2f} лв",
+                f"<strong>Movement Count (30d):</strong> {summary['movement_summary']['movement_count']}",
+            ]
 
-    list_display = [
-        'movement_date', 'location', 'product_display', 'movement_type_display',
-        'quantity_display', 'cost_price', 'source_doc', 'created_by'
-    ]
+            if summary['movement_summary']['total_revenue'] > 0:
+                analysis_parts.extend([
+                    f"<strong>Revenue (30d):</strong> {summary['movement_summary']['total_revenue']:.2f} лв",
+                    f"<strong>Profit (30d):</strong> {summary['movement_summary']['total_profit']:.2f} лв"
+                ])
 
-    list_filter = [
-        'movement_type', 'location', 'movement_date', 'created_at'
-    ]
+            if summary['batches']:
+                analysis_parts.append(f"<strong>Active Batches:</strong> {len(summary['batches'])}")
 
-    search_fields = [
-        'product__code', 'product__name', 'source_document_number',
-        'batch_number', 'reason'
-    ]
+            return mark_safe('<br>'.join(analysis_parts))
 
-    date_hierarchy = 'movement_date'
+        except Exception as e:
+            return f"Analytics error: {e}"
 
-    readonly_fields = [
-        'created_at', 'movement_date', 'quantity', 'cost_price'
-    ]
+    stock_analytics.short_description = _('Stock Analytics')
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'product', 'location', 'created_by',
-        )
+    def movement_history(self, obj):
+        """Recent movement history"""
+        if not obj.pk:
+            return "Save item first"
 
-    def product_display(self, obj):
-        return f"{obj.product.code} - {obj.product.name[:25]}"
+        try:
+            recent_movements = InventoryMovement.objects.filter(
+                location=obj.location,
+                product=obj.product
+            ).order_by('-created_at')[:5]
 
-    product_display.short_description = _('Product')
+            if not recent_movements:
+                return format_html('<em style="color: gray;">No movements</em>')
 
-    def movement_type_display(self, obj):
-        """Movement type with direction icon"""
-        icons = {
-            'IN': '⬆️',
-            'OUT': '⬇️',
-            'TRANSFER': '↔️',
-            'ADJUSTMENT': '🔧',
-            'PRODUCTION': '🏭',
-            'CYCLE_COUNT': '📊'
-        }
-        icon = icons.get(obj.movement_type, '❓')
-        return format_html(
-            '{} {}',
-            icon, obj.get_movement_type_display()
-        )
+            movement_lines = []
+            for movement in recent_movements:
+                direction = '+' if movement.movement_type == 'IN' else '-'
+                color = 'green' if movement.movement_type == 'IN' else 'red'
 
-    movement_type_display.short_description = _('Type')
+                profit_info = ''
+                if movement.sale_price:
+                    profit_info = f' (Profit: {movement.profit_amount:.2f})'
 
-    def quantity_display(self, obj):
-        """Quantity with +/- sign"""
-        sign = '+' if obj.movement_type == 'IN' else '-'
-        color = 'green' if obj.movement_type == 'IN' else 'red'
+                movement_lines.append(
+                    f'<span style="color: {color};">{direction}{movement.quantity}</span> '
+                    f'{movement.get_movement_type_display()}{profit_info}'
+                )
 
-        # Форматираме количеството отделно
-        formatted_quantity = f"{float(obj.quantity):.3f}"
+            return format_html('<br>'.join(movement_lines))
 
-        return format_html(
-            '<strong style="color: {};">{}{}</strong>',
-            color, sign, formatted_quantity
-        )
+        except Exception as e:
+            return f"History error: {e}"
 
-    quantity_display.short_description = _('Quantity')
-
-    def source_doc(self, obj):
-        """Source document link - без delivery_receipt"""
-        if obj.source_document_number and obj.source_document_type == 'PURCHASE':
-            # Показвай само document number, без линк
-            return f"PUR-{obj.source_document_number}"
-        elif obj.source_document_number:
-            return obj.source_document_number
-        return '-'
-
-    source_doc.short_description = _('Source Document')
+    movement_history.short_description = _('Recent Movements')
 
 
-# === INVENTORY BATCH ADMIN ===
+# =================================================================
+# INVENTORY BATCH ADMIN
+# =================================================================
 
 @admin.register(InventoryBatch)
 class InventoryBatchAdmin(admin.ModelAdmin):
-    """Admin for inventory batches (FIFO tracking)"""
+    """Enhanced admin for inventory batches with expiry tracking"""
 
     list_display = [
-        'product_display', 'location', 'batch_number', 'remaining_qty',
-        'received_date', 'expiry_status', 'cost_price'
+        'batch_number', 'product_display', 'location',
+        'remaining_qty', 'expiry_status_display', 'cost_price',
+        'batch_value_display', 'consumption_display'
     ]
 
     list_filter = [
-        'location', 'received_date', 'expiry_date', 'product__product_group'
+        'location', 'is_unknown_batch', 'expiry_date',
+        'product__product_group', 'received_date'
     ]
 
     search_fields = [
-        'product__code', 'product__name', 'batch_number'
+        'batch_number', 'product__code', 'product__name',
+        'location__code'
     ]
+
+    readonly_fields = [
+        'remaining_qty', 'consumed_qty', 'created_at', 'updated_at',
+        'is_expired', 'days_until_expiry', 'consumption_percentage',
+        'batch_analytics'
+    ]
+
+    fieldsets = (
+        (_('Basic Information'), {
+            'fields': (
+                'location', 'product', 'batch_number',
+                'received_qty', 'remaining_qty', 'consumed_qty'
+            )
+        }),
+        (_('Dates & Expiry'), {
+            'fields': (
+                'received_date', 'expiry_date',
+                'is_expired', 'days_until_expiry'
+            )
+        }),
+        (_('Costs'), {
+            'fields': ('cost_price',)
+        }),
+        (_('Batch Properties'), {
+            'fields': (
+                'is_unknown_batch', 'conversion_date', 'original_source'
+            ),
+            'classes': ('collapse',)
+        }),
+        (_('Analytics'), {
+            'fields': ('consumption_percentage', 'batch_analytics'),
+            'classes': ('collapse',)
+        }),
+        (_('Audit'), {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
@@ -432,160 +538,282 @@ class InventoryBatchAdmin(admin.ModelAdmin):
         ).filter(remaining_qty__gt=0)
 
     def product_display(self, obj):
-        return f"{obj.product.code} - {obj.product.name[:25]}"
+        """Product display with batch tracking indicator"""
+        batch_icon = '🏷️' if obj.is_unknown_batch else '📦'
+
+        return format_html(
+            '{} <strong>{}</strong><br>'
+            '<small>{}</small>',
+            batch_icon, obj.product.code, obj.product.name[:25]
+        )
 
     product_display.short_description = _('Product')
 
-    def expiry_status(self, obj):
+    def expiry_status_display(self, obj):
         """Expiry status with color coding"""
-        if not obj.expiry_date:
-            return format_html('<span style="color: gray;">No expiry</span>')
+        if obj.is_expired:
+            return format_html(
+                '<span style="color: red; font-weight: bold;">❌ EXPIRED</span><br>'
+                '<small>{} days ago</small>',
+                abs(obj.days_until_expiry)
+            )
 
-        from datetime import timedelta
-        today = timezone.now().date()
-        days_to_expiry = (obj.expiry_date - today).days
+        days = obj.days_until_expiry
 
-        if days_to_expiry < 0:
-            return format_html('<span style="color: red;">⚠️ Expired</span>')
-        elif days_to_expiry <= 7:
-            return format_html('<span style="color: orange;">⏰ Expires in {} days</span>', days_to_expiry)
+        if days <= 3:
+            color, icon = 'red', '🔥'
+        elif days <= 7:
+            color, icon = 'orange', '⚠️'
+        elif days <= 30:
+            color, icon = 'goldenrod', '⏰'
         else:
-            return format_html('<span style="color: green;">✅ Good until {}</span>', obj.expiry_date)
+            color, icon = 'green', '✅'
 
-    expiry_status.short_description = _('Expiry Status')
+        return format_html(
+            '<span style="color: {};">{} {} days</span><br>'
+            '<small>{}</small>',
+            color, icon, days, obj.expiry_date
+        )
 
-class POSLocationForm(forms.ModelForm):
-    """Форма с валидации за POS Location"""
+    expiry_status_display.short_description = _('Expiry Status')
 
-    class Meta:
-        model = POSLocation
-        fields = '__all__'
+    def batch_value_display(self, obj):
+        """Batch value with cost analysis"""
+        value = obj.remaining_qty * obj.cost_price
 
-    def clean_fiscal_device_serial(self):
-        """Валидация на серийния номер"""
-        serial = self.cleaned_data.get('fiscal_device_serial')
-        if serial:
-            # Премахваме интервали и правим uppercase
-            serial = serial.strip().upper()
-        return serial
+        return format_html(
+            '<strong>{:.2f} лв</strong><br>'
+            '<small>{:.3f} × {:.4f}</small>',
+            value, obj.remaining_qty, obj.cost_price
+        )
+
+    batch_value_display.short_description = _('Batch Value')
+
+    def consumption_display(self, obj):
+        """Consumption progress bar"""
+        percentage = obj.consumption_percentage
+
+        if percentage == 0:
+            return format_html('<em style="color: gray;">Not started</em>')
+
+        color = 'green' if percentage < 50 else 'orange' if percentage < 90 else 'red'
+
+        return format_html(
+            '<div style="background: #f0f0f0; border-radius: 10px; padding: 2px;">'
+            '<div style="background: {}; width: {}%; height: 10px; border-radius: 8px;"></div>'
+            '</div>'
+            '<small>{:.1f}% consumed</small>',
+            color, min(percentage, 100), percentage
+        )
+
+    consumption_display.short_description = _('Consumption')
+
+    def batch_analytics(self, obj):
+        """Detailed batch analytics"""
+        if not obj.pk:
+            return "Save batch first"
+
+        try:
+            analysis = obj.get_batch_analysis()
+
+            analysis_parts = [
+                f"<strong>Received:</strong> {analysis['received_qty']} on {analysis['received_date']}",
+                f"<strong>Consumed:</strong> {analysis['consumed_qty']} ({analysis['consumption_percentage']:.1f}%)",
+                f"<strong>Remaining:</strong> {analysis['remaining_qty']}",
+                f"<strong>Value:</strong> {analysis['remaining_value']:.2f} лв",
+            ]
+
+            if analysis['days_until_expiry'] > 0:
+                analysis_parts.append(f"<strong>Expires in:</strong> {analysis['days_until_expiry']} days")
+            else:
+                analysis_parts.append(
+                    f"<strong style='color: red;'>Expired:</strong> {abs(analysis['days_until_expiry'])} days ago")
+
+            return mark_safe('<br>'.join(analysis_parts))
+
+        except Exception as e:
+            return f"Analytics error: {e}"
+
+    batch_analytics.short_description = _('Batch Analytics')
 
 
-# inventory/admin.py - ФИКС ЗА POSLocationAdmin
+# =================================================================
+# INVENTORY MOVEMENT ADMIN
+# =================================================================
 
-@admin.register(POSLocation)
-class POSLocationAdmin(admin.ModelAdmin):
-    """Professional admin for POS Locations"""
+@admin.register(InventoryMovement)
+class InventoryMovementAdmin(admin.ModelAdmin):
+    """Enhanced admin for inventory movements with profit tracking"""
 
     list_display = [
-        'code', 'name', 'location_link',
-        'fiscal_info', 'working_hours',
-        'status_badge',  # ФИКСИРАМЕ
-        'is_active'  # ФИКСИРАМЕ
+        'movement_display', 'product_display', 'location',
+        'quantity_display', 'cost_price', 'profit_display',
+        'document_reference', 'movement_date', 'created_by'
     ]
 
     list_filter = [
-        'location',  # ПРОМЕНЕНО от inventory_location
-        'is_active',
-        'allow_negative_stock'
+        'movement_type', 'movement_date', 'location',
+        'source_document_type', 'created_at'
     ]
 
-    search_fields = ['code', 'name', 'fiscal_device_serial']
-    readonly_fields = ['created_at', 'updated_at', 'current_status_info']
+    search_fields = [
+        'product__code', 'product__name', 'source_document_number',
+        'batch_number', 'reason'
+    ]
+
+    readonly_fields = [
+        'profit_amount', 'total_cost_value', 'total_sale_value',
+        'total_profit', 'profit_margin_percentage', 'created_at'
+    ]
 
     fieldsets = (
-        (None, {
-            'fields': ('code', 'name', 'location',)
-        }),
-        (_('Location'), {
-            'fields': ('address',),
-            'classes': ('collapse',)
-        }),
-        (_('Fiscal Device'), {
-            'fields': ('fiscal_device_serial', 'fiscal_device_number'),
-        }),
-        (_('Settings'), {
+        (_('Movement Details'), {
             'fields': (
-                'allow_negative_stock',
-                'require_customer',
-                'default_customer',
-                'receipt_printer'
-            ),
+                'location', 'product', 'movement_type',
+                'quantity', 'movement_date', 'reason'
+            )
         }),
-        (_('Working Hours'), {
-            'fields': ('opens_at', 'closes_at'),
+        (_('Pricing & Costs'), {
+            'fields': (
+                'cost_price', 'sale_price', 'profit_amount',
+                'total_cost_value', 'total_sale_value', 'total_profit',
+                'profit_margin_percentage'
+            )
+        }),
+        (_('Batch & Expiry'), {
+            'fields': (
+                'batch_number', 'expiry_date', 'serial_number'
+            ),
             'classes': ('collapse',)
         }),
-        (_('System Info'), {
-            'fields': ('is_active', 'created_at', 'updated_at', 'current_status_info'),
+        (_('Document Reference'), {
+            'fields': (
+                'source_document_type', 'source_document_number',
+                'source_document_line_id'
+            ),
+            'classes': ('collapse',)
+        }),
+        (_('Transfer Details'), {
+            'fields': ('from_location', 'to_location'),
+            'classes': ('collapse',)
+        }),
+        (_('Audit'), {
+            'fields': ('created_by', 'created_at'),
             'classes': ('collapse',)
         }),
     )
 
-    # ЛИПСВАЩИ МЕТОДИ - ДОБАВЯМЕ ГИ
-    def location_link(self, obj):
-        """Показва линк към inventory location"""
-        if obj.location:
-            return format_html(
-                '<a href="{}">{}</a>',
-                reverse('admin:inventory_inventorylocation_change', args=[obj.location.pk]),
-                obj.location.name
-            )
-        return '-'
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'product', 'location', 'from_location', 'to_location', 'created_by'
+        )
 
-    location_link.short_description = _('Location')
-    location_link.admin_order_field = 'location__name'
+    def movement_display(self, obj):
+        """Movement type with direction indicator"""
+        icons = {
+            'IN': '📥',
+            'OUT': '📤',
+            'TRANSFER': '🔄',
+            'ADJUSTMENT': '⚖️',
+            'PRODUCTION': '🏭',
+            'CYCLE_COUNT': '📊'
+        }
 
-    def fiscal_info(self, obj):
-        """Информация за фискалното устройство"""
-        if obj.fiscal_device_serial:
-            return format_html(
-                '<small>{}<br/>{}</small>',
-                obj.fiscal_device_serial,
-                obj.fiscal_device_number or '-'
-            )
-        return format_html('<small style="color: #999;">No fiscal device</small>')
+        icon = icons.get(obj.movement_type, '❓')
+        color = 'green' if obj.movement_type == 'IN' else 'red' if obj.movement_type == 'OUT' else 'blue'
 
-    fiscal_info.short_description = _('Fiscal Device')
+        return format_html(
+            '{} <span style="color: {}; font-weight: bold;">{}</span>',
+            icon, color, obj.get_movement_type_display()
+        )
 
-    def working_hours(self, obj):
-        """Работно време"""
-        if obj.opens_at and obj.closes_at:
-            return format_html(
-                '<small>{} - {}</small>',
-                obj.opens_at.strftime('%H:%M'),
-                obj.closes_at.strftime('%H:%M')
-            )
-        return '-'
+    movement_display.short_description = _('Movement Type')
 
-    working_hours.short_description = _('Working Hours')
+    def product_display(self, obj):
+        """Product with batch information"""
+        product_html = f'<strong>{obj.product.code}</strong>'
 
-    def status_badge(self, obj):
-        """Статус бадж"""
-        if obj.is_active:
-            return format_html(
-                '<span style="color: green; font-weight: bold;">✅ Active</span>'
-            )
-        else:
-            return format_html(
-                '<span style="color: red; font-weight: bold;">❌ Inactive</span>'
-            )
+        if obj.batch_number:
+            product_html += f'<br><small>Batch: {obj.batch_number}</small>'
 
-    status_badge.short_description = _('Status')
+        return format_html(product_html)
 
-    def current_status_info(self, obj):
-        """Информация за статуса"""
-        info = []
-        if obj.is_active:
-            info.append('✅ Active')
-        else:
-            info.append('❌ Inactive')
+    product_display.short_description = _('Product')
 
-        if obj.allow_negative_stock:
-            info.append('⚠️ Negative stock allowed')
+    def quantity_display(self, obj):
+        """Quantity with direction and effective quantity"""
+        direction = '+' if obj.is_incoming else '-'
+        color = 'green' if obj.is_incoming else 'red'
 
-        if obj.require_customer:
-            info.append('👤 Customer required')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}{}</span>',
+            color, direction, obj.quantity
+        )
 
-        return format_html('<br/>'.join(info))
+    quantity_display.short_description = _('Quantity')
 
-    current_status_info.short_description = _('Current Status')
+    def profit_display(self, obj):
+        """Profit information for sales"""
+        if not obj.sale_price:
+            return format_html('<em style="color: gray;">N/A</em>')
+
+        margin = obj.profit_margin_percentage
+        if margin is None:
+            return format_html('<em style="color: gray;">No margin</em>')
+
+        color = 'green' if margin > 20 else 'orange' if margin > 10 else 'red'
+
+        return format_html(
+            '<strong style="color: {};">{:.2f} лв</strong><br>'
+            '<small>{:.1f}% margin</small>',
+            color, obj.profit_amount or 0, margin
+        )
+
+    profit_display.short_description = _('Profit')
+
+    def document_reference(self, obj):
+        """Document reference with clickable link if possible"""
+        if not obj.source_document_number:
+            return format_html('<em style="color: gray;">No reference</em>')
+
+        ref_html = f'<strong>{obj.source_document_type}</strong><br>{obj.source_document_number}'
+
+        if obj.source_document_line_id:
+            ref_html += f'<br><small>Line: {obj.source_document_line_id}</small>'
+
+        return format_html(ref_html)
+
+    document_reference.short_description = _('Document Reference')
+
+    # Actions
+    actions = ['export_movements', 'reverse_selected_movements']
+
+    def export_movements(self, request, queryset):
+        """Export selected movements"""
+        count = queryset.count()
+        self.message_user(request, f'Exported {count} movements.')
+
+    export_movements.short_description = _('Export movements')
+
+    def reverse_selected_movements(self, request, queryset):
+        """Reverse selected movements (create correction movements)"""
+        count = 0
+        for movement in queryset:
+            try:
+                MovementService.reverse_movement(
+                    original_movement=movement,
+                    reason='Admin correction',
+                    created_by=request.user
+                )
+                count += 1
+            except Exception as e:
+                self.message_user(
+                    request,
+                    f'Error reversing movement {movement.id}: {e}',
+                    level='ERROR'
+                )
+
+        if count > 0:
+            self.message_user(request, f'Created {count} reverse movements.')
+
+    reverse_selected_movements.short_description = _('Reverse selected movements')
