@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils.safestring import mark_safe
 from decimal import Decimal
 
+from .dashboard import ProductDashboardMixin
 from ..models import Product, ProductPLU, ProductPackaging, ProductBarcode, ProductLifecycleChoices
 from ..services import ProductLifecycleService, ProductValidationService
 
@@ -138,7 +139,7 @@ class ProductBarcodeInline(admin.TabularInline):
 # === MAIN PRODUCT ADMIN ===
 
 @admin.register(Product)
-class ProductAdmin(admin.ModelAdmin):
+class ProductAdmin(ProductDashboardMixin,admin.ModelAdmin):
     """
     Enhanced Product Admin - REFACTORED
     Removed references to deleted fields (current_avg_cost, current_stock_qty)
@@ -214,12 +215,22 @@ class ProductAdmin(admin.ModelAdmin):
         (_('System Information'), {
             'fields': ('created_at', 'updated_at', 'created_by'),
             'classes': ('collapse',)
-        })
+        }),
+        (_('Dashboard'), {
+            'fields': (
+                'render_lifecycle_distribution',
+                'render_attention_items',
+                'render_stock_summary'
+            ),
+            'classes': ('wide',)
+        }),
     )
 
     readonly_fields = [
         'created_at', 'updated_at', 'lifecycle_info_display',
-        'stock_info_display', 'cost_info_display'
+        'stock_info_display', 'cost_info_display','render_lifecycle_distribution',
+        'render_attention_items',
+        'render_stock_summary'
     ]
 
     inlines = [
