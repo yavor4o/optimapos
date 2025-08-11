@@ -26,5 +26,7 @@ __all__ = [
 
     # Documents
 
-
+    'DocumentTypeAdmin',
+    'ApprovalRuleAdmin',
+    'ApprovalLogAdmin',
 ]
