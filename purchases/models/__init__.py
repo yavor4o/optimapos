@@ -1,14 +1,5 @@
 # purchases/models/__init__.py - CLEAN VERSION
 
-"""
-Purchases models - clean organized structure
-
-Models:
-- PurchaseRequest: Заявки за покупка (БЕЗ финансови данни)
-- PurchaseOrder: Поръчки към доставчици (С финансови данни)
-- DeliveryReceipt: Доставки и получаване (С всички данни)
-"""
-
 # Import all models from the organized structure
 from .base import (
     DocumentManager,
