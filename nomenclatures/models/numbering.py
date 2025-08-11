@@ -366,7 +366,7 @@ class LocationNumberingAssignment(models.Model):
     # =====================
 
     location = models.ForeignKey(
-        'nomenclatures.Location',  # Assumes Location model exists
+        'inventory.InventoryLocation',
         on_delete=models.CASCADE,
         related_name='numbering_assignments',
         verbose_name=_('Location')
