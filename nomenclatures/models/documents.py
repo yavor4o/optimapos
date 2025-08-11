@@ -259,11 +259,7 @@ class DocumentType(BaseNomenclature):
     # INTEGRATION METHODS (hooks for other systems)
     # =====================
 
-    def get_numbering_config(self, location=None, user=None):
-        """Get numbering configuration for this document type"""
-        # Will be implemented when numbering.py is created
-        from nomenclatures.services.numbering_service import NumberingService
-        return NumberingService.get_config_for_document_type(self, location, user)
+
 
     def get_approval_rules(self):
         """Get approval rules for this document type"""

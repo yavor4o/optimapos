@@ -1,31 +1,10 @@
 # nomenclatures/services/approval_service.py - SIMPLIFIED & CLEAN
-"""
-Approval Service - SIMPLIFIED VERSION
 
-ЦЕЛИ НА ОПРОСТЯВАНЕТО:
-- Премахване на complex features (auto_approve_conditions, escalation)
-- Фокус на essential approval functionality
-- Integration с simplified ApprovalRule модел
-- Премахване на DocumentType workflow дублиране
-
-ЗАПАЗЕНИ ФУНКЦИИ:
-- get_available_transitions() - какви преходи може user
-- execute_transition() - изпълнение на преход
-- get_approval_rules() - намиране на applicable rules
-- audit logging - ApprovalLog записване
-
-ПРЕМАХНАТИ ФУНКЦИИ:
-- auto_approve_conditions (JSON complexity)
-- escalation_days (enterprise overkill)
-- DocumentType workflow validation (moved to DocumentType)
-- parallel approval logic
-"""
 
 from typing import Dict, List, Optional
 from django.db import models, transaction
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
 from django.utils import timezone
 import logging
 

@@ -1,28 +1,8 @@
 # nomenclatures/services/document_service.py - FINAL ORCHESTRATOR
-"""
-Document Service - CENTRAL ORCHESTRATOR
 
-ЗАМЕНЯ:
-- Hardcoded статуси в DocumentManager
-- Workflow методи в BaseDocument
-- Разпръснати document operations
-
-ИНТЕГРИРА:
-- DocumentType → document definitions
-- ApprovalRule → workflow transitions
-- NumberingConfiguration → document numbering
-- ApprovalService → approval workflow
-
-ОСНОВНИ ФУНКЦИИ:
-1. Document lifecycle (create, transition, convert)
-2. Dynamic status queries (pending_approval, ready_for_processing)
-3. Business operations (request→order conversion)
-4. Integration coordination
-"""
 
 from typing import Dict, List, Optional, Any, Type, Union
 from django.db import transaction, models
-from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.apps import apps
