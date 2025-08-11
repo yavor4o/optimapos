@@ -1,7 +1,6 @@
 # purchases/models/requests.py - CLEAN VERSION БЕЗ estimated_price
 import logging
 from typing import Dict
-
 from django.db import models, transaction
 from datetime import timedelta
 from django.utils import timezone

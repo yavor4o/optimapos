@@ -28,6 +28,7 @@ from decimal import Decimal
 import logging
 
 from core.models.company import Company
+from products.models import Product
 
 logger = logging.getLogger(__name__)
 
@@ -688,7 +689,7 @@ class BaseDocumentLine(models.Model):
     )
 
     product = models.ForeignKey(
-        'inventory.Product',
+        Product,
         on_delete=models.PROTECT,
         verbose_name=_('Product'),
         help_text=_('Product for this line')
@@ -696,6 +697,8 @@ class BaseDocumentLine(models.Model):
 
     quantity = models.DecimalField(
         _('Quantity'),
+        null=True,
+        blank=True,
         max_digits=10,
         decimal_places=3,
         help_text=_('Quantity for this line')
@@ -735,27 +738,27 @@ class BaseDocumentLine(models.Model):
     # =====================
 
     def clean(self):
-        """Basic line validation"""
+        """Basic line validation - tolerant to None quantity"""
         super().clean()
 
-        # Quantity validation
-        if self.quantity <= 0:
+        # ✅ ПОПРАВКА: проверявай quantity само ако не е None
+        if self.quantity is not None and self.quantity <= 0:
             raise ValidationError({
                 'quantity': _('Quantity must be greater than zero')
             })
 
-        # Product-unit compatibility (if method exists)
+        # Product-unit compatibility validation
         if self.product and self.unit:
-            # ✅ Check if Product has unit compatibility method
+            # Check if Product has unit compatibility method
             if hasattr(self.product, 'is_unit_compatible'):
                 if not self.product.is_unit_compatible(self.unit):
                     raise ValidationError({
                         'unit': _(f'Unit {self.unit.code} is not compatible with product {self.product.code}')
                     })
-            # ✅ Basic fallback: check if unit matches product's base_unit
+            # Basic fallback: check if unit matches product's base_unit
             elif hasattr(self.product, 'base_unit') and self.product.base_unit:
                 if self.unit != self.product.base_unit:
-                    # ✅ Warning but not error - allow different units for flexibility
+                    # Warning but not error - allow different units for flexibility
                     logger.warning(
                         f"Unit {self.unit.code} differs from product {self.product.code} base unit {self.product.base_unit.code}")
 
