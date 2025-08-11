@@ -36,72 +36,52 @@ class DocumentManager(models.Manager):
     """
     Base manager for all purchase documents
 
-    СИНХРОНИЗИРАН с nomenclatures.DocumentService:
-    - NO hardcoded статуси
-    - Dynamic queries от DocumentType/ApprovalRule
-    - Fallback functionality ако nomenclatures не е достъпен
+    100% СИНХРОНИЗИРАН с nomenclatures.DocumentService:
+    - NO hardcoded статуси никъде
+    - Dynamic queries САМО от DocumentType/ApprovalRule
+    - Explicit failures ако nomenclatures не е достъпен
     """
 
     def active(self):
         """Return only active documents - DYNAMIC от DocumentService"""
-        try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.get_active_documents(queryset=self.get_queryset())
-        except ImportError:
-            # Fallback if nomenclatures not available
-            logger.warning("DocumentService not available, using fallback active() logic")
-            final_statuses = ['cancelled', 'closed', 'deleted', 'archived']
-            return self.exclude(status__in=final_statuses)
+        from nomenclatures.services import DocumentService
+        return DocumentService.get_active_documents(queryset=self.get_queryset())
 
     def pending_approval(self):
         """Documents pending approval - DYNAMIC от ApprovalRule"""
-        try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.get_pending_approval_documents(queryset=self.get_queryset())
-        except ImportError:
-            # Fallback if nomenclatures not available
-            logger.warning("DocumentService not available, using fallback pending_approval() logic")
-            approval_statuses = ['submitted', 'pending_approval', 'pending_review']
-            return self.filter(status__in=approval_statuses)
+        from nomenclatures.services import DocumentService
+        return DocumentService.get_pending_approval_documents(queryset=self.get_queryset())
 
     def ready_for_processing(self):
         """Documents ready for processing - DYNAMIC от ApprovalRule"""
-        try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.get_ready_for_processing_documents(queryset=self.get_queryset())
-        except ImportError:
-            # Fallback if nomenclatures not available
-            logger.warning("DocumentService not available, using fallback ready_for_processing() logic")
-            ready_statuses = ['approved', 'confirmed', 'ready', 'received']
-            return self.filter(status__in=ready_statuses)
+        from nomenclatures.services import DocumentService
+        return DocumentService.get_ready_for_processing_documents(queryset=self.get_queryset())
 
-    # =====================
-    # BASIC QUERY METHODS (не се променят)
-    # =====================
+    def by_document_type(self, type_key):
+        """Filter by DocumentType.type_key"""
+        return self.filter(document_type__type_key=type_key)
 
-    def for_supplier(self, supplier):
-        """Filter by supplier with optimizations"""
-        return self.filter(supplier=supplier).select_related(
-            'supplier', 'location', 'document_type'
-        ).prefetch_related('lines__product')
+    def for_app(self, app_name):
+        """Filter by DocumentType.app_name"""
+        return self.filter(document_type__app_name=app_name)
 
-    def for_location(self, location):
-        """Filter by location"""
-        return self.filter(location=location)
+    def requiring_approval(self):
+        """Documents that require approval workflow"""
+        return self.filter(document_type__requires_approval=True)
 
-    def for_document_type(self, doc_type):
-        """Filter by document type"""
-        if hasattr(doc_type, 'pk'):
-            return self.filter(document_type=doc_type)
-        else:
-            # String lookup by code or type_key
-            return self.filter(
-                models.Q(document_type__code=doc_type) |
-                models.Q(document_type__type_key=doc_type)
-            )
+    def affecting_inventory(self):
+        """Documents that affect inventory"""
+        return self.filter(document_type__affects_inventory=True)
+
+    def fiscal_documents(self):
+        """Fiscal documents (Bulgarian legal requirement)"""
+        return self.filter(document_type__is_fiscal=True)
 
     def search(self, query):
-        """Search documents by various fields"""
+        """Enhanced search across multiple fields"""
+        if not query:
+            return self.all()
+
         return self.filter(
             models.Q(document_number__icontains=query) |
             models.Q(supplier__name__icontains=query) |
@@ -110,32 +90,166 @@ class DocumentManager(models.Manager):
         )
 
     def by_status(self, status):
-        """Filter by status"""
+        """Filter by specific status"""
         return self.filter(status=status)
 
     def in_statuses(self, statuses):
         """Filter by multiple statuses"""
         return self.filter(status__in=statuses)
 
+    def by_date_range(self, date_from=None, date_to=None):
+        """Filter by document date range"""
+        queryset = self.all()
+        if date_from:
+            queryset = queryset.filter(document_date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(document_date__lte=date_to)
+        return queryset
+
+    def by_supplier(self, supplier):
+        """Filter by supplier"""
+        return self.filter(supplier=supplier)
+
+    def by_location(self, location):
+        """Filter by location"""
+        return self.filter(location=location)
+
+    def recent(self, days=30):
+        """Documents from last N days"""
+        from django.utils import timezone
+        from datetime import timedelta
+        cutoff_date = timezone.now().date() - timedelta(days=days)
+        return self.filter(document_date__gte=cutoff_date)
+
     # =====================
-    # HELPER METHODS FOR DocumentService INTEGRATION
+    # DOCUMENT CREATION WITH DocumentService
     # =====================
 
     def create_with_service(self, user, **data):
-        """Create document using DocumentService"""
-        try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.create_document(
-                self.model, data, user
-            )
-            if result['success']:
-                return result['document']
-            else:
-                raise ValidationError(result['message'])
-        except ImportError:
-            # Fallback: standard creation without numbering/status management
-            logger.warning("DocumentService not available, using standard creation")
-            return self.create(**data)
+        """
+        Create document using DocumentService
+
+        PREFERRED method за създаване на документи:
+        - Automatic numbering
+        - Initial status setting
+        - Business validation
+        """
+        from nomenclatures.services import DocumentService
+
+        result = DocumentService.create_document(
+            model_class=self.model,
+            data=data,
+            user=user
+        )
+
+        if result['success']:
+            return result['document']
+        else:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(result['message'])
+
+    def create_purchase_request(self, user, **data):
+        """Convenience method for creating purchase requests"""
+        # Ensure correct document type
+        data['_document_type_hint'] = 'purchase_request'
+        return self.create_with_service(user, **data)
+
+    def create_purchase_order(self, user, **data):
+        """Convenience method for creating purchase orders"""
+        # Ensure correct document type
+        data['_document_type_hint'] = 'purchase_order'
+        return self.create_with_service(user, **data)
+
+    def create_delivery_receipt(self, user, **data):
+        """Convenience method for creating delivery receipts"""
+        # Ensure correct document type
+        data['_document_type_hint'] = 'delivery_receipt'
+        return self.create_with_service(user, **data)
+
+    # =====================
+    # WORKFLOW OPERATIONS
+    # =====================
+
+    def submit_for_approval(self, document, user, comments=''):
+        """Submit document for approval"""
+        from nomenclatures.services import DocumentService
+        return DocumentService.submit_for_approval(document, user, comments)
+
+    def get_available_actions(self, document, user):
+        """Get available actions for document and user"""
+        from nomenclatures.services import DocumentService
+        return DocumentService.get_available_actions(document, user)
+
+    def can_user_perform_action(self, document, action, user):
+        """Check if user can perform specific action"""
+        actions = self.get_available_actions(document, user)
+        return any(a['status'] == action and a['can_perform'] for a in actions)
+
+    # =====================
+    # BULK OPERATIONS
+    # =====================
+
+    def bulk_submit_for_approval(self, documents, user):
+        """Submit multiple documents for approval"""
+        from nomenclatures.services import DocumentService
+        results = []
+
+        for document in documents:
+            result = DocumentService.submit_for_approval(document, user)
+            results.append({
+                'document': document,
+                'success': result['success'],
+                'message': result['message']
+            })
+
+        return results
+
+    def bulk_transition(self, documents, to_status, user, comments=''):
+        """Transition multiple documents to status"""
+        from nomenclatures.services import DocumentService
+        results = []
+
+        for document in documents:
+            result = DocumentService.transition_document(document, to_status, user, comments)
+            results.append({
+                'document': document,
+                'success': result['success'],
+                'message': result['message']
+            })
+
+        return results
+
+    # =====================
+    # ANALYTICS & REPORTING
+    # =====================
+
+    def get_status_summary(self):
+        """Get count by status for dashboard"""
+        return self.values('status').annotate(
+            count=models.Count('id')
+        ).order_by('status')
+
+    def get_supplier_summary(self):
+        """Get count by supplier"""
+        return self.values('supplier__name').annotate(
+            count=models.Count('id'),
+            total_value=models.Sum('total')  # If FinancialMixin
+        ).order_by('-count')
+
+    def get_monthly_stats(self, year=None):
+        """Get monthly statistics"""
+        from django.utils import timezone
+
+        if not year:
+            year = timezone.now().year
+
+        return self.filter(
+            document_date__year=year
+        ).extra(
+            select={'month': 'EXTRACT(month FROM document_date)'}
+        ).values('month').annotate(
+            count=models.Count('id')
+        ).order_by('month')
 
 
 class LineManager(models.Manager):
