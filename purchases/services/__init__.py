@@ -26,12 +26,10 @@ __all__ = [
     'AnalyticsService',
     'SmartVATService',
     'VATIntegrationService',
-    'WorkflowService',
-    'transition_document',
-    'get_available_actions'
+
 ]
 
 # Version info
 __version__ = '3.0.0'  # VAT-AWARE VERSION
 
-from .workflow_service import WorkflowService, transition_document, get_available_actions
+
