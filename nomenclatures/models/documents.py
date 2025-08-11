@@ -259,8 +259,6 @@ class DocumentType(BaseNomenclature):
     # INTEGRATION METHODS (hooks for other systems)
     # =====================
 
-
-
     def get_approval_rules(self):
         """Get approval rules for this document type"""
         from nomenclatures.models.approvals import ApprovalRule
