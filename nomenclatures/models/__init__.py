@@ -5,7 +5,7 @@ Nomenclatures models package - СИНХРОНИЗИРАНА ВЕРСИЯ
 Архитектура:
 - base.py: Базови класове и managers
 - documents.py: DocumentType (CLEAN REFACTORED)
-- approvals.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
+- workflow.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
 - numbering.py: NumberingConfiguration system (NEW)
 - product.py: ProductGroup, Brand, ProductType
 - financial.py: Currency, ExchangeRate, TaxGroup

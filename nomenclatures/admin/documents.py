@@ -1,135 +1,230 @@
 # nomenclatures/admin/documents.py
+"""
+Documents Nomenclatures Admin Configuration
+"""
 
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
+from django.db.models import Count
+from django.urls import reverse
+from django.utils.safestring import mark_safe
+
 from ..models import DocumentType
 
+
+# =======================
+# DOCUMENT TYPE ADMIN
+# =======================
 
 @admin.register(DocumentType)
 class DocumentTypeAdmin(admin.ModelAdmin):
     list_display = [
-        'code', 'name', 'type_key', 'app_name',
-        'affects_inventory_display', 'requires_approval_display',
-        'current_number', 'is_active'
+        'key',
+        'name',
+        'app_name',
+        'model_name',
+        'status_info',
+        'features_summary',
+        'document_count',
+        'is_active'
     ]
 
     list_filter = [
-        'app_name', 'type_key', 'affects_inventory',
-        'requires_approval', 'is_fiscal', 'pos_document', 'is_active'
+        'app_name',
+        'affects_inventory',
+        'is_fiscal_document',
+        'requires_approval',
+        'is_active'
     ]
 
-    search_fields = ['code', 'name', 'type_key', 'number_prefix']
+    search_fields = ['key', 'name', 'app_name', 'model_name']
+    ordering = ['app_name', 'name']
 
-    readonly_fields = ['current_number', 'last_reset_year']
+    readonly_fields = [
+        'created_at',
+        'updated_at',
+        'document_usage_stats'
+    ]
 
-    fieldsets = [
-        ('Basic Information', {
-            'fields': ['code', 'name', 'type_key', 'app_name', 'model_name', 'is_active', 'sort_order']
+    fieldsets = (
+        (_('Basic Information'), {
+            'fields': (
+                'key', 'name', 'description',
+                'app_name', 'model_name'
+            )
         }),
-        ('Numbering System', {
-            'fields': [
-                'number_prefix', 'current_number', 'number_format',
-                'reset_numbering_yearly', 'last_reset_year', 'auto_number'
-            ]
-        }),
-        ('Workflow Configuration', {
-            'fields': [
-                'allowed_statuses', 'default_status', 'status_transitions',
-                 'final_statuses'
-            ],
-            'description': 'Configure status workflow for this document type'
-        }),
-        ('Approval Settings', {
-            'fields': [
+        (_('Document Behavior'), {
+            'fields': (
+                'initial_status',
+                'final_status',
                 'requires_approval',
-
-            ]
-        }),
-        ('Business Behavior', {
-            'fields': [
-                'affects_inventory', 'inventory_direction', 'inventory_timing',
-                'is_fiscal', 'requires_vat_calculation', 'requires_payment',
-
-            ]
-        }),
-
-
-        ('Quality & Compliance', {
-            'fields': [
-                'requires_batch_tracking', 'requires_expiry_dates',
-                'requires_serial_numbers', 'requires_quality_check',
-                'requires_certificates'
-            ]
-        }),
-
-        ('POS Integration', {
-            'fields': [
-                'pos_document', 'prints_receipt', 'opens_cash_drawer'
-            ],
-            'classes': ['collapse']
-        }),
-        ('Automation Settings', {
-            'fields': [
-                'auto_confirm', 'requires_lines'
-            ]
-        }),
-        ('Validation Rules', {
-            'fields': [
-                'min_total_amount', 'max_total_amount'
-            ],
-            'classes': ['collapse']
-        })
-    ]
-
-    # Custom display methods
-    def affects_inventory_display(self, obj):
-        if obj.affects_inventory:
-            direction = obj.get_inventory_direction_display() if obj.inventory_direction else 'Unknown'
-            return format_html(
-                '<span style="color: green;">✅ {}</span>',
-                direction
+                'auto_approve_conditions'
             )
-        return format_html('<span style="color: gray;">—</span>')
+        }),
+        (_('Financial & Inventory'), {
+            'fields': (
+                'affects_inventory',
+                'inventory_direction',
+                'is_fiscal_document',
+                'allows_negative_amounts'
+            )
+        }),
+        (_('Features'), {
+            'fields': (
+                'allows_attachments',
+                'auto_create_movements',
+                'can_be_cancelled',
+                'can_be_modified'
+            )
+        }),
+        (_('Numbering'), {
+            'fields': ('numbering_prefix', 'numbering_pattern'),
+            'classes': ('collapse',)
+        }),
+        (_('Status'), {
+            'fields': ('is_active',)
+        }),
+        (_('Audit'), {
+            'fields': (
+                'created_at',
+                'updated_at',
+                'document_usage_stats'
+            ),
+            'classes': ('collapse',)
+        }),
+    )
 
-    affects_inventory_display.short_description = _('Inventory Impact')
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Опитваме се да анотираме с броя документи
+        try:
+            # Това може да не работи ако няма документи от този тип
+            return qs.annotate(doc_count=Count('documents', distinct=True))
+        except:
+            return qs
 
-    def requires_approval_display(self, obj):
+    def status_info(self, obj):
+        """Показва статус информация"""
+        parts = []
+
+        if obj.initial_status:
+            parts.append(f"Start: {obj.initial_status}")
+
+        if obj.final_status:
+            parts.append(f"End: {obj.final_status}")
+
         if obj.requires_approval:
-            # ПРЕМАХНИ approval_limit референцията
-            return format_html(
-                '<span style="color: orange;">⚠️ Yes</span>'
-            )
-        return format_html('<span style="color: green;">✅ No</span>')
+            parts.append('<span style="color: #dc3545;">Needs Approval</span>')
 
-    requires_approval_display.short_description = _('Approval Required')
+        return format_html('<br>'.join(parts)) if parts else '-'
 
+    status_info.short_description = _('Status Flow')
 
+    def features_summary(self, obj):
+        """Обобщение на функционалностите"""
+        features = []
 
-    # Actions
-    actions = ['reset_numbering', 'activate_types', 'deactivate_types']
+        if obj.affects_inventory:
+            direction_map = {
+                'in': '📥', 'out': '📤', 'both': '🔄', 'none': '-'
+            }
+            icon = direction_map.get(obj.inventory_direction, '-')
+            features.append(f'{icon} Inventory')
 
-    def reset_numbering(self, request, queryset):
-        for doc_type in queryset:
-            doc_type.reset_numbering()
-        self.message_user(request, f'Numbering reset for {queryset.count()} document types.')
+        if obj.is_fiscal_document:
+            features.append('💼 Fiscal')
 
-    reset_numbering.short_description = "Reset numbering to 0"
+        if obj.allows_attachments:
+            features.append('📎 Files')
 
-    def activate_types(self, request, queryset):
+        if obj.auto_create_movements:
+            features.append('⚡ Auto Move')
+
+        if obj.can_be_cancelled:
+            features.append('❌ Cancel')
+
+        if obj.can_be_modified:
+            features.append('✏️ Edit')
+
+        return format_html('<br>'.join(features)) if features else '-'
+
+    features_summary.short_description = _('Features')
+
+    def document_count(self, obj):
+        """Брой документи от този тип"""
+        try:
+            count = getattr(obj, 'doc_count', 0)
+            if count > 0:
+                return format_html(
+                    '<a href="#" style="color: #007bff; font-weight: bold;">{}</a>',
+                    count
+                )
+            return '0'
+        except:
+            return '-'
+
+    document_count.short_description = _('Documents')
+    document_count.admin_order_field = 'doc_count'
+
+    def document_usage_stats(self, obj):
+        """Подробна статистика за използването"""
+        try:
+            # Това може да се имплементира с конкретни заявки
+            # според структурата на документите
+            stats = [
+                "Usage statistics will be implemented",
+                "based on actual document models"
+            ]
+            return format_html('<br>'.join(stats))
+        except:
+            return "No usage data available"
+
+    document_usage_stats.short_description = _('Usage Statistics')
+
+    def save_model(self, request, obj, form, change):
+        """Автоматично uppercase на key"""
+        if obj.key:
+            obj.key = obj.key.upper()
+        super().save_model(request, obj, form, change)
+
+    # =======================
+    # CUSTOM ACTIONS
+    # =======================
+
+    actions = ['make_active', 'make_inactive', 'reset_numbering']
+
+    @admin.action(description=_('Activate selected document types'))
+    def make_active(self, request, queryset):
         updated = queryset.update(is_active=True)
-        self.message_user(request, f'{updated} document types activated.')
+        self.message_user(
+            request,
+            _('Successfully activated {} document types.').format(updated)
+        )
 
-    activate_types.short_description = "Activate selected document types"
+    @admin.action(description=_('Deactivate selected document types'))
+    def make_inactive(self, request, queryset):
+        # Проверка дали могат да се деактивират
+        system_types = queryset.filter(is_system=True).count()
+        if system_types > 0:
+            self.message_user(
+                request,
+                _('Cannot deactivate system document types.'),
+                level='ERROR'
+            )
+            return
 
-    def deactivate_types(self, request, queryset):
         updated = queryset.update(is_active=False)
-        self.message_user(request, f'{updated} document types deactivated.')
+        self.message_user(
+            request,
+            _('Successfully deactivated {} document types.').format(updated)
+        )
 
-    deactivate_types.short_description = "Deactivate selected document types"
-
-    # Filter for better UX
-    def formfield_for_manytomany(self, db_field, request, **kwargs):
-        if db_field.name == "allowed_source_types":
-            kwargs["queryset"] = DocumentType.objects.filter(is_active=True).order_by('app_name', 'name')
-        return super().formfield_for_manytomany(db_field, request, **kwargs)
+    @admin.action(description=_('Reset numbering for selected types'))
+    def reset_numbering(self, request, queryset):
+        """Reset numbering sequence - placeholder"""
+        self.message_user(
+            request,
+            _('Numbering reset feature will be implemented.'),
+            level='WARNING'
+        )

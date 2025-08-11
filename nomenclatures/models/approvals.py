@@ -1,4 +1,4 @@
-# nomenclatures/models/approvals.py - SIMPLIFIED & CLEAN
+# nomenclatures/models/workflow.py - SIMPLIFIED & CLEAN
 """
 Approval System - SIMPLIFIED VERSION
 
