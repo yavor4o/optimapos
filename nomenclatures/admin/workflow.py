@@ -1,7 +1,6 @@
 # nomenclatures/admin/workflow.py
 from django.contrib import admin
 
-# Try to import models
 try:
     from ..models import ApprovalRule, ApprovalLog
 
@@ -19,9 +18,9 @@ if HAS_MODELS:
 
     @admin.register(ApprovalLog)
     class ApprovalLogAdmin(admin.ModelAdmin):
-        list_display = ['action', 'is_active']
-        list_filter = ['action', 'is_active']
-        readonly_fields = ['action']
+        list_display = ['action', 'actor', 'timestamp']  # ← ПОПРАВЕНО
+        list_filter = ['action', 'timestamp']  # ← ПОПРАВЕНО
+        readonly_fields = ['action', 'actor', 'timestamp', 'from_status', 'to_status']  # ← ПОПРАВЕНО
 
         def has_add_permission(self, request):
             return False
