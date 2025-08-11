@@ -23,12 +23,7 @@ from .base import (
 
 
 
-from .requests import (
-    PurchaseRequest,
-    PurchaseRequestLine,
-    PurchaseRequestManager,
-    PurchaseRequestLineManager
-)
+
 
 from .orders import (
     PurchaseOrder,
@@ -61,11 +56,6 @@ __all__ = [
     # Document types
     # 'DocumentType',
 
-    # Request models
-    'PurchaseRequest',
-    'PurchaseRequestLine',
-    'PurchaseRequestManager',
-    'PurchaseRequestLineManager',
 
     # Order models
     'PurchaseOrder',

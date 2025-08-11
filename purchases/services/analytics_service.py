@@ -18,7 +18,7 @@ from ..models import (
 class AnalyticsService:
     """Analytics and reporting service for purchase workflows"""
 
-    @staticmethod
+    @staticmethoda
     def get_dashboard_data() -> Dict:
         """Get comprehensive dashboard data"""
         today = timezone.now().date()

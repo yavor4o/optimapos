@@ -22,7 +22,7 @@ from .base import BaseNomenclature, ActiveManager
 from .documents import DocumentType, DocumentTypeManager
 
 # Approvals - FIXED: импорт преди __all__
-from .approvals import ApprovalRule, ApprovalLog
+
 
 # Product related
 from .product import (
@@ -57,8 +57,6 @@ __all__ = [
     # Documents & Workflow
     'DocumentType',
     'DocumentTypeManager',
-    'ApprovalRule',  # ✅ Вече импортиран отгоре
-    'ApprovalLog',  # ✅ Вече импортиран отгоре
 
     # Product
     'ProductGroup',

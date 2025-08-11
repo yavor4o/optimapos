@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('nomenclatures', '0014_remove_documenttype_auto_approve_conditions_and_more'),
+
         ('partners', '0002_alter_customer_price_group'),
         ('products', '0001_initial'),
         ('purchases', '0012_remove_deliveryline_line_total_and_more'),

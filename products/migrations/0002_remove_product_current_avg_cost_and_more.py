@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('nomenclatures', '0016_remove_documenttype_auto_approve_conditions_and_more'),
+
         ('products', '0001_initial'),
     ]
 

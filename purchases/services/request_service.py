@@ -6,7 +6,7 @@ from django.db import transaction
 
 from django.core.exceptions import ValidationError
 
-from purchases.models.requests import PurchaseRequest, PurchaseRequestLine
+
 
 
 class RequestService:

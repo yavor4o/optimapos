@@ -1,9 +1,29 @@
-# nomenclatures/models/approvals.py
-import decimal
+# nomenclatures/models/approvals.py - SIMPLIFIED & CLEAN
+"""
+Approval System - SIMPLIFIED VERSION
+
+ЦЕЛИ НА РЕФАКТОРИРАНЕ:
+- Опростяване на ApprovalRule (премахване на complexity)
+- Ясна интеграция с новия DocumentType
+- Запазване на core функционалност
+- По-лесна администрация
+
+ПРЕМАХНАТО:
+- auto_approve_conditions (твърде сложно за POS система)
+- escalation_days (overkill)
+- parallel approvals (ненужно)
+- content_type fallback (DocumentType е достатъчен)
+
+ЗАПАЗЕНО:
+- Multi-level approvals
+- Financial limits (min/max amounts)
+- User/Role/Permission approvers
+- Audit trail (ApprovalLog)
+"""
 
 from django.db import models
-from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
@@ -11,60 +31,65 @@ from decimal import Decimal
 User = get_user_model()
 
 
+# =================================================================
+# APPROVAL RULE MANAGER
+# =================================================================
+
 class ApprovalRuleManager(models.Manager):
-    """Manager for ApprovalRule with specialized queries"""
+    """Simplified manager for ApprovalRule"""
 
-    def for_document(self, document):
-        """Get rules applicable for specific document"""
+    def for_document_type(self, document_type):
+        """Get rules for specific document type"""
+        return self.filter(document_type=document_type, is_active=True)
+
+    def for_transition(self, document_type, from_status, to_status):
+        """Get rules for specific status transition"""
         return self.filter(
-            models.Q(document_type=document.document_type) |
-            models.Q(content_type=ContentType.objects.get_for_model(document.__class__))
-        ).filter(is_active=True)
-
-    def for_user_and_amount(self, user, amount, document_type=None):
-        """Get rules user can execute for given amount"""
-        rules = self.filter(is_active=True)
-
-        if document_type:
-            rules = rules.filter(document_type=document_type)
-
-        if amount is not None:
-            rules = rules.filter(
-                models.Q(min_amount__lte=amount) &
-                models.Q(max_amount__gte=amount)
-            )
-
-        # Filter by user permissions
-        return rules.filter(
-            models.Q(approver_user=user) |
-            models.Q(approver_role__in=user.groups.all()) |
-            models.Q(approver_permission__in=user.user_permissions.all())
-        )
-
-    def get_workflow_chain(self, document):
-        """Get complete approval chain for document"""
-        amount = getattr(document, 'get_estimated_total', lambda: Decimal('0'))()
-
-        return self.for_document(document).filter(
-            min_amount__lte=amount,
-            max_amount__gte=amount
+            document_type=document_type,
+            from_status=from_status,
+            to_status=to_status,
+            is_active=True
         ).order_by('approval_level', 'sort_order')
 
+    def for_amount_range(self, min_amount, max_amount=None):
+        """Get rules applicable for amount range"""
+        queryset = self.filter(min_amount__lte=min_amount)
+        if max_amount:
+            queryset = queryset.filter(
+                models.Q(max_amount__gte=max_amount) | models.Q(max_amount__isnull=True)
+            )
+        return queryset
+
+    def for_user(self, user):
+        """Get rules that user can execute"""
+        return self.filter(
+            models.Q(approver_user=user) |
+            models.Q(approver_role__in=user.groups.all()) |
+            models.Q(approver_permission__in=user.user_permissions.all()),
+            is_active=True
+        )
+
+
+# =================================================================
+# APPROVAL RULE - SIMPLIFIED
+# =================================================================
 
 class ApprovalRule(models.Model):
     """
-    Approval Rule - Правило за одобрение
+    Approval Rule - SIMPLIFIED VERSION
 
-    Динамично дефинира кой може да одобрява какво, при какви условия
+    Дефинира кой може да одобрява какво при какви условия.
+    Опростена версия без излишна complexity.
     """
 
     # =====================
     # BASIC INFO
     # =====================
+
     name = models.CharField(
         _('Rule Name'),
         max_length=100,
-        help_text=_('Descriptive name for this approval rule')
+        help_text=_('Descriptive name: "Manager approval for orders over 1000 BGN"')
     )
 
     description = models.TextField(
@@ -88,48 +113,56 @@ class ApprovalRule(models.Model):
     # =====================
     # DOCUMENT SCOPE
     # =====================
+
     document_type = models.ForeignKey(
         'nomenclatures.DocumentType',
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
         verbose_name=_('Document Type'),
-        help_text=_('Specific document type this rule applies to')
-    )
-
-    content_type = models.ForeignKey(
-        ContentType,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        verbose_name=_('Content Type'),
-        help_text=_('Model class this rule applies to (fallback if no document type)')
+        help_text=_('Which document type this rule applies to')
     )
 
     # =====================
-    # STATUS TRANSITIONS
+    # STATUS TRANSITION
     # =====================
+
     from_status = models.CharField(
         _('From Status'),
         max_length=30,
-        help_text=_('Document status this rule can be applied from')
+        help_text=_('Document status this rule applies from: "submitted", "draft"')
     )
 
     to_status = models.CharField(
         _('To Status'),
         max_length=30,
-        help_text=_('Document status this rule transitions to')
+        help_text=_('Target status after approval: "approved", "rejected"')
+    )
+
+    # =====================
+    # APPROVAL HIERARCHY
+    # =====================
+
+    approval_level = models.PositiveIntegerField(
+        _('Approval Level'),
+        default=1,
+        help_text=_('Approval level: 1=first level, 2=second level, etc.')
+    )
+
+    requires_previous_level = models.BooleanField(
+        _('Requires Previous Level'),
+        default=True,
+        help_text=_('Must previous approval levels be completed first?')
     )
 
     # =====================
     # FINANCIAL LIMITS
     # =====================
+
     min_amount = models.DecimalField(
         _('Minimum Amount'),
         max_digits=15,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Minimum document amount for this rule')
+        help_text=_('Minimum document amount this rule applies to')
     )
 
     max_amount = models.DecimalField(
@@ -138,7 +171,7 @@ class ApprovalRule(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
-        help_text=_('Maximum document amount for this rule (null = no limit)')
+        help_text=_('Maximum document amount (null = no limit)')
     )
 
     currency = models.CharField(
@@ -149,21 +182,20 @@ class ApprovalRule(models.Model):
     )
 
     # =====================
-    # APPROVER DEFINITION
+    # APPROVER CONFIGURATION
     # =====================
+
     APPROVER_TYPE_CHOICES = [
         ('user', _('Specific User')),
         ('role', _('User Role/Group')),
-        ('permission', _('User Permission')),
-        ('dynamic', _('Dynamic (calculated)')),
+        ('permission', _('Permission')),
     ]
 
     approver_type = models.CharField(
         _('Approver Type'),
         max_length=20,
         choices=APPROVER_TYPE_CHOICES,
-        default='role',
-        help_text=_('How the approver is determined')
+        help_text=_('How to determine who can approve')
     )
 
     approver_user = models.ForeignKey(
@@ -171,8 +203,9 @@ class ApprovalRule(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
+        related_name='approval_rules_as_user',
         verbose_name=_('Approver User'),
-        help_text=_('Specific user who can approve (if approver_type=user)')
+        help_text=_('Specific user who can approve (if type=user)')
     )
 
     approver_role = models.ForeignKey(
@@ -180,8 +213,9 @@ class ApprovalRule(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
+        related_name='approval_rules_as_role',
         verbose_name=_('Approver Role'),
-        help_text=_('User group/role that can approve (if approver_type=role)')
+        help_text=_('User group that can approve (if type=role)')
     )
 
     approver_permission = models.ForeignKey(
@@ -189,40 +223,14 @@ class ApprovalRule(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
+        related_name='approval_rules_as_permission',
         verbose_name=_('Approver Permission'),
-        help_text=_('Permission required to approve (if approver_type=permission)')
+        help_text=_('Permission required to approve (if type=permission)')
     )
 
     # =====================
-    # WORKFLOW CONTROL
+    # BEHAVIOR SETTINGS
     # =====================
-    approval_level = models.PositiveIntegerField(
-        _('Approval Level'),
-        default=1,
-        help_text=_('Level in approval hierarchy (1=first, 2=second, etc.)')
-    )
-
-    is_parallel = models.BooleanField(
-        _('Parallel Approval'),
-        default=False,
-        help_text=_('Can be approved in parallel with same-level rules')
-    )
-
-    requires_previous_level = models.BooleanField(
-        _('Requires Previous Level'),
-        default=True,
-        help_text=_('Must previous approval levels be completed first?')
-    )
-
-    # =====================
-    # BUSINESS RULES
-    # =====================
-    auto_approve_conditions = models.JSONField(
-        _('Auto Approve Conditions'),
-        default=dict,
-        blank=True,
-        help_text=_('Conditions for automatic approval (JSON)')
-    )
 
     rejection_allowed = models.BooleanField(
         _('Rejection Allowed'),
@@ -230,92 +238,86 @@ class ApprovalRule(models.Model):
         help_text=_('Can approver reject at this level?')
     )
 
-    escalation_days = models.PositiveIntegerField(
-        _('Escalation Days'),
-        null=True,
-        blank=True,
-        help_text=_('Days before escalating to next level (null = no escalation)')
+    requires_reason = models.BooleanField(
+        _('Requires Reason'),
+        default=False,
+        help_text=_('Must provide reason/comment for approval/rejection?')
     )
 
     # =====================
-    # NOTIFICATIONS
+    # NOTIFICATIONS (simplified)
     # =====================
-    notify_approver = models.BooleanField(
-        _('Notify Approver'),
+
+    notify_on_trigger = models.BooleanField(
+        _('Notify on Trigger'),
         default=True,
-        help_text=_('Send notification to approver when rule is triggered')
+        help_text=_('Send notification when this rule is triggered')
     )
 
-    notify_requester = models.BooleanField(
-        _('Notify Requester'),
+    notify_on_complete = models.BooleanField(
+        _('Notify on Complete'),
         default=True,
-        help_text=_('Send notification to requester when approved/rejected')
+        help_text=_('Send notification when approval/rejection is completed')
     )
 
     # =====================
-    # AUDIT
+    # AUDIT FIELDS
     # =====================
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+
+    created_at = models.DateTimeField(
+        _('Created At'),
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        _('Updated At'),
+        auto_now=True
+    )
+
     created_by = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
-        related_name='created_approval_rules',
         null=True,
-        blank=True
+        blank=True,
+        related_name='created_approval_rules',
+        verbose_name=_('Created By')
     )
 
     # =====================
     # MANAGERS
     # =====================
+
     objects = ApprovalRuleManager()
 
     class Meta:
         verbose_name = _('Approval Rule')
         verbose_name_plural = _('Approval Rules')
-        ordering = ['approval_level', 'sort_order', 'name']
+        ordering = ['document_type', 'approval_level', 'sort_order']
         indexes = [
-            models.Index(fields=['document_type', 'from_status']),
-            models.Index(fields=['content_type', 'from_status']),
+            models.Index(fields=['document_type', 'from_status', 'to_status']),
             models.Index(fields=['approval_level', 'sort_order']),
             models.Index(fields=['min_amount', 'max_amount']),
             models.Index(fields=['approver_type', 'is_active']),
         ]
-        unique_together = [
-            ['document_type', 'from_status', 'to_status', 'approval_level', 'approver_user'],
-            ['document_type', 'from_status', 'to_status', 'approval_level', 'approver_role'],
+        constraints = [
+            models.UniqueConstraint(
+                fields=['document_type', 'from_status', 'to_status', 'approval_level'],
+                name='unique_approval_rule_per_level'
+            )
         ]
 
     def __str__(self):
-        amount_str = f"{self.min_amount}"
+        amount_range = f"{self.min_amount}"
         if self.max_amount:
-            amount_str += f"-{self.max_amount}"
+            amount_range += f"-{self.max_amount}"
         else:
-            amount_str += "+"
+            amount_range += "+"
 
-        return f"{self.name}: {self.from_status}→{self.to_status} ({amount_str} {self.currency})"
-
-    # =====================
-    # VALIDATION
-    # =====================
-    # В nomenclatures/models/approvals.py
-    # Заменяме clean() метода в ApprovalRule класа:
-
-    import decimal
+        return f"{self.name} (Level {self.approval_level}): {self.from_status}→{self.to_status} ({amount_range} {self.currency})"
 
     def clean(self):
-        """Enhanced validation with DocumentType sync and conflict detection"""
+        """Simplified validation"""
         super().clean()
-
-        # =====================
-        # 1. BASIC CONFIGURATION VALIDATION
-        # =====================
-
-        # Must have either document_type or content_type
-        if not self.document_type and not self.content_type:
-            raise ValidationError({
-                '__all__': _('Must specify either Document Type or Content Type')
-            })
 
         # Amount validation
         if self.max_amount and self.min_amount > self.max_amount:
@@ -323,292 +325,139 @@ class ApprovalRule(models.Model):
                 'max_amount': _('Maximum amount must be greater than minimum amount')
             })
 
-        # =====================
-        # 2. APPROVER CONFIGURATION VALIDATION
-        # =====================
-
-        # Validate approver fields based on type
-        if self.approver_type == 'user':
-            if not self.approver_user:
-                raise ValidationError({
-                    'approver_user': _('Approver user is required when type is "user"')
-                })
-            # Clear conflicting fields
-            if self.approver_role or self.approver_permission:
-                raise ValidationError({
-                    '__all__': _('Only approver_user should be set when type is "user"')
-                })
-
-        elif self.approver_type == 'role':
-            if not self.approver_role:
-                raise ValidationError({
-                    'approver_role': _('Approver role is required when type is "role"')
-                })
-            # Clear conflicting fields
-            if self.approver_user or self.approver_permission:
-                raise ValidationError({
-                    '__all__': _('Only approver_role should be set when type is "role"')
-                })
-
-        elif self.approver_type == 'permission':
-            if not self.approver_permission:
-                raise ValidationError({
-                    'approver_permission': _('Approver permission is required when type is "permission"')
-                })
-            # Clear conflicting fields
-            if self.approver_user or self.approver_role:
-                raise ValidationError({
-                    '__all__': _('Only approver_permission should be set when type is "permission"')
-                })
-
-        elif self.approver_type == 'dynamic':
-            # Dynamic type shouldn't have any approver fields set
-            if self.approver_user or self.approver_role or self.approver_permission:
-                raise ValidationError({
-                    '__all__': _('No approver fields should be set when type is "dynamic"')
-                })
-
-        # =====================
-        # 3. DOCUMENTTYPE SYNCHRONIZATION VALIDATION
-        # =====================
-
-        if self.document_type:
-            # Check if statuses exist in DocumentType
-            allowed_statuses = self.document_type.allowed_statuses or []
-
-            if self.from_status not in allowed_statuses:
-                raise ValidationError({
-                    'from_status': f'Status "{self.from_status}" is not in DocumentType allowed statuses: {allowed_statuses}'
-                })
-
-            if self.to_status not in allowed_statuses:
-                raise ValidationError({
-                    'to_status': f'Status "{self.to_status}" is not in DocumentType allowed statuses: {allowed_statuses}'
-                })
-
-            # Check if transition is configured in DocumentType
-            allowed_transitions = self.document_type.get_allowed_transitions()
-
-            if self.from_status not in allowed_transitions:
-                raise ValidationError({
-                    'from_status': f'No transitions configured for status "{self.from_status}" in DocumentType "{self.document_type.name}". Please configure status_transitions in DocumentType admin.'
-                })
-
-            if self.to_status not in allowed_transitions.get(self.from_status, []):
-                available = allowed_transitions.get(self.from_status, [])
-                raise ValidationError({
-                    'to_status': f'Transition "{self.from_status}" → "{self.to_status}" not configured in DocumentType "{self.document_type.name}". Available transitions: {available}'
-                })
-
-        # =====================
-        # 4. OVERLAPPING RULES DETECTION
-        # =====================
-
-        # Find potentially conflicting rules
-        base_query = ApprovalRule.objects.filter(
-            is_active=True
-        ).exclude(pk=self.pk if self.pk else None)
-
-        # Filter by document scope
-        if self.document_type:
-            base_query = base_query.filter(document_type=self.document_type)
-        elif self.content_type:
-            base_query = base_query.filter(content_type=self.content_type)
-
-        # Filter by transition and level
-        conflicting_rules = base_query.filter(
-            from_status=self.from_status,
-            to_status=self.to_status,
-            approval_level=self.approval_level
-        )
-
-        # Check for approver conflicts
-        approver_conflicts = []
-
-        for rule in conflicting_rules:
-            # Same approver type and same approver
-            if (self.approver_type == rule.approver_type and
-                    self.approver_user == rule.approver_user and
-                    self.approver_role == rule.approver_role and
-                    self.approver_permission == rule.approver_permission):
-
-                # Check for amount range overlap
-                if self._amount_ranges_overlap(rule):
-                    approver_conflicts.append(rule)
-
-        if approver_conflicts:
-            conflict_details = []
-            for rule in approver_conflicts:
-                range_str = f"{rule.min_amount}-{rule.max_amount or '∞'} {rule.currency}"
-                conflict_details.append(f"'{rule.name}' ({range_str})")
-
+        # Approver validation
+        if self.approver_type == 'user' and not self.approver_user:
             raise ValidationError({
-                '__all__': f'Conflicting rules with overlapping amount ranges: {", ".join(conflict_details)}'
+                'approver_user': _('Approver user is required when type is "user"')
             })
 
-        # =====================
-        # 5. BUSINESS LOGIC VALIDATION
-        # =====================
-
-        # Level sequence validation
-        if self.approval_level > 1 and self.requires_previous_level:
-            # Check if previous level exists
-            previous_level_exists = ApprovalRule.objects.filter(
-                document_type=self.document_type,
-                from_status=self.from_status,
-                approval_level=self.approval_level - 1,
-                is_active=True
-            ).exists()
-
-            if not previous_level_exists:
-                raise ValidationError({
-                    'approval_level': f'No active rule exists for previous level {self.approval_level - 1}'
-                })
-
-        # Escalation validation
-        if self.escalation_days is not None and self.escalation_days <= 0:
+        if self.approver_type == 'role' and not self.approver_role:
             raise ValidationError({
-                'escalation_days': _('Escalation days must be positive if specified')
+                'approver_role': _('Approver role is required when type is "role"')
             })
 
-    def _amount_ranges_overlap(self, other_rule):
-        """Check if amount ranges overlap with another rule"""
+        if self.approver_type == 'permission' and not self.approver_permission:
+            raise ValidationError({
+                'approver_permission': _('Approver permission is required when type is "permission"')
+            })
 
-        # Handle None values (unlimited max_amount)
-        self_max = self.max_amount if self.max_amount is not None else float('inf')
-        other_max = other_rule.max_amount if other_rule.max_amount is not None else float('inf')
-
-        # Check for overlap: ranges overlap if one starts before the other ends
-        return not (self_max < other_rule.min_amount or self.min_amount > other_max)
-
-    def applies_to_document(self, document):
-        """Check if this rule applies to given document - ENHANCED"""
-
-        # Document type check
-        if self.document_type and document.document_type != self.document_type:
-            return False
-
-        # Content type check (fallback)
-        if not self.document_type and self.content_type:
-            if ContentType.objects.get_for_model(document) != self.content_type:
-                return False
-
-        # Status check
-        if document.status != self.from_status:
-            return False
-
-        # Amount check - ENHANCED with safe handling
-        if hasattr(document, 'get_estimated_total'):
-            try:
-                amount = document.get_estimated_total()
-                # Only validate amount if we got a valid numeric value
-                if amount is not None and amount >= 0:
-                    if amount < self.min_amount:
-                        return False
-                    if self.max_amount and amount > self.max_amount:
-                        return False
-            except (AttributeError, TypeError, ValueError, decimal.InvalidOperation):
-                # If amount calculation fails, skip amount validation
-                # Rule applies based on other criteria (document_type, status, etc.)
-                pass
-
-        return True
-
-
+        # Clear conflicting approver fields
+        if self.approver_type != 'user':
+            self.approver_user = None
+        if self.approver_type != 'role':
+            self.approver_role = None
+        if self.approver_type != 'permission':
+            self.approver_permission = None
 
     # =====================
     # BUSINESS METHODS
     # =====================
-    def can_approve(self, user, document=None):
+
+    def can_user_approve(self, user, document=None):
         """Check if user can approve using this rule"""
         if not self.is_active:
             return False
 
         if self.approver_type == 'user':
-            return user == self.approver_user
+            return self.approver_user == user
+
         elif self.approver_type == 'role':
             return user.groups.filter(id=self.approver_role.id).exists()
+
         elif self.approver_type == 'permission':
             return user.has_perm(
-                f"{self.approver_permission.content_type.app_label}.{self.approver_permission.codename}")
-        elif self.approver_type == 'dynamic':
-            # Implement dynamic logic based on document
-            return self._evaluate_dynamic_approval(user, document)
+                f'{self.approver_permission.content_type.app_label}.{self.approver_permission.codename}')
 
         return False
 
+    def applies_to_amount(self, amount):
+        """Check if rule applies to given amount"""
+        if amount < self.min_amount:
+            return False
 
+        if self.max_amount and amount > self.max_amount:
+            return False
 
-    def _evaluate_dynamic_approval(self, user, document):
-        """Evaluate dynamic approval logic"""
-        if hasattr(document, 'location') and hasattr(user, 'managed_locations'):
-            return document.location in user.managed_locations.all()
+        return True
 
-        return False
-
-    # =====================
-    # DISPLAY METHODS
-    # =====================
     def get_approver_display(self):
         """Get human-readable approver information"""
         if self.approver_type == 'user' and self.approver_user:
-            return f"User: {self.approver_user.get_full_name()}"
+            return f"User: {self.approver_user.get_full_name() or self.approver_user.username}"
         elif self.approver_type == 'role' and self.approver_role:
             return f"Role: {self.approver_role.name}"
         elif self.approver_type == 'permission' and self.approver_permission:
             return f"Permission: {self.approver_permission.name}"
-        elif self.approver_type == 'dynamic':
-            return "Dynamic (calculated)"
-        return "Not configured"
-
-    def get_amount_range_display(self):
-        """Get formatted amount range"""
-        if self.max_amount:
-            return f"{self.min_amount} - {self.max_amount} {self.currency}"
         else:
-            return f"{self.min_amount}+ {self.currency}"
+            return "Unknown"
 
+
+# =================================================================
+# APPROVAL LOG - UNCHANGED BUT SIMPLIFIED
+# =================================================================
 
 class ApprovalLog(models.Model):
     """
-    Approval Log - История на одобренията
+    Approval Log - Audit trail за approval actions
 
-    Записва всяко действие в approval процеса
+    Записва всички approval/rejection действия за audit purposes.
     """
 
     # =====================
     # DOCUMENT REFERENCE
     # =====================
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
-    object_id = models.PositiveIntegerField()
+
+    content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        verbose_name=_('Content Type')
+    )
+
+    object_id = models.PositiveIntegerField(
+        _('Object ID')
+    )
 
     # =====================
     # APPROVAL ACTION
     # =====================
+
+    ACTION_CHOICES = [
+        ('submitted', _('Submitted for Approval')),
+        ('approved', _('Approved')),
+        ('rejected', _('Rejected')),
+        ('escalated', _('Escalated')),
+    ]
+
+    action = models.CharField(
+        _('Action'),
+        max_length=20,
+        choices=ACTION_CHOICES
+    )
+
+    from_status = models.CharField(
+        _('From Status'),
+        max_length=30
+    )
+
+    to_status = models.CharField(
+        _('To Status'),
+        max_length=30
+    )
+
+    # =====================
+    # RULE REFERENCE
+    # =====================
+
     rule = models.ForeignKey(
         ApprovalRule,
         on_delete=models.PROTECT,
         verbose_name=_('Applied Rule')
     )
 
-    action = models.CharField(
-        _('Action'),
-        max_length=20,
-        choices=[
-            ('submitted', _('Submitted for Approval')),
-            ('approved', _('Approved')),
-            ('rejected', _('Rejected')),
-            ('escalated', _('Escalated')),
-            ('auto_approved', _('Auto Approved')),
-        ]
-    )
-
-    from_status = models.CharField(_('From Status'), max_length=30)
-    to_status = models.CharField(_('To Status'), max_length=30)
-
     # =====================
-    # ACTOR INFO
+    # ACTOR & CONTEXT
     # =====================
+
     actor = models.ForeignKey(
         User,
         on_delete=models.PROTECT,
@@ -623,9 +472,13 @@ class ApprovalLog(models.Model):
     )
 
     # =====================
-    # METADATA
+    # AUDIT METADATA
     # =====================
-    timestamp = models.DateTimeField(auto_now_add=True)
+
+    timestamp = models.DateTimeField(
+        _('Timestamp'),
+        auto_now_add=True
+    )
 
     ip_address = models.GenericIPAddressField(
         _('IP Address'),
@@ -646,7 +499,110 @@ class ApprovalLog(models.Model):
             models.Index(fields=['content_type', 'object_id']),
             models.Index(fields=['actor', '-timestamp']),
             models.Index(fields=['action', '-timestamp']),
+            models.Index(fields=['rule', '-timestamp']),
         ]
 
     def __str__(self):
-        return f"{self.actor.get_full_name()}: {self.get_action_display()} ({self.timestamp})"
+        return f"{self.get_action_display()}: {self.from_status} → {self.to_status} by {self.actor.username}"
+
+    @property
+    def document(self):
+        """Get referenced document object"""
+        try:
+            return self.content_type.get_object_for_this_type(id=self.object_id)
+        except:
+            return None
+
+
+# =================================================================
+# HELPER FUNCTIONS
+# =================================================================
+
+def get_approval_rules_for_transition(document_type, from_status, to_status, amount=None):
+    """
+    Get applicable approval rules for status transition
+
+    Args:
+        document_type: DocumentType instance
+        from_status: Current status
+        to_status: Target status
+        amount: Document amount (optional)
+
+    Returns:
+        QuerySet of applicable ApprovalRule instances
+    """
+    rules = ApprovalRule.objects.for_transition(document_type, from_status, to_status)
+
+    if amount is not None:
+        rules = rules.filter(
+            min_amount__lte=amount
+        ).filter(
+            models.Q(max_amount__gte=amount) | models.Q(max_amount__isnull=True)
+        )
+
+    return rules
+
+
+def can_user_approve_transition(user, document_type, from_status, to_status, amount=None):
+    """
+    Check if user can approve specific transition
+
+    Args:
+        user: User instance
+        document_type: DocumentType instance
+        from_status: Current status
+        to_status: Target status
+        amount: Document amount (optional)
+
+    Returns:
+        bool: True if user can approve
+    """
+    rules = get_approval_rules_for_transition(document_type, from_status, to_status, amount)
+
+    for rule in rules:
+        if rule.can_user_approve(user):
+            return True
+
+    return False
+
+
+def create_basic_approval_rules():
+    """
+    Create basic approval rules for standard POS system
+
+    Usage:
+        create_basic_approval_rules()  # Creates standard rules
+    """
+    from nomenclatures.models import DocumentType
+    from django.contrib.auth.models import Group, Permission
+
+    # Get or create manager group
+    managers_group, _ = Group.objects.get_or_create(name='Managers')
+
+    # Get document types
+    try:
+        request_type = DocumentType.objects.get(type_key='purchase_request')
+
+        # Basic approval rule: Managers can approve purchase requests
+        ApprovalRule.objects.get_or_create(
+            document_type=request_type,
+            from_status='submitted',
+            to_status='approved',
+            approval_level=1,
+            defaults={
+                'name': 'Manager approval for purchase requests',
+                'approver_type': 'role',
+                'approver_role': managers_group,
+                'min_amount': Decimal('0.00'),
+                'max_amount': None,  # No limit
+                'rejection_allowed': True,
+                'requires_reason': True
+            }
+        )
+
+        print("✅ Basic approval rules created successfully")
+
+    except DocumentType.DoesNotExist:
+        print("❌ DocumentType 'purchase_request' not found. Create document types first.")
+    except Exception as e:
+        print(f"❌ Error creating approval rules: {e}")

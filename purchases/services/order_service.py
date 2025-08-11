@@ -8,7 +8,7 @@ from django.db import transaction, models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from purchases.models.orders import PurchaseOrder, PurchaseOrderLine
-from purchases.models.requests import PurchaseRequest
+
 
 
 logger = logging.getLogger(__name__)
