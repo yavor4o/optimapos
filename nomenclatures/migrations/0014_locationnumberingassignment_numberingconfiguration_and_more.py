@@ -249,10 +249,7 @@ class Migration(migrations.Migration):
             name='user',
             field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='numbering_preferences', to=settings.AUTH_USER_MODEL, verbose_name='User'),
         ),
-        migrations.RemoveField(
-            model_name='approvalrule',
-            name='auto_approve_conditions',
-        ),
+
         migrations.RemoveField(
             model_name='approvalrule',
             name='content_type',

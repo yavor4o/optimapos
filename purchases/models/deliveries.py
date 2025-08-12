@@ -325,7 +325,7 @@ class DeliveryLineManager(models.Manager):
 
     def expiring_soon(self, days=30):
         """Lines with products expiring soon"""
-        cutoff_date = timezone.now().date() + timezone.timedelta(days=days)
+        cutoff_date = timezone.now().date() + timedelta(days=days)
         return self.filter(
             expiry_date__lte=cutoff_date,
             expiry_date__isnull=False
@@ -334,16 +334,20 @@ class DeliveryLineManager(models.Manager):
 
 class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Delivery Line - Ред на доставка
+    Delivery Line - CLEAN VERSION
 
-    Логика: Използва FinancialLineMixin защото има финансови данни.
+    ✅ received_quantity като primary
+    ✅ expected_quantity (от order) за сравнение
+    ✅ variance_quantity auto-calculated
+    ✅ Quality control fields
+    ✅ Batch tracking
     """
 
     # =====================
-    # FOREIGN KEY TO PARENT
+    # DOCUMENT RELATIONSHIP
     # =====================
     document = models.ForeignKey(
-        DeliveryReceipt,
+        'DeliveryReceipt',
         on_delete=models.CASCADE,
         related_name='lines',
         verbose_name=_('Delivery Receipt')
@@ -353,27 +357,18 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     # SOURCE TRACKING
     # =====================
     source_order_line = models.ForeignKey(
-        'purchases.PurchaseOrderLine',
+        'PurchaseOrderLine',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='delivery_lines',
         verbose_name=_('Source Order Line'),
-        help_text=_('Order line this delivery line fulfills (if any)')
+        help_text=_('Order line this delivery fulfills')
     )
 
     # =====================
-    # DELIVERY-SPECIFIC FIELDS
+    # QUANTITIES
     # =====================
-    ordered_quantity = models.DecimalField(
-        _('Ordered Quantity'),
-        max_digits=10,
-        decimal_places=3,
-        null=True,
-        blank=True,
-        help_text=_('Quantity that was originally ordered')
-    )
-
     received_quantity = models.DecimalField(
         _('Received Quantity'),
         max_digits=10,
@@ -381,15 +376,28 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         help_text=_('Quantity actually received')
     )
 
+    expected_quantity = models.DecimalField(
+        _('Expected Quantity'),
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text=_('Expected quantity (from order or manual)')
+    )
+
+    # AUTO-CALCULATED
     variance_quantity = models.DecimalField(
-        _('Variance Quantity'),
+        _('Variance'),
         max_digits=10,
         decimal_places=3,
         default=Decimal('0.000'),
-        help_text=_('Difference between ordered and received (received - ordered)')
+        editable=False,  # Auto-calculated!
+        help_text=_('received - expected (auto-calculated)')
     )
 
+    # =====================
     # QUALITY CONTROL
+    # =====================
     quality_approved = models.BooleanField(
         _('Quality Approved'),
         default=True,
@@ -402,7 +410,8 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         ('wrong_product', _('Wrong Product')),
         ('poor_quality', _('Poor Quality')),
         ('contaminated', _('Contaminated')),
-        ('packaging_issue', _('Packaging Issue')),
+        ('packaging', _('Packaging Issue')),
+        ('temperature', _('Temperature Issue')),
         ('other', _('Other')),
     ]
 
@@ -417,51 +426,59 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     quality_notes = models.TextField(
         _('Quality Notes'),
         blank=True,
-        help_text=_('Quality control notes for this item')
+        help_text=_('Quality control notes')
     )
 
+    # =====================
     # BATCH/LOT TRACKING
+    # =====================
     batch_number = models.CharField(
-        _('Batch Number'),
+        _('Batch/Lot Number'),
         max_length=50,
         blank=True,
-        help_text=_('Batch/lot number from supplier')
-    )
-
-    expiry_date = models.DateField(
-        _('Expiry Date'),
-        null=True,
-        blank=True,
-        help_text=_('Product expiry date')
+        db_index=True,  # Important for tracking
+        help_text=_('Batch or lot number from supplier')
     )
 
     production_date = models.DateField(
         _('Production Date'),
         null=True,
         blank=True,
-        help_text=_('Product production date')
+        help_text=_('When product was manufactured')
     )
 
+    expiry_date = models.DateField(
+        _('Expiry Date'),
+        null=True,
+        blank=True,
+        db_index=True,  # Important for queries
+        help_text=_('Product expiry date')
+    )
+
+    # =====================
     # SPECIAL HANDLING
-    requires_special_handling = models.BooleanField(
-        _('Requires Special Handling'),
-        default=False,
-        help_text=_('Whether this item needs special handling')
-    )
-
+    # =====================
     temperature_at_receipt = models.DecimalField(
-        _('Temperature at Receipt'),
+        _('Temperature (°C)'),
         max_digits=5,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text=_('Temperature when received (for cold chain tracking)')
+        help_text=_('Temperature when received (for cold chain)')
     )
 
-    # =====================
-    # MANAGERS
-    # =====================
-    objects = DeliveryLineManager()
+    requires_special_storage = models.BooleanField(
+        _('Requires Special Storage'),
+        default=False,
+        help_text=_('Needs special storage conditions')
+    )
+
+    storage_location = models.CharField(
+        _('Storage Location'),
+        max_length=50,
+        blank=True,
+        help_text=_('Where item was stored (rack/bin/zone)')
+    )
 
     class Meta:
         verbose_name = _('Delivery Line')
@@ -472,163 +489,213 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
             models.Index(fields=['document', 'line_number']),
             models.Index(fields=['product']),
             models.Index(fields=['source_order_line']),
-            models.Index(fields=['quality_approved', 'batch_number']),
+            models.Index(fields=['batch_number']),
             models.Index(fields=['expiry_date']),
-            models.Index(fields=['variance_quantity']),
+            models.Index(fields=['quality_approved']),
         ]
 
     def __str__(self):
-        return f"{self.document.document_number} - Line {self.line_number}: {self.product.code}"
+        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.received_quantity}"
 
     # =====================
-    # ДОСТАВКА LINE ВАЛИДАЦИЯ
+    # IMPLEMENT ABSTRACT METHOD
     # =====================
+
+    def get_quantity_for_display(self):
+        """Return received quantity for display"""
+        return self.received_quantity
+
+    # =====================
+    # VALIDATION
+    # =====================
+
     def clean(self):
-        """Delivery line specific validation"""
+        """Delivery line validation"""
         super().clean()
 
-        # =====================
-        # INVENTORY DIRECTION VALIDATION
-        # =====================
-        if self.document and self.document.document_type:
-            direction = self.document.document_type.inventory_direction
-
-            if direction == 'in':
-                # За "in" direction - САМО positive количества
-                if self.received_quantity <= 0:
+        # Received quantity validation
+        if self.received_quantity <= 0:
+            # Check if document allows negative (returns/corrections)
+            if self.document and self.document.document_type:
+                direction = getattr(self.document.document_type, 'inventory_direction', 'in')
+                if direction == 'both':
+                    # Allow negative for corrections
+                    if self.received_quantity == 0:
+                        raise ValidationError({
+                            'received_quantity': _('Quantity cannot be zero')
+                        })
+                else:
+                    # Normal deliveries - positive only
                     raise ValidationError({
-                        'received_quantity': _(
-                            'For incoming documents, received quantity must be greater than zero. '
-                            'Negative quantities are not allowed.'
-                        )
+                        'received_quantity': _('Received quantity must be greater than zero')
                     })
 
-            elif direction == 'out':
-                # За "out" direction - САМО positive количества
-                if self.received_quantity <= 0:
-                    raise ValidationError({
-                        'received_quantity': _(
-                            'For outgoing documents, received quantity must be greater than zero. '
-                            'Negative quantities are not allowed.'
-                        )
-                    })
-
-            elif direction == 'both':
-                # За "both" direction - позволяваме negative values за корекции
-                if self.received_quantity == 0:
-                    raise ValidationError({
-                        'received_quantity': _(
-                            'Received quantity cannot be zero. '
-                            'Use positive values for incoming stock, negative for returns/corrections.'
-                        )
-                    })
-                # ✅ За 'both' направление negative values са разрешени!
-
-        # =====================
-        # BUSINESS LOGIC VALIDATION
-        # =====================
-
-        # Quality issue validation
+        # Quality validation
         if not self.quality_approved and not self.quality_issue_type:
             raise ValidationError({
-                'quality_issue_type': _('Quality issue type is required when quality is not approved')
+                'quality_issue_type': _('Please specify quality issue type')
             })
 
-        # Variance validation
-        if self.ordered_quantity and self.received_quantity:
-            calculated_variance = self.received_quantity - self.ordered_quantity
-            if abs(self.variance_quantity - calculated_variance) > Decimal('0.001'):
-                self.variance_quantity = calculated_variance
-
-        # Expiry date validation
-        if self.expiry_date and self.expiry_date <= timezone.now().date():
-            # Just warn, don't prevent saving - might be receiving expired goods for disposal
-            pass
-
-        # Unit validation
-        if self.product and self.unit:
-            valid_units = self.product.get_valid_purchase_units()
-            if self.unit not in valid_units:
-                unit_names = [u.name for u in valid_units]
+        # Expiry validation
+        if self.expiry_date and self.production_date:
+            if self.expiry_date <= self.production_date:
                 raise ValidationError({
-                    'unit': f'Invalid unit. Valid options: {", ".join(unit_names)}'
+                    'expiry_date': _('Expiry date must be after production date')
                 })
 
+        # Temperature validation for cold chain
+        if self.temperature_at_receipt is not None:
+            # Check product requirements
+            if hasattr(self.product, 'max_temperature'):
+                if self.temperature_at_receipt > self.product.max_temperature:
+                    # Just warning, still allow saving
+                    import warnings
+                    warnings.warn(
+                        f"Temperature {self.temperature_at_receipt}°C exceeds product max {self.product.max_temperature}°C"
+                    )
+
+    # =====================
+    # SAVE WITH AUTO-CALCULATIONS
+    # =====================
+
     def save(self, *args, **kwargs):
-        """Enhanced save with variance calculation"""
+        """Enhanced save with auto-calculations"""
 
+        # 1. Auto-populate expected from order line
+        if self.source_order_line and not self.expected_quantity:
+            self.expected_quantity = self.source_order_line.remaining_quantity
 
-        # Calculate variance if we have both quantities
-        if self.ordered_quantity and self.received_quantity:
-            self.variance_quantity = self.received_quantity - self.ordered_quantity
+        # 2. Calculate variance
+        if self.expected_quantity:
+            self.variance_quantity = self.received_quantity - self.expected_quantity
+        else:
+            self.variance_quantity = Decimal('0.000')
 
+        # 3. For FinancialLineMixin
+        self.quantity = self.received_quantity
+
+        # 4. Save
+        is_new = not self.pk
         super().save(*args, **kwargs)
 
-    def get_quantity(self):
-        """Get quantity for financial calculations"""
-        return self.received_quantity or Decimal('0')
+        # 5. After save - update order line delivery tracking
+        if self.source_order_line:
+            self.source_order_line.update_delivery_status()
 
     # =====================
     # PROPERTIES
     # =====================
+
     @property
     def is_from_order(self):
+        """Check if line is from order"""
         return self.source_order_line is not None
 
     @property
-    def is_direct_item(self):
+    def is_direct_delivery(self):
+        """Check if direct delivery (not from order)"""
         return self.source_order_line is None
 
     @property
     def has_variance(self):
+        """Check if has variance"""
         return self.variance_quantity != 0
 
     @property
-    def is_positive_variance(self):
-        """More received than ordered"""
-        return self.variance_quantity > 0
-
-    @property
-    def is_negative_variance(self):
-        """Less received than ordered"""
-        return self.variance_quantity < 0
+    def variance_type(self):
+        """Get variance type"""
+        if self.variance_quantity > 0:
+            return 'over'
+        elif self.variance_quantity < 0:
+            return 'under'
+        return 'exact'
 
     @property
     def variance_percentage(self):
-        """Variance as percentage of ordered quantity"""
-        if not self.ordered_quantity:
+        """Calculate variance percentage"""
+        if not self.expected_quantity or self.expected_quantity == 0:
             return None
-        return (self.variance_quantity / self.ordered_quantity) * 100
+        return (self.variance_quantity / self.expected_quantity) * 100
 
     @property
     def variance_value(self):
-        """Monetary value of variance"""
-        if self.unit_price:
+        """Calculate monetary value of variance"""
+        if hasattr(self, 'unit_price') and self.unit_price:
             return self.variance_quantity * self.unit_price
         return Decimal('0.00')
 
     @property
     def is_expired(self):
-        """Is the product expired?"""
+        """Check if expired"""
         if not self.expiry_date:
             return False
         return self.expiry_date <= timezone.now().date()
 
     @property
-    def expires_soon(self, days=30):
-        """Does the product expire soon?"""
+    def days_until_expiry(self):
+        """Calculate days until expiry"""
         if not self.expiry_date:
-            return False
-        cutoff_date = timezone.now().date() + timedelta(days=days)
-        return self.expiry_date <= cutoff_date
+            return None
+        delta = self.expiry_date - timezone.now().date()
+        return delta.days
 
     @property
-    def has_quality_issues(self):
-        return not self.quality_approved
+    def expires_soon(self):
+        """Check if expires within 30 days"""
+        days = self.days_until_expiry
+        return days is not None and days <= 30
 
     @property
-    def effective_received_quantity(self):
-        """Received quantity minus any quality issues"""
+    def effective_quantity(self):
+        """Get usable quantity (considering quality)"""
         if self.quality_approved:
             return self.received_quantity
-        return Decimal('0.000')  # If quality not approved, consider as not usable
+        return Decimal('0.000')
+
+    @property
+    def storage_info(self):
+        """Get storage information summary"""
+        info = []
+        if self.storage_location:
+            info.append(f"Location: {self.storage_location}")
+        if self.temperature_at_receipt is not None:
+            info.append(f"Temp: {self.temperature_at_receipt}°C")
+        if self.requires_special_storage:
+            info.append("Special storage required")
+        return " | ".join(info) if info else "Standard storage"
+
+    # =====================
+    # METHODS
+    # =====================
+
+    def can_be_used(self):
+        """Check if line can be used for inventory"""
+        return (
+                self.quality_approved and
+                not self.is_expired and
+                self.received_quantity > 0
+        )
+
+    def get_inventory_impact(self):
+        """
+        Get inventory impact of this line
+        Returns: tuple (product, quantity, batch)
+        """
+        if not self.can_be_used():
+            return None
+
+        return {
+            'product': self.product,
+            'quantity': self.effective_quantity,
+            'batch_number': self.batch_number,
+            'expiry_date': self.expiry_date,
+            'location': self.storage_location
+        }
+
+    def create_quality_issue(self, issue_type, notes=''):
+        """Mark line with quality issue"""
+        self.quality_approved = False
+        self.quality_issue_type = issue_type
+        self.quality_notes = notes
+        self.save()
+

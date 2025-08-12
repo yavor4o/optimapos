@@ -534,16 +534,19 @@ class PurchaseOrderLineManager(models.Manager):
 
 class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Purchase Order Line - Ред на поръчка
+    Purchase Order Line - CLEAN VERSION
 
-    Логика: Използва FinancialLineMixin защото има финансови данни.
+    ✅ ordered_quantity като primary
+    ✅ confirmed_quantity за supplier confirmation
+    ✅ delivered_quantity auto-calculated от deliveries
+    ✅ БЕЗ remaining_quantity поле (property instead)
     """
 
     # =====================
-    # FOREIGN KEY TO PARENT
+    # DOCUMENT RELATIONSHIP
     # =====================
     document = models.ForeignKey(
-        PurchaseOrder,
+        'PurchaseOrder',
         on_delete=models.CASCADE,
         related_name='lines',
         verbose_name=_('Purchase Order')
@@ -553,17 +556,16 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     # SOURCE TRACKING
     # =====================
     source_request_line = models.ForeignKey(
-        'purchases.PurchaseRequestLine',
-        on_delete=models.SET_NULL,
+        'PurchaseRequestLine',
         null=True,
         blank=True,
+        on_delete=models.SET_NULL,
         related_name='order_lines',
-        verbose_name=_('Source Request Line'),
-        help_text=_('Request line this order line was created from (if any)')
+        help_text=_('Request line this was created from')
     )
 
     # =====================
-    # ORDER-SPECIFIC FIELDS
+    # QUANTITIES
     # =====================
     ordered_quantity = models.DecimalField(
         _('Ordered Quantity'),
@@ -581,42 +583,35 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         help_text=_('Quantity confirmed by supplier (if different from ordered)')
     )
 
-    # DELIVERY TRACKING
+    # AUTO-CALCULATED - НЕ се редактира ръчно!
     delivered_quantity = models.DecimalField(
         _('Delivered Quantity'),
         max_digits=10,
         decimal_places=3,
         default=Decimal('0.000'),
-        help_text=_('Total quantity already delivered')
+        editable=False,  # Важно!
+        help_text=_('Total delivered (auto-calculated from delivery receipts)')
     )
 
-    remaining_quantity = models.DecimalField(
-        _('Remaining Quantity'),
-        max_digits=10,
-        decimal_places=3,
-        default=Decimal('0.000'),
-        help_text=_('Quantity still to be delivered')
-    )
-
+    # =====================
+    # DELIVERY STATUS
+    # =====================
     DELIVERY_STATUS_CHOICES = [
-        ('pending', _('Pending')),
+        ('pending', _('Pending Delivery')),
         ('partial', _('Partially Delivered')),
         ('completed', _('Fully Delivered')),
+        ('over_delivered', _('Over Delivered')),
         ('cancelled', _('Cancelled')),
     ]
 
     delivery_status = models.CharField(
         _('Delivery Status'),
-        max_length=20,
+        max_length=20,  # Поправка: max_length вместо max_digits!
         choices=DELIVERY_STATUS_CHOICES,
         default='pending',
-        help_text=_('Delivery status for this line')
+        editable=False,  # Auto-calculated
+        help_text=_('Auto-calculated delivery status')
     )
-
-    # =====================
-    # MANAGERS
-    # =====================
-    objects = PurchaseOrderLineManager()
 
     class Meta:
         verbose_name = _('Purchase Order Line')
@@ -626,21 +621,29 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         indexes = [
             models.Index(fields=['document', 'line_number']),
             models.Index(fields=['product']),
-            models.Index(fields=['source_request_line']),
             models.Index(fields=['delivery_status']),
+            models.Index(fields=['source_request_line']),
         ]
 
     def __str__(self):
-        return f"{self.document.document_number} - Line {self.line_number}: {self.product.code}"
+        qty = self.get_quantity_for_display()
+        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {qty}"
 
     # =====================
-    # ORDER LINE ВАЛИДАЦИЯ
+    # IMPLEMENT ABSTRACT METHOD
     # =====================
+
+    def get_quantity_for_display(self):
+        """Return effective quantity (confirmed or ordered)"""
+        return self.confirmed_quantity or self.ordered_quantity
+
+    # =====================
+    # VALIDATION
+    # =====================
+
     def clean(self):
-        """Order line specific validation"""
+        """Order line validation"""
         super().clean()
-
-
 
         # Ordered quantity must be positive
         if self.ordered_quantity <= 0:
@@ -648,96 +651,133 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
                 'ordered_quantity': _('Ordered quantity must be greater than zero')
             })
 
-        # Confirmed quantity validation
+        # Confirmed quantity validation (if provided)
         if self.confirmed_quantity is not None and self.confirmed_quantity < 0:
             raise ValidationError({
                 'confirmed_quantity': _('Confirmed quantity cannot be negative')
             })
 
-        # Delivered quantity validation
-        if self.delivered_quantity < 0:
-            raise ValidationError({
-                'delivered_quantity': _('Delivered quantity cannot be negative')
-            })
-
-        if self.delivered_quantity > self.ordered_quantity:
-            raise ValidationError({
-                'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
-            })
-
-    def save(self, *args, **kwargs):
-        """Enhanced save with delivery calculations"""
-
-
-        # Calculate remaining quantity
-        if self.ordered_quantity and self.delivered_quantity:
-            self.remaining_quantity = self.ordered_quantity - self.delivered_quantity
-        else:
-            self.remaining_quantity = self.ordered_quantity or Decimal('0.000')
-
-        # Update delivery status
-        self._update_delivery_status()
-
-        super().save(*args, **kwargs)
-
-    def _update_delivery_status(self):
-        """Update delivery status based on delivered vs ordered quantities"""
-        if not self.ordered_quantity:
-            return
-
-        if self.delivered_quantity >= self.ordered_quantity:
-            self.delivery_status = 'completed'
-        elif self.delivered_quantity > 0:
-            self.delivery_status = 'partial'
-        else:
-            self.delivery_status = 'pending'
-
-    # =====================
-    # DELIVERY TRACKING METHODS
-    # =====================
-    def add_delivery(self, quantity, delivery_line=None):
-        """Add delivered quantity to this line"""
-        if quantity <= 0:
-            raise ValidationError("Delivery quantity must be positive")
-
-        if self.delivered_quantity + quantity > self.ordered_quantity:
-            raise ValidationError("Total delivered cannot exceed ordered quantity")
-
-        self.delivered_quantity += quantity
-        self.save()
-
-        # Update parent order delivery status
-        self.document.update_delivery_status()
-
-        return True
-
-    def get_quantity(self):
-        """Get quantity for financial calculations"""
-        return self.ordered_quantity or Decimal('0')
+        # Financial validation from mixin
+        # FinancialLineMixin ще провери unit_price, discounts, etc.
 
     # =====================
     # PROPERTIES
     # =====================
-    @property
-    def is_from_request(self):
-        return self.source_request_line is not None
 
     @property
-    def delivery_progress_percent(self):
-        """Delivery progress as percentage"""
-        if not self.ordered_quantity:
-            return 0
-        return min(100, (self.delivered_quantity / self.ordered_quantity) * 100)
+    def expected_quantity(self):
+        """Get expected quantity for delivery"""
+        return self.confirmed_quantity or self.ordered_quantity
+
+    @property
+    def remaining_quantity(self):
+        """Calculate remaining to be delivered"""
+        return max(Decimal('0'), self.expected_quantity - self.delivered_quantity)
 
     @property
     def is_fully_delivered(self):
-        return self.delivery_status == 'completed'
+        """Check if fully delivered"""
+        return self.delivered_quantity >= self.expected_quantity
 
     @property
-    def is_partially_delivered(self):
-        return self.delivery_status == 'partial'
+    def is_over_delivered(self):
+        """Check if over delivered"""
+        return self.delivered_quantity > self.expected_quantity
 
     @property
-    def effective_quantity(self):
-        """Use confirmed quantity if available, otherwise ordered quantity"""
-        return self.confirmed_quantity or self.ordered_quantity
+    def delivery_percentage(self):
+        """Calculate delivery completion percentage"""
+        if self.expected_quantity == 0:
+            return Decimal('0')
+        return (self.delivered_quantity / self.expected_quantity) * 100
+
+    # =====================
+    # DELIVERY TRACKING METHODS
+    # =====================
+
+    def update_delivery_status(self):
+        """
+        Update delivered quantity and status from related deliveries
+        CALL THIS after any delivery change!
+        """
+        from .deliveries import DeliveryLine
+
+        # Calculate total delivered from all delivery lines
+        total = DeliveryLine.objects.filter(
+            source_order_line=self,
+            document__status__in=['received', 'processed', 'completed']
+        ).aggregate(
+            total=models.Sum('received_quantity')
+        )['total'] or Decimal('0.000')
+
+        self.delivered_quantity = total
+
+        # Update delivery status
+        if self.delivered_quantity == 0:
+            self.delivery_status = 'pending'
+        elif self.delivered_quantity < self.expected_quantity:
+            self.delivery_status = 'partial'
+        elif self.delivered_quantity == self.expected_quantity:
+            self.delivery_status = 'completed'
+        else:  # delivered > expected
+            self.delivery_status = 'over_delivered'
+
+        self.save(update_fields=['delivered_quantity', 'delivery_status'])
+
+        # Update order header delivery status if needed
+        self.document.update_delivery_status()
+
+    def can_create_delivery(self):
+        """Check if delivery can be created for this line"""
+        return (
+                self.remaining_quantity > 0 and
+                self.document.status in ['confirmed', 'partial_delivery'] and
+                self.delivery_status not in ['completed', 'cancelled']
+        )
+
+    def create_delivery_line(self, delivery_receipt, received_qty=None, **kwargs):
+        """
+        Create delivery line for this order line
+
+        Args:
+            delivery_receipt: DeliveryReceipt instance
+            received_qty: Quantity received (default: remaining)
+            **kwargs: Additional fields for delivery line
+        """
+        if not self.can_create_delivery():
+            raise ValidationError(f"Cannot create delivery for line {self.line_number}")
+
+        from .deliveries import DeliveryLine
+
+        if received_qty is None:
+            received_qty = self.remaining_quantity
+
+        delivery_line = DeliveryLine.objects.create(
+            document=delivery_receipt,
+            source_order_line=self,
+            product=self.product,
+            unit=self.unit,
+            received_quantity=received_qty,
+            expected_quantity=self.remaining_quantity,
+            unit_price=self.unit_price,
+            notes=kwargs.get('notes', f"From order {self.document.document_number}"),
+            **kwargs
+        )
+
+        # Update delivery tracking
+        self.update_delivery_status()
+
+        return delivery_line
+
+    # =====================
+    # OVERRIDE SAVE
+    # =====================
+
+    def save(self, *args, **kwargs):
+        """Enhanced save with auto-calculations"""
+
+        # For FinancialLineMixin - set quantity for calculations
+        # Mixin очаква quantity за line_total calculations
+        self.quantity = self.get_quantity_for_display()
+
+        super().save(*args, **kwargs)

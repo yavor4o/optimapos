@@ -531,46 +531,48 @@ class PurchaseRequestLineManager(models.Manager):
 
 class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Purchase Request Line - Ред от заявка
+    Purchase Request Line - CLEAN VERSION
 
-    ✅ CLEANED UP: БЕЗ estimated_price, използва само entered_price
-    ✅ FIXED: FinancialLineMixin за правилни VAT изчисления
-    ✅ AUTO-SUGGESTION: Автоматично предлага цени от product history
+    ✅ САМО requested_quantity (БЕЗ generic quantity поле)
+    ✅ Tracking за conversion to order
+    ✅ Clean validation
     """
 
     # =====================
-    # REQUEST LINE FIELDS
+    # DOCUMENT RELATIONSHIP
+    # =====================
+    document = models.ForeignKey(
+        'PurchaseRequest',
+        on_delete=models.CASCADE,
+        related_name='lines',
+        verbose_name=_('Purchase Request')
+    )
+
+    # =====================
+    # REQUEST-SPECIFIC QUANTITY
     # =====================
     requested_quantity = models.DecimalField(
         _('Requested Quantity'),
-        max_digits=12,
+        max_digits=10,
         decimal_places=3,
-        help_text=_('How many units are requested')
-    )
-
-    document = models.ForeignKey(
-        PurchaseRequest,
-        on_delete=models.CASCADE,
-        related_name='lines',
-        verbose_name=_('Purchase Request'),
-        help_text=_('Parent purchase request')
+        help_text=_('Quantity requested for purchase')
     )
 
     # =====================
-    # BUSINESS JUSTIFICATION
+    # PRICING (Optional)
     # =====================
-    usage_description = models.TextField(
-        _('Usage Description'),
+    estimated_price = models.DecimalField(
+        _('Estimated Unit Price'),
+        max_digits=10,
+        decimal_places=4,
+        null=True,
         blank=True,
-        help_text=_('How will this specific item be used?')
+        help_text=_('Estimated price per unit (optional, for budgeting)')
     )
 
-    alternative_products = models.TextField(
-        _('Alternative Products'),
-        blank=True,
-        help_text=_('Acceptable alternative products if this one is not available')
-    )
-
+    # =====================
+    # SUPPLIER SUGGESTION
+    # =====================
     suggested_supplier = models.ForeignKey(
         'partners.Supplier',
         on_delete=models.SET_NULL,
@@ -580,123 +582,163 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
         help_text=_('Preferred supplier for this item')
     )
 
+    # =====================
+    # PRIORITY & JUSTIFICATION
+    # =====================
     priority = models.IntegerField(
         _('Priority'),
         default=0,
-        help_text=_('Priority within this request (higher = more important)')
+        help_text=_('Priority within request (0=normal, higher=more urgent)')
+    )
+
+    item_justification = models.TextField(
+        _('Item Justification'),
+        blank=True,
+        help_text=_('Why is this specific item needed?')
     )
 
     # =====================
-    # MANAGERS
+    # CONVERSION TRACKING
     # =====================
-    objects = PurchaseRequestLineManager()
+    converted_to_order_line = models.ForeignKey(
+        'PurchaseOrderLine',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='source_request_line_ref',
+        help_text=_('Order line created from this request')
+    )
 
     class Meta:
         verbose_name = _('Purchase Request Line')
         verbose_name_plural = _('Purchase Request Lines')
-        ordering = ['line_number']
+        unique_together = [['document', 'line_number']]
+        ordering = ['document', 'line_number']
         indexes = [
             models.Index(fields=['document', 'line_number']),
             models.Index(fields=['product']),
             models.Index(fields=['suggested_supplier']),
+            models.Index(fields=['priority']),
         ]
 
     def __str__(self):
-        return f"Line {self.line_number}: {self.product.name} x {self.requested_quantity}"
+        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.requested_quantity}"
+
+    # =====================
+    # IMPLEMENT ABSTRACT METHOD
+    # =====================
+
+    def get_quantity_for_display(self):
+        """Return requested quantity for display"""
+        return self.requested_quantity
 
     # =====================
     # VALIDATION
     # =====================
+
     def clean(self):
         """Request line validation"""
         super().clean()
 
+        # Requested quantity must be positive
         if self.requested_quantity <= 0:
             raise ValidationError({
-                'requested_quantity': _('Requested quantity must be positive')
+                'requested_quantity': _('Requested quantity must be greater than zero')
             })
 
-        # Unit validation
-        if self.product and self.unit:
-            valid_units = self.product.get_valid_purchase_units()
-            if self.unit not in valid_units:
-                unit_names = [u.name for u in valid_units]
-                raise ValidationError({
-                    'unit': f'Invalid unit. Valid units: {", ".join(unit_names)}'
-                })
+        # Estimated price validation (if provided)
+        if self.estimated_price is not None and self.estimated_price < 0:
+            raise ValidationError({
+                'estimated_price': _('Estimated price cannot be negative')
+            })
 
-    def save(self, *args, **kwargs):
-        """
-        ✅ CLEANED UP save with auto-suggestion and proper VAT processing
-        """
-
-        # ✅ AUTO-SUGGEST entered_price from product history
-        if (not self.entered_price or self.entered_price == 0) and self.product:
-            try:
-                suggested_price = self.product.get_estimated_purchase_price(self.unit)
-                if suggested_price and suggested_price > 0:
-                    self.entered_price = suggested_price
-                    logger.info(f"Auto-suggested price {suggested_price} for {self.product.code}")
-            except Exception as e:
-                logger.warning(f"Could not auto-suggest price for {self.product.code}: {e}")
-
-        # ✅ SYNC QUANTITIES
-        if self.requested_quantity:
-            self.quantity = self.requested_quantity
-
-        # ✅ FINANCIAL CALCULATIONS via FinancialLineMixin
-        # This automatically calls SmartVATService for proper VAT processing
-        super().save(*args, **kwargs)
+        # Priority validation
+        if self.priority < 0:
+            raise ValidationError({
+                'priority': _('Priority cannot be negative')
+            })
 
     # =====================
-    # BUSINESS METHODS
+    # PROPERTIES
     # =====================
-    def get_quantity_display(self):
-        """Get formatted quantity with unit"""
-        if self.unit:
-            return f"{self.requested_quantity} {self.unit.code}"
-        return str(self.requested_quantity)
 
-    def is_high_value(self, threshold=500):
-        """Check if this line has high value"""
-        return self.gross_amount and self.gross_amount >= threshold
+    @property
+    def estimated_line_total(self):
+        """Calculate estimated total if price is provided"""
+        if self.estimated_price and self.requested_quantity:
+            return self.estimated_price * self.requested_quantity
+        return None
 
-    def get_quantity(self):
-        """Required by FinancialLineMixin"""
-        return self.requested_quantity or Decimal('0')
+    @property
+    def has_suggested_supplier(self):
+        """Check if line has supplier suggestion"""
+        return self.suggested_supplier is not None
 
-    def has_alternatives(self):
-        """Does this line have alternative products specified?"""
-        return bool(self.alternative_products.strip())
+    @property
+    def is_high_priority(self):
+        """Check if line is high priority"""
+        return self.priority > 0
 
-    def has_pricing(self):
-        """Does this line have price information?"""
-        return self.entered_price and self.entered_price > 0
+    @property
+    def is_converted(self):
+        """Check if line has been converted to order"""
+        return self.converted_to_order_line is not None
 
-    def get_price_source_info(self):
-        """Get information about where the price came from"""
-        if not self.has_pricing():
-            return {
-                'has_price': False,
-                'source': 'No price entered',
-                'auto_suggested': False
-            }
+    @property
+    def conversion_status(self):
+        """Get conversion status"""
+        if self.converted_to_order_line:
+            return 'converted'
+        elif self.document.status == 'approved':
+            return 'ready_to_convert'
+        else:
+            return 'not_ready'
 
-        # Check if this might be auto-suggested
-        auto_suggested = False
-        if self.product:
-            try:
-                suggested = self.product.get_estimated_purchase_price(self.unit)
-                if suggested and abs(suggested - self.entered_price) < Decimal('0.01'):
-                    auto_suggested = True
-            except:
-                pass
+    # =====================
+    # METHODS
+    # =====================
 
-        return {
-            'has_price': True,
-            'source': 'Auto-suggested from history' if auto_suggested else 'Manually entered',
-            'auto_suggested': auto_suggested,
-            'entered_price': self.entered_price,
-            'unit_price': self.unit_price,
-            'vat_processed': abs(self.entered_price - self.unit_price) > Decimal('0.01')
-        }
+    def can_be_converted(self):
+        """Check if line can be converted to order"""
+        return (
+                self.document.status == 'approved' and
+                not self.is_converted and
+                self.requested_quantity > 0
+        )
+
+    def convert_to_order_line(self, order, **kwargs):
+        """
+        Convert this request line to order line
+
+        Args:
+            order: PurchaseOrder instance
+            **kwargs: Additional fields for order line
+
+        Returns:
+            PurchaseOrderLine instance
+        """
+        if self.is_converted:
+            raise ValidationError(f"Line {self.line_number} already converted to order")
+
+        if not self.can_be_converted():
+            raise ValidationError(f"Line {self.line_number} cannot be converted")
+
+        # Create order line
+        from .orders import PurchaseOrderLine
+
+        order_line = PurchaseOrderLine.objects.create(
+            document=order,
+            source_request_line=self,
+            product=self.product,
+            unit=self.unit,
+            ordered_quantity=self.requested_quantity,
+            unit_price=kwargs.get('unit_price', self.estimated_price or Decimal('0')),
+            notes=self.notes or '',
+            **kwargs
+        )
+
+        # Mark as converted
+        self.converted_to_order_line = order_line
+        self.save(update_fields=['converted_to_order_line'])
+
+        return order_line
