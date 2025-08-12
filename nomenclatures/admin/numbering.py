@@ -1,13 +1,12 @@
-# nomenclatures/admin/numbering.py - ПРОФЕСИОНАЛЕН АДМИН ЗА НОМЕРАЦИЯ
-
-from django.contrib import admin
+# nomenclatures/admin/numbering.py - ПРАВИЛЕН АДМИН КОД
+from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.utils.safestring import mark_safe
-from django.db.models import Count, Max
 from django.core.exceptions import ValidationError
+from django.db.models import Count
+from django.utils.safestring import mark_safe
 
-# Try to import numbering models
+# Try to import models
 try:
     from ..models.numbering import (
         NumberingConfiguration,
@@ -15,131 +14,146 @@ try:
         UserNumberingPreference
     )
 
-    HAS_NUMBERING = True
+    HAS_NUMBERING_MODELS = True
 except ImportError:
-    HAS_NUMBERING = False
+    HAS_NUMBERING_MODELS = False
 
-if HAS_NUMBERING:
+# =================================================================
+# NUMBERING CONFIGURATION ADMIN - ПРАВИЛНА ВЕРСИЯ
+# =================================================================
 
-    # =================================================================
-    # INLINE ADMINS
-    # =================================================================
-
-    class LocationNumberingAssignmentInline(admin.TabularInline):
-        model = LocationNumberingAssignment
-        extra = 1
-        fields = [
-            'location', 'is_active', 'assigned_at', 'assigned_by'
-        ]
-        readonly_fields = ['assigned_at', 'assigned_by']
-
-        def save_model(self, request, obj, form, change):
-            if not obj.assigned_by:
-                obj.assigned_by = request.user
-            super().save_model(request, obj, form, change)
-
-
-    # =================================================================
-    # MAIN NUMBERING CONFIGURATION ADMIN
-    # =================================================================
-
+if HAS_NUMBERING_MODELS:
     @admin.register(NumberingConfiguration)
     class NumberingConfigurationAdmin(admin.ModelAdmin):
-        """
-        Админ за конфигурация на номерация на документи
-
-        Позволява настройка на:
-        - Префикс и формат на номерата
-        - Текущ номер и reset правила
-        - Location assignments
-        """
+        """Професионален админ за numbering configurations"""
 
         list_display = [
-            'name_display', 'document_type', 'numbering_pattern',
-            'current_number_display', 'locations_count', 'is_default_display',
+            'name',
+            'document_type',
+            'numbering_type_badge',
+            'series_info',
+            'number_format_display',
+            'current_number_display',
+            'fiscal_compliance',
+            'is_default_badge',
             'is_active'
         ]
 
         list_filter = [
-            'document_type__app_name', 'document_type', 'numbering_type',
-            'is_default', 'is_active'
+            'numbering_type',
+            'document_type',
+            'is_default',
+            'is_active',
+            'reset_yearly'
         ]
 
         search_fields = [
-            'name', 'code', 'prefix', 'document_type__name'
+            'name',
+            'prefix',
+            'series_name',
+            'document_type__name'
         ]
 
         readonly_fields = [
-            'preview_next_numbers', 'usage_statistics', 'created_at', 'updated_at'
+            'created_at',
+            'updated_at',
+            'next_number_preview',
+            'fiscal_compliance_check',
+            'usage_statistics'
         ]
 
         fieldsets = (
             (_('Basic Information'), {
                 'fields': (
-                    'name', 'code', 'document_type', 'description'
+                    'name',
+                    'document_type',
+                    'numbering_type',
+                    'is_active',
+                    'is_default'
                 )
             }),
-            (_('Numbering Format'), {
+            (_('Number Format'), {
                 'fields': (
-                    'numbering_type', 'prefix', 'suffix', 'separator',
-                    'number_length', 'preview_next_numbers'
-                )
+                    'prefix',
+                    'digits_count',  # ✅ ПРАВИЛНО ПОЛЕ
+                    'current_number',
+                    'max_number'
+                ),
+                'description': _('Configure how numbers are formatted')
             }),
-            (_('Current State'), {
+            (_('Series Configuration'), {
                 'fields': (
-                    'current_number', 'last_reset_date'
-                )
+                    'series_number',
+                    'series_name'
+                ),
+                'description': _('Series like Microinvest: (1), (2), (23)')
             }),
-            (_('Settings'), {
+            (_('Reset Behavior'), {
                 'fields': (
-                    'is_default', 'is_active', 'sort_order'
-                )
-            }),
-            (_('Statistics'), {
-                'fields': ('usage_statistics',),
+                    'reset_yearly',
+                    'last_reset_year'  # ✅ ПРАВИЛНО ПОЛЕ
+                ),
                 'classes': ('collapse',)
             }),
-            (_('System Info'), {
-                'fields': ('created_at', 'updated_at'),
+            (_('Preview & Statistics'), {
+                'fields': (
+                    'next_number_preview',
+                    'fiscal_compliance_check',
+                    'usage_statistics'
+                ),
                 'classes': ('collapse',)
             }),
+            (_('System Information'), {
+                'fields': (
+                    'created_at',
+                    'updated_at'
+                ),
+                'classes': ('collapse',)
+            })
         )
 
-        inlines = [LocationNumberingAssignmentInline]
+        ordering = ['document_type', 'series_number', 'name']
 
-        def name_display(self, obj):
-            """Показва името с визуален индикатор"""
-            icon = "🔢"
+        def numbering_type_badge(self, obj):
+            """Показва вида номерация с цветно badge"""
             if obj.numbering_type == 'fiscal':
-                icon = "🧾"
-            elif obj.is_default:
-                icon = "⭐"
+                return format_html(
+                    '<span style="background-color: #28a745; color: white; padding: 3px 8px; '
+                    'border-radius: 3px; font-size: 11px;">🏛️ FISCAL</span>'
+                )
+            else:
+                return format_html(
+                    '<span style="background-color: #007bff; color: white; padding: 3px 8px; '
+                    'border-radius: 3px; font-size: 11px;">🏢 INTERNAL</span>'
+                )
 
-            return format_html(
-                '{} <strong>{}</strong>',
-                icon, obj.name
-            )
+        numbering_type_badge.short_description = _('Type')
+        numbering_type_badge.admin_order_field = 'numbering_type'
 
-        name_display.short_description = _('Name')
+        def series_info(self, obj):
+            """Показва информация за серията"""
+            if obj.series_name:
+                return format_html(
+                    '<strong>({}) {}</strong>',
+                    obj.series_number,
+                    obj.series_name
+                )
+            else:
+                return format_html('<strong>({})</strong>', obj.series_number)
 
-        def numbering_pattern(self, obj):
-            """Показва pattern на номерирането"""
+        series_info.short_description = _('Series')
+        series_info.admin_order_field = 'series_number'
+
+        def number_format_display(self, obj):
+            """Показва формата на номерата"""
             pattern_parts = []
 
             if obj.prefix:
                 pattern_parts.append(f'<span style="color: #2196F3;">{obj.prefix}</span>')
 
-            if obj.separator and obj.prefix:
-                pattern_parts.append(f'<span style="color: #757575;">{obj.separator}</span>')
-
-            # Показва формата на числото
-            number_placeholder = '#' * (obj.number_length or 4)
+            # Показва формата на числото с правилното поле
+            number_placeholder = '#' * obj.digits_count  # ✅ ПРАВИЛНО ПОЛЕ
             pattern_parts.append(f'<span style="color: #4CAF50;">{number_placeholder}</span>')
-
-            if obj.suffix:
-                if obj.separator:
-                    pattern_parts.append(f'<span style="color: #757575;">{obj.separator}</span>')
-                pattern_parts.append(f'<span style="color: #FF9800;">{obj.suffix}</span>')
 
             pattern = ''.join(pattern_parts)
 
@@ -148,168 +162,169 @@ if HAS_NUMBERING:
                 pattern
             )
 
-        numbering_pattern.short_description = _('Pattern')
+        number_format_display.short_description = _('Format')
 
         def current_number_display(self, obj):
             """Показва текущия номер и следващия"""
-            try:
-                next_preview = obj.get_next_number_preview()
-                return format_html(
-                    '<div>'
-                    '<strong>Current:</strong> {}<br>'
-                    '<strong>Next:</strong> <span style="color: #4CAF50;">{}</span>'
-                    '</div>',
-                    obj.current_number,
-                    next_preview
-                )
-            except:
-                return format_html(
-                    '<strong>{}</strong><br><small style="color: #F44336;">Error</small>',
-                    obj.current_number
-                )
+            next_num = obj.current_number + 1
+            formatted_next = obj.format_number(next_num)
 
-        current_number_display.short_description = _('Current/Next')
-
-        def locations_count(self, obj):
-            """Брой locations използващи тази конфигурация"""
-            count = obj.location_assignments.filter(is_active=True).count()
-            if count > 0:
-                return format_html(
-                    '<span style="background: #4CAF50; color: white; padding: 2px 6px; '
-                    'border-radius: 3px; font-size: 11px;">{}</span>',
-                    count
-                )
             return format_html(
-                '<span style="color: #757575;">0</span>'
+                'Current: <strong>{}</strong><br/>Next: <span style="color: #28a745;">{}</span>',
+                obj.current_number,
+                formatted_next
             )
 
-        locations_count.short_description = _('Locations')
+        current_number_display.short_description = _('Numbers')
 
-        def is_default_display(self, obj):
+        def fiscal_compliance(self, obj):
+            """Проверява дали конфигурацията е фискално съобразена"""
+            if obj.numbering_type != 'fiscal':
+                return format_html('<span style="color: #6c757d;">N/A</span>')
+
+            if obj.is_fiscal_compliant():
+                return format_html('<span style="color: #28a745;">✅ Compliant</span>')
+            else:
+                return format_html('<span style="color: #dc3545;">❌ Non-compliant</span>')
+
+        fiscal_compliance.short_description = _('Fiscal')
+
+        def is_default_badge(self, obj):
             """Показва дали е default конфигурация"""
             if obj.is_default:
-                return format_html(
-                    '<span style="background: #FF9800; color: white; padding: 2px 6px; '
-                    'border-radius: 3px; font-size: 10px;">DEFAULT</span>'
-                )
-            return '-'
+                return format_html('<span style="color: #ffc107;">⭐ Default</span>')
+            return ''
 
-        is_default_display.short_description = _('Default')
+        is_default_badge.short_description = _('Default')
+        is_default_badge.admin_order_field = 'is_default'
 
-        def preview_next_numbers(self, obj):
-            """Показва preview на следващите 5 номера"""
-            if not obj.pk:
-                return "Save first to see preview"
-
+        def next_number_preview(self, obj):
+            """Preview на следващите 5 номера"""
             try:
-                previews = []
-                temp_number = obj.current_number
-
-                for i in range(1, 6):
-                    temp_number += 1
-                    preview = obj._format_number(temp_number)
-                    previews.append(preview)
-
-                preview_html = '<br>'.join([
-                    f'<code style="background: #f0f8ff; padding: 2px 4px; margin: 1px;">{p}</code>'
-                    for p in previews
-                ])
-
-                return format_html(
-                    '<div style="font-family: monospace;">'
-                    '<strong>Next 5 numbers:</strong><br>{}'
-                    '</div>',
-                    preview_html
-                )
+                preview = obj.preview_next_numbers(5)
+                preview_html = '<br/>'.join([f'• {num}' for num in preview])
+                return format_html('<div style="font-family: monospace;">{}</div>', preview_html)
             except Exception as e:
-                return f"Preview error: {e}"
+                return format_html('<span style="color: red;">Error: {}</span>', str(e))
 
-        preview_next_numbers.short_description = _('Preview Next Numbers')
+        next_number_preview.short_description = _('Next Numbers Preview')
+
+        def fiscal_compliance_check(self, obj):
+            """Детайлна проверка за фискално съответствие"""
+            if obj.numbering_type != 'fiscal':
+                return format_html('<span style="color: #6c757d;">Not a fiscal configuration</span>')
+
+            checks = []
+
+            # Проверка за префикс
+            if obj.prefix:
+                checks.append('❌ Has prefix (fiscal should not have prefix)')
+            else:
+                checks.append('✅ No prefix')
+
+            # Проверка за цифри
+            if obj.digits_count >= 10:
+                checks.append('✅ At least 10 digits')
+            else:
+                checks.append(f'❌ Only {obj.digits_count} digits (minimum 10 required)')
+
+            # Проверка за yearly reset
+            if obj.reset_yearly:
+                checks.append('⚠️ Yearly reset enabled (not recommended for fiscal)')
+            else:
+                checks.append('✅ No yearly reset')
+
+            return format_html('<br/>'.join(checks))
+
+        fiscal_compliance_check.short_description = _('Fiscal Compliance Details')
 
         def usage_statistics(self, obj):
-            """Статистики за използването"""
-            if not obj.pk:
-                return "Save first to see statistics"
+            """Статистики за използване"""
+            stats = []
 
-            try:
-                # Брой locations
-                locations_count = obj.location_assignments.filter(is_active=True).count()
+            # Location assignments
+            location_count = obj.location_assignments.filter(is_active=True).count()
+            if location_count > 0:
+                stats.append(f'📍 {location_count} location(s)')
 
-                # Брой users с preferences
-                users_count = obj.user_preferences.filter(user__is_active=True).count()
+            # User preferences
+            user_count = obj.user_preferences.count()
+            if user_count > 0:
+                stats.append(f'👤 {user_count} user preference(s)')
 
-                # Тип номерация
-                numbering_info = {
-                    'fiscal': '🧾 Fiscal (10 digits)',
-                    'internal': '📝 Internal (flexible)',
-                    'custom': '⚙️ Custom format'
-                }.get(obj.numbering_type, obj.numbering_type)
+            # Numbers issued
+            if obj.current_number > 0:
+                stats.append(f'📄 {obj.current_number} numbers issued')
 
-                stats_html = f"""
-                <div style="font-size: 12px;">
-                    <strong>Type:</strong> {numbering_info}<br>
-                    <strong>Active Locations:</strong> {locations_count}<br>
-                    <strong>User Preferences:</strong> {users_count}<br>
-                    <strong>Numbers Used:</strong> {obj.current_number}<br>
-                </div>
-                """
+            if not stats:
+                return format_html('<span style="color: #6c757d;">No usage data</span>')
 
-                return format_html(stats_html)
-
-            except Exception as e:
-                return f"Statistics error: {e}"
+            return format_html('<br/>'.join(stats))
 
         usage_statistics.short_description = _('Usage Statistics')
 
-        def save_model(self, request, obj, form, change):
-            """Set created_by for new configs"""
-            if not change and not obj.created_by:
-                obj.created_by = request.user
-            super().save_model(request, obj, form, change)
-
-        # Actions
-        actions = ['reset_counters', 'duplicate_config', 'test_number_generation']
+        actions = ['reset_counters', 'make_default', 'duplicate_config']
 
         def reset_counters(self, request, queryset):
-            """Reset номерацията на избраните конфигурации"""
+            """Reset numbering counters to 0"""
             count = 0
             for config in queryset:
-                try:
-                    config.reset_counter()
-                    count += 1
-                except Exception as e:
-                    self.message_user(
-                        request,
-                        f'Error resetting {config.name}: {e}',
-                        level='ERROR'
-                    )
+                config.reset_counter(0)
+                count += 1
 
-            self.message_user(request, f'Reset {count} numbering configurations.')
+            self.message_user(
+                request,
+                f'Reset counters for {count} configurations to 0.'
+            )
 
         reset_counters.short_description = _('Reset counters to 0')
 
+        def make_default(self, request, queryset):
+            """Make selected config default for its document type"""
+            count = 0
+            for config in queryset:
+                # Remove default from other configs of same document type
+                NumberingConfiguration.objects.filter(
+                    document_type=config.document_type,
+                    is_default=True
+                ).update(is_default=False)
+
+                # Set this as default
+                config.is_default = True
+                config.save()
+                count += 1
+
+            self.message_user(
+                request,
+                f'Set {count} configurations as default for their document types.'
+            )
+
+        make_default.short_description = _('Set as default')
+
         def duplicate_config(self, request, queryset):
-            """Дублира избраните конфигурации"""
+            """Duplicate selected configurations"""
             count = 0
             for config in queryset:
                 try:
-                    # Create duplicate
-                    new_config = NumberingConfiguration.objects.create(
-                        name=f'{config.name} (Copy)',
-                        code=f'{config.code}_copy',
+                    # Създава дубликат с правилните полета
+                    new_config = NumberingConfiguration(
+                        name=f"{config.name} (Copy)",
+                        code=f"{config.code}_copy",
                         document_type=config.document_type,
                         numbering_type=config.numbering_type,
                         prefix=config.prefix,
-                        suffix=config.suffix,
-                        separator=config.separator,
-                        number_length=config.number_length,
-                        current_number=0,  # Start from 0
-                        # reset_frequency=config.reset_frequency,  # ❌ КОМЕНТИРАНО
-                        is_default=False,  # Never default
+                        digits_count=config.digits_count,  # ✅ ПРАВИЛНО ПОЛЕ
+                        current_number=0,
+                        series_number=config.series_number + 1,  # Нова серия
+                        series_name=f"{config.series_name} (Copy)" if config.series_name else "",
+                        reset_yearly=config.reset_yearly,
+                        last_reset_year=config.last_reset_year,  # ✅ ПРАВИЛНО ПОЛЕ
+                        is_default=False,
+                        max_number=config.max_number,
                         is_active=True,
-                        created_by=request.user,
                         description=f'Copy of {config.name}'
                     )
+                    new_config.save()
                     count += 1
                 except Exception as e:
                     self.message_user(
@@ -322,20 +337,35 @@ if HAS_NUMBERING:
 
         duplicate_config.short_description = _('Duplicate configurations')
 
-        def test_number_generation(self, request, queryset):
-            """Тества генерирането на номера"""
-            results = []
-            for config in queryset:
-                try:
-                    next_number = config.get_next_number_preview()
-                    results.append(f'{config.name}: {next_number}')
-                except Exception as e:
-                    results.append(f'{config.name}: ERROR - {e}')
+        # В purchases/admin.py - PurchaseRequestAdmin
 
-            message = 'Test results:<br>' + '<br>'.join(results)
-            self.message_user(request, format_html(message))
+        def save_model(self, request, obj, form, change):
+            """Enhanced save with DocumentService integration"""
 
-        test_number_generation.short_description = _('Test number generation')
+            if not change:  # Нов документ
+                if not obj.document_number:  # Няма номер
+                    # 🎯 ТУК извикваме DocumentService
+                    from nomenclatures.services import DocumentService
+
+                    result = DocumentService.create_document(
+                        model_class=obj.__class__,
+                        data={
+                            'supplier': obj.supplier,
+                            'location': obj.location,
+                            'requested_by': obj.requested_by or request.user,
+                            # ... други полета
+                        },
+                        user=request.user,
+                        location=obj.location
+                    )
+
+                    if result['success']:
+                        # Заместваме obj с новия от сервиса
+                        obj = result['document']
+                    else:
+                        messages.error(request, f"Error: {result['message']}")
+
+            super().save_model(request, obj, form, change)
 
 
     # =================================================================
@@ -344,46 +374,68 @@ if HAS_NUMBERING:
 
     @admin.register(LocationNumberingAssignment)
     class LocationNumberingAssignmentAdmin(admin.ModelAdmin):
-        """Админ за връзки location <-> numbering configuration"""
+        """Админ за връзки location-numbering"""
 
         list_display = [
-            'location', 'numbering_config', 'document_type_display',
-            'assignment_status', 'assigned_at', 'assigned_by'
+            'location',
+            'numbering_config',
+            'document_type_display',
+            'series_display',
+            'is_active_badge',
+            'assigned_by',
+            'assigned_at'
         ]
 
         list_filter = [
-            'is_active', 'numbering_config__document_type',
-            'location', 'assigned_at'
+            'is_active',
+            'numbering_config__document_type',
+            'numbering_config__numbering_type',
+            'assigned_at'
         ]
 
         search_fields = [
-            'location__name', 'numbering_config__name',
+            'location__name',
+            'numbering_config__name',
             'numbering_config__document_type__name'
         ]
 
-        readonly_fields = ['assigned_at']
+        readonly_fields = [
+            'assigned_at'
+        ]
+
+        raw_id_fields = ['location', 'numbering_config', 'assigned_by']
+
+        date_hierarchy = 'assigned_at'
 
         def document_type_display(self, obj):
-            """Показва document type"""
-            return f"{obj.numbering_config.document_type.name}"
+            """Показва типа документ"""
+            return obj.numbering_config.document_type.name
 
         document_type_display.short_description = _('Document Type')
+        document_type_display.admin_order_field = 'numbering_config__document_type__name'
 
-        def assignment_status(self, obj):
-            """Статус на assignment"""
+        def series_display(self, obj):
+            """Показва серията"""
+            config = obj.numbering_config
+            if config.series_name:
+                return f"({config.series_number}) {config.series_name}"
+            return f"({config.series_number})"
+
+        series_display.short_description = _('Series')
+
+        def is_active_badge(self, obj):
+            """Показва дали е активно"""
             if obj.is_active:
-                return format_html(
-                    '<span style="color: #4CAF50;">✅ Active</span>'
-                )
+                return format_html('<span style="color: #28a745;">✅ Active</span>')
             else:
-                return format_html(
-                    '<span style="color: #757575;">❌ Inactive</span>'
-                )
+                return format_html('<span style="color: #dc3545;">❌ Inactive</span>')
 
-        assignment_status.short_description = _('Status')
+        is_active_badge.short_description = _('Status')
+        is_active_badge.admin_order_field = 'is_active'
 
         def save_model(self, request, obj, form, change):
-            if not obj.assigned_by:
+            """Auto-set assigned_by to current user if not set"""
+            if not change:  # Creating new
                 obj.assigned_by = request.user
             super().save_model(request, obj, form, change)
 
@@ -394,24 +446,52 @@ if HAS_NUMBERING:
 
     @admin.register(UserNumberingPreference)
     class UserNumberingPreferenceAdmin(admin.ModelAdmin):
-        """Админ за user preferences за номерация"""
+        """Админ за user preferences"""
 
         list_display = [
-            'user', 'document_type', 'preferred_config', 'created_at'
+            'user',
+            'document_type',
+            'preferred_config',
+            'config_series',
+            'created_at'
         ]
 
         list_filter = [
-            'document_type', 'preferred_config', 'created_at'
+            'document_type',
+            'preferred_config__numbering_type',
+            'created_at'
         ]
 
         search_fields = [
-            'user__username', 'user__first_name', 'user__last_name',
-            'document_type__name', 'preferred_config__name'
+            'user__username',
+            'user__first_name',
+            'user__last_name',
+            'document_type__name',
+            'preferred_config__name'
         ]
+
+        raw_id_fields = ['user', 'preferred_config']
 
         readonly_fields = ['created_at']
 
+        def config_series(self, obj):
+            """Показва серията на конфигурацията"""
+            config = obj.preferred_config
+            if config.series_name:
+                return f"({config.series_number}) {config.series_name}"
+            return f"({config.series_number})"
+
+        config_series.short_description = _('Series')
 
 else:
-    # Dummy classes ако няма numbering models
-    print("⚠️ Numbering models not found - admin classes not registered")
+    # Dummy classes if models don't exist
+    class NumberingConfigurationAdmin:
+        pass
+
+
+    class LocationNumberingAssignmentAdmin:
+        pass
+
+
+    class UserNumberingPreferenceAdmin:
+        pass
