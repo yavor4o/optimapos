@@ -1,23 +1,4 @@
 # purchases/models/base.py - CLEAN REFACTORED
-"""
-Base Document Models - CLEAN VERSION
-
-ПРЕМАХНАТО:
-- Workflow методи (moved to DocumentService)
-- Status transition логика (moved to DocumentService)
-- Business rules validation (moved to DocumentService)
-
-ЗАПАЗЕНО:
-- Basic model behavior
-- DocumentType integration
-- Core validation
-- Helper methods
-
-NO HARDCODING:
-- Статуси идват от DocumentType
-- Transitions се управляват от ApprovalRule
-- Business behavior от DocumentType flags
-"""
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -122,107 +103,9 @@ class DocumentManager(models.Manager):
         cutoff_date = timezone.now().date() - timedelta(days=days)
         return self.filter(document_date__gte=cutoff_date)
 
-    # =====================
-    # DOCUMENT CREATION WITH DocumentService
-    # =====================
 
-    def create_with_service(self, user, **data):
-        """
-        Create document using DocumentService
 
-        PREFERRED method за създаване на документи:
-        - Automatic numbering
-        - Initial status setting
-        - Business validation
-        """
-        from nomenclatures.services import DocumentService
 
-        result = DocumentService.create_document(
-            model_class=self.model,
-            data=data,
-            user=user
-        )
-
-        if result['success']:
-            return result['document']
-        else:
-            from django.core.exceptions import ValidationError
-            raise ValidationError(result['message'])
-
-    def create_purchase_request(self, user, **data):
-        """Convenience method for creating purchase requests"""
-        # Ensure correct document type
-        data['_document_type_hint'] = 'purchase_request'
-        return self.create_with_service(user, **data)
-
-    def create_purchase_order(self, user, **data):
-        """Convenience method for creating purchase orders"""
-        # Ensure correct document type
-        data['_document_type_hint'] = 'purchase_order'
-        return self.create_with_service(user, **data)
-
-    def create_delivery_receipt(self, user, **data):
-        """Convenience method for creating delivery receipts"""
-        # Ensure correct document type
-        data['_document_type_hint'] = 'delivery_receipt'
-        return self.create_with_service(user, **data)
-
-    # =====================
-    # WORKFLOW OPERATIONS
-    # =====================
-
-    def submit_for_approval(self, document, user, comments=''):
-        """Submit document for approval"""
-        from nomenclatures.services import DocumentService
-        return DocumentService.submit_for_approval(document, user, comments)
-
-    def get_available_actions(self, document, user):
-        """Get available actions for document and user"""
-        from nomenclatures.services import DocumentService
-        return DocumentService.get_available_actions(document, user)
-
-    def can_user_perform_action(self, document, action, user):
-        """Check if user can perform specific action"""
-        actions = self.get_available_actions(document, user)
-        return any(a['status'] == action and a['can_perform'] for a in actions)
-
-    # =====================
-    # BULK OPERATIONS
-    # =====================
-
-    def bulk_submit_for_approval(self, documents, user):
-        """Submit multiple documents for approval"""
-        from nomenclatures.services import DocumentService
-        results = []
-
-        for document in documents:
-            result = DocumentService.submit_for_approval(document, user)
-            results.append({
-                'document': document,
-                'success': result['success'],
-                'message': result['message']
-            })
-
-        return results
-
-    def bulk_transition(self, documents, to_status, user, comments=''):
-        """Transition multiple documents to status"""
-        from nomenclatures.services import DocumentService
-        results = []
-
-        for document in documents:
-            result = DocumentService.transition_document(document, to_status, user, comments)
-            results.append({
-                'document': document,
-                'success': result['success'],
-                'message': result['message']
-            })
-
-        return results
-
-    # =====================
-    # ANALYTICS & REPORTING
-    # =====================
 
     def get_status_summary(self):
         """Get count by status for dashboard"""
@@ -273,17 +156,6 @@ class LineManager(models.Manager):
 # =================================================================
 
 class BaseDocument(models.Model):
-    """
-    Base Document - CLEAN VERSION
-
-    САМО essential model behavior:
-    - Core fields and relationships
-    - Basic validation
-    - DocumentType integration hooks
-    - Helper methods
-
-    NO workflow logic - moved to DocumentService!
-    """
 
     # =====================
     # DOCUMENT TYPE INTEGRATION
