@@ -70,7 +70,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         'supplier__name',
         'supplier__code',
         'requested_by__username',
-
+        'justification',
     )
 
     readonly_fields = (
