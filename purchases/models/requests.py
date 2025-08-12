@@ -654,7 +654,7 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
         # Estimated price validation (if provided)
         if self.entered_price is not None and self.entered_price < 0:
             raise ValidationError({
-                'estimated_price': _('Estimated price cannot be negative')
+                'entered_price': _('Entered price cannot be negative')
             })
 
         # Priority validation
