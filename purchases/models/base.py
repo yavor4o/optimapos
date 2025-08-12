@@ -366,43 +366,6 @@ class BaseDocument(models.Model):
     # READ-ONLY HELPERS (без промени)
     # =====================
 
-    def get_price_entry_mode(self) -> bool:
-        """
-        Get effective price entry mode for this document
-
-        Йерархия на проверките:
-        1. Document level setting (prices_entered_with_vat)
-        2. Location level setting (purchase/sales_prices_include_vat)
-        3. System defaults (purchases=False, sales=True)
-
-        Returns:
-            bool: True if prices include VAT, False if exclude VAT
-        """
-        # 1. Document level - най-висок приоритет
-        if hasattr(self, 'prices_entered_with_vat'):
-            if self.prices_entered_with_vat is not None:
-                return self.prices_entered_with_vat
-
-        # 2. Location level - втори приоритет
-        if self.location:
-            app_label = self._meta.app_label
-
-            if app_label == 'purchases':
-                # За purchases проверяваме purchase_prices_include_vat
-                return getattr(self.location, 'purchase_prices_include_vat', False)
-
-            elif app_label == 'sales':
-                # За sales проверяваме sales_prices_include_vat
-                return getattr(self.location, 'sales_prices_include_vat', True)
-
-        # 3. System defaults - последен fallback
-        if self._meta.app_label == 'purchases':
-            return False  # Purchase prices обикновено БЕЗ ДДС
-        elif self._meta.app_label == 'sales':
-            return True  # Sales prices обикновено С ДДС
-        else:
-            return False  # Default за други apps
-
     def get_document_prefix(self):
         """Get document prefix from DocumentType or fallback"""
         if self.document_type and hasattr(self.document_type, 'prefix'):
@@ -559,27 +522,38 @@ class BaseDocument(models.Model):
 
 class BaseDocumentLine(models.Model):
     """
-    Base Document Line - CLEAN VERSION WITHOUT quantity field
+    Base Document Line - CLEAN VERSION
 
-    ❌ МАХАМЕ generic quantity поле
-    ✅ Всеки наследник си дефинира специфични quantity полета
-    ✅ Добавяме abstract метод get_quantity_for_display()
+    САМО essential line behavior:
+    - Core fields
+    - Basic validation
+    - Helper methods
+
+    NO complex calculations - moved to services!
     """
 
     # =====================
-    # CORE FIELDS (БЕЗ quantity!)
+    # CORE FIELDS
     # =====================
     line_number = models.PositiveIntegerField(
         _('Line Number'),
-        default=0,
         help_text=_('Line number within document (auto-generated)')
     )
 
     product = models.ForeignKey(
-        'products.Product',
+        Product,
         on_delete=models.PROTECT,
         verbose_name=_('Product'),
         help_text=_('Product for this line')
+    )
+
+    quantity = models.DecimalField(
+        _('Quantity'),
+        null=True,
+        blank=True,
+        max_digits=10,
+        decimal_places=3,
+        help_text=_('Quantity for this line')
     )
 
     unit = models.ForeignKey(
@@ -596,12 +570,6 @@ class BaseDocumentLine(models.Model):
     )
 
     # =====================
-    # AUDIT FIELDS
-    # =====================
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    # =====================
     # MANAGERS
     # =====================
     objects = LineManager()
@@ -615,113 +583,55 @@ class BaseDocumentLine(models.Model):
         ]
 
     def __str__(self):
-        doc_ref = self.get_document_reference()
-        qty = self.get_quantity_for_display()
-        return f"{doc_ref} Line {self.line_number}: {self.product.code} x {qty} {self.unit.code}"
+        return f"Line {self.line_number}: {self.product.code} x {self.quantity} {self.unit.code}"
 
     # =====================
-    # ABSTRACT METHODS - MUST BE IMPLEMENTED
-    # =====================
-
-    def get_quantity_for_display(self):
-        """
-        ABSTRACT: Return primary quantity for display
-
-        Subclasses MUST implement:
-        - PurchaseRequestLine: return self.requested_quantity
-        - PurchaseOrderLine: return self.confirmed_quantity or self.ordered_quantity
-        - DeliveryLine: return self.received_quantity
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement get_quantity_for_display()"
-        )
-
-    def get_document(self):
-        """
-        Get parent document
-        Subclasses should have 'document' FK
-        """
-        if hasattr(self, 'document'):
-            return self.document
-
-        # Fallback - търси FK към document
-        for field in self._meta.fields:
-            if field.name.endswith('document') and field.many_to_one:
-                return getattr(self, field.name, None)
-
-        return None
-
-    def get_document_reference(self):
-        """Get document reference for display"""
-        doc = self.get_document()
-        if doc and hasattr(doc, 'document_number'):
-            return doc.document_number
-        return "No Document"
-
-    # =====================
-    # AUTO-NUMBERING
-    # =====================
-
-    def save(self, *args, **kwargs):
-        """Auto-generate line number if needed"""
-
-        # Auto-generate line number за нови записи
-        if not self.pk and not self.line_number:
-            self.line_number = self._get_next_line_number()
-
-        # Auto-set unit from product ако липсва
-        if self.product and not self.unit:
-            if hasattr(self.product, 'base_unit'):
-                self.unit = self.product.base_unit
-
-        # Validation
-        if not kwargs.pop('skip_validation', False):
-            self.full_clean()
-
-        super().save(*args, **kwargs)
-
-    def _get_next_line_number(self):
-        """Get next line number for document"""
-        doc = self.get_document()
-        if not doc or not hasattr(doc, 'lines'):
-            return 1
-
-        max_num = doc.lines.aggregate(
-            max_line=models.Max('line_number')
-        )['max_line'] or 0
-
-        return max_num + 1
-
-    # =====================
-    # VALIDATION
+    # BASIC VALIDATION
     # =====================
 
     def clean(self):
-        """Base validation - subclasses add quantity validation"""
+        """Basic line validation - tolerant to None quantity"""
         super().clean()
 
-        # Product-unit compatibility check
+        # ✅ ПОПРАВКА: проверявай quantity само ако не е None
+        if self.quantity is not None and self.quantity <= 0:
+            raise ValidationError({
+                'quantity': _('Quantity must be greater than zero')
+            })
+
+        # Product-unit compatibility validation
         if self.product and self.unit:
-            self._validate_unit_compatibility()
+            # Check if Product has unit compatibility method
+            if hasattr(self.product, 'is_unit_compatible'):
+                if not self.product.is_unit_compatible(self.unit):
+                    raise ValidationError({
+                        'unit': _(f'Unit {self.unit.code} is not compatible with product {self.product.code}')
+                    })
+            # Basic fallback: check if unit matches product's base_unit
+            elif hasattr(self.product, 'base_unit') and self.product.base_unit:
+                if self.unit != self.product.base_unit:
+                    # Warning but not error - allow different units for flexibility
+                    logger.warning(
+                        f"Unit {self.unit.code} differs from product {self.product.code} base unit {self.product.base_unit.code}")
 
-    def _validate_unit_compatibility(self):
-        """Check if unit is compatible with product"""
+    def save(self, *args, **kwargs):
+        """Enhanced save with auto-line numbering"""
+        # Auto-generate line number if not set
+        if not self.line_number and hasattr(self, 'document'):
+            document = getattr(self, 'document', None)
+            if document and hasattr(document, 'lines'):
+                max_line = document.lines.aggregate(
+                    max_line=models.Max('line_number')
+                )['max_line'] or 0
+                self.line_number = max_line + 1
 
-        # Check via product method if available
-        if hasattr(self.product, 'is_unit_compatible'):
-            if not self.product.is_unit_compatible(self.unit):
-                raise ValidationError({
-                    'unit': _(f'Unit {self.unit.code} is not compatible with {self.product.code}')
-                })
+        # Auto-set unit from product if not provided
+        if self.product and not self.unit:
+            base_unit = getattr(self.product, 'base_unit', None)
+            if base_unit:
+                self.unit = base_unit
 
-        # Check base unit
-        elif hasattr(self.product, 'base_unit') and self.product.base_unit:
-            if self.unit != self.product.base_unit:
-                # Just log warning, allow flexibility
-                logger.info(
-                    f"Line {self.pk}: Unit {self.unit.code} differs from "
-                    f"product {self.product.code} base unit {self.product.base_unit.code}"
-                )
+        super().save(*args, **kwargs)
 
     # =====================
     # HELPER METHODS
@@ -733,12 +643,12 @@ class BaseDocumentLine(models.Model):
             return {}
 
         return {
-            'code': self.product.code,
-            'name': self.product.name,
-            'group': getattr(self.product.product_group, 'name', None)
-            if hasattr(self.product, 'product_group') else None,
-            'base_unit': self.product.base_unit.code
-            if hasattr(self.product, 'base_unit') else None,
+            'code': getattr(self.product, 'code', ''),
+            'name': getattr(self.product, 'name', ''),
+            'category': getattr(self.product.category, 'name', None) if hasattr(self.product,
+                                                                                'category') and self.product.category else None,
+            'base_unit': getattr(self.product.base_unit, 'code', None) if hasattr(self.product,
+                                                                                  'base_unit') and self.product.base_unit else None,
         }
 
     def get_unit_info(self):
@@ -747,135 +657,13 @@ class BaseDocumentLine(models.Model):
             return {}
 
         return {
-            'code': self.unit.code,
-            'name': self.unit.name,
-            'symbol': getattr(self.unit, 'symbol', self.unit.code),
-            'decimals': getattr(self.unit, 'decimal_places', 3),
+            'code': getattr(self.unit, 'code', ''),
+            'name': getattr(self.unit, 'name', ''),
+            'symbol': getattr(self.unit, 'symbol', ''),
+            'unit_type': getattr(self.unit, 'unit_type', ''),
+            'allow_decimals': getattr(self.unit, 'allow_decimals', True),
+            'decimal_places': getattr(self.unit, 'decimal_places', 3),
         }
-
-    def duplicate(self, exclude_fields=None):
-        """
-        Create a copy of this line
-        Useful for templates or copying between documents
-        """
-        exclude = exclude_fields or ['id', 'pk', 'line_number', 'document']
-
-        # Get all field values except excluded
-        field_values = {}
-        for field in self._meta.fields:
-            if field.name not in exclude:
-                field_values[field.name] = getattr(self, field.name)
-
-        # Create new instance
-        return self.__class__(**field_values)
-
-class FinancialMixin(models.Model):
-    """
-    Enhanced Financial mixin for documents with financial data
-
-    FIXED: Correct VAT calculation logic
-    RENAMED: grand_total → total
-    ADDED: prices_entered_with_vat field
-    """
-
-    # PRICE ENTRY CONTROL
-    prices_entered_with_vat = models.BooleanField(
-        _('Prices Entered With VAT'),
-        null=True,
-        blank=True,
-        help_text=_('Override location setting. null = use location default, True/False = override for this document')
-    )
-
-    subtotal = models.DecimalField(
-        _('Subtotal'),
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Sum of all net amounts (excluding VAT)')  # ENHANCED help text
-    )
-
-    discount_total = models.DecimalField(
-        _('Total Discount'),
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Total discount amount')
-    )
-
-    vat_total = models.DecimalField(
-        _('VAT Total'),
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Total VAT amount')
-    )
-
-    # RENAMED: grand_total → total
-    total = models.DecimalField(
-        _('Total'),
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Final total including VAT')
-    )
-
-    class Meta:
-        abstract = True
-
-    def recalculate_totals(self):
-        """
-        ✅ SAFE: Skip if object has no PK yet
-        """
-        if not self.pk or not hasattr(self, 'lines'):
-            self.subtotal = Decimal('0.00')
-            self.discount_total = Decimal('0.00')
-            self.vat_total = Decimal('0.00')
-            self.total = Decimal('0.00')
-            return
-
-        lines = self.lines.all()
-
-        # Calculate totals from lines
-        self.subtotal = sum(getattr(line, 'net_amount', 0) for line in lines)
-        self.discount_total = sum(getattr(line, 'discount_amount', 0) for line in lines)
-        self.vat_total = sum(getattr(line, 'vat_amount', 0) for line in lines)
-        self.total = self.subtotal + self.vat_total
-
-    def refresh_totals(self):
-        """
-        ✅ ПРОФЕСИОНАЛНО: Explicit method за manual totals refresh
-
-        Use when you want to recalculate AND save in one operation
-        """
-        self.recalculate_totals()  # Calculate
-        self.save(update_fields=['subtotal', 'discount_total', 'vat_total', 'total'])
-
-    def clean(self):
-        """Enhanced financial validation"""
-        super().clean()
-
-        # Basic financial validation
-        if self.vat_total < 0:
-            raise ValidationError({
-                'vat_total': _('VAT total cannot be negative')
-            })
-
-        # Logical consistency validation
-        if self.total < self.subtotal:
-            raise ValidationError({
-                'total': _('Total cannot be less than subtotal')
-            })
-
-    def get_financial_summary(self) -> dict:
-        """Get financial summary for this document"""
-        return {
-            'subtotal': self.subtotal,
-            'discount_total': self.discount_total,
-            'vat_total': self.vat_total,
-            'total': self.total,
-            'lines_count': getattr(self, 'lines', None).count() if hasattr(self, 'lines') else 0
-        }
-
 
 class PaymentMixin(models.Model):
     """
@@ -928,8 +716,6 @@ class PaymentMixin(models.Model):
                     raise ValidationError({
                         'is_paid': _('Payment is required for this document type')
                     })
-
-
 class DeliveryMixin(models.Model):
     """
     Mixin за документи с delivery информация
@@ -958,40 +744,148 @@ class DeliveryMixin(models.Model):
         # Delivery date може да е във всякакво време - това е реалната дата
 
 
+class FinancialMixin(models.Model):
+    """
+    Financial fields mixin - REFACTORED VERSION
+
+    ВАЖНО: Не прави изчисления! Само държи полета.
+    Всички изчисления се правят от VATCalculationService
+    """
+
+    # === TOTALS (всички суми се записват БЕЗ ДДС в базата) ===
+    subtotal = models.DecimalField(
+        _('Subtotal'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total before VAT and discounts')
+    )
+
+    discount_total = models.DecimalField(
+        _('Discount Total'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total discount amount')
+    )
+
+    vat_total = models.DecimalField(
+        _('VAT Total'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Total VAT amount')
+    )
+
+    total = models.DecimalField(
+        _('Total'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Final total including VAT')
+    )
+
+    # === VAT SETTINGS ===
+    prices_entered_with_vat = models.BooleanField(
+        _('Prices Include VAT'),
+        null=True,
+        blank=True,
+        help_text=_('Override location settings. NULL means use location defaults')
+    )
+
+    class Meta:
+        abstract = True
+
+    def recalculate_totals(self, save=True):
+        """
+        Преизчислява всички totals от линиите
+        Делегира на VATCalculationService
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
+
+        # Делегира изчислението
+        totals = VATCalculationService.recalculate_document_totals(self)
+
+        # Update полетата
+        self.subtotal = totals['subtotal']
+        self.vat_total = totals['vat_total']
+        self.discount_total = totals['discount_total']
+        self.total = totals['total']
+
+        if save:
+            self.save(update_fields=['subtotal', 'vat_total', 'discount_total', 'total'])
+
+        return totals
+
+    def get_price_entry_mode(self) -> bool:
+        """
+        Делегира на VATCalculationService
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
+        return VATCalculationService.get_price_entry_mode(self)
+
+    def validate_totals(self) -> bool:
+        """
+        Валидира че totals са правилни
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
+        is_valid, error = VATCalculationService.validate_vat_consistency(self)
+        if not is_valid:
+            raise ValueError(f"VAT calculation error: {error}")
+        return is_valid
+
+
 class FinancialLineMixin(models.Model):
     """
-    Enhanced Financial line mixin with VAT-aware price processing
+    Financial fields for document lines - REFACTORED VERSION
 
-    NEW FIELDS:
-    - entered_price: Price as entered by user
-    - net_amount: Amount excluding VAT
-
-    RENAMED:
-    - line_total → gross_amount: Amount including VAT
-
-    ENHANCED:
-    - Smart VAT processing based on company/document settings
+    ВАЖНО: Не прави изчисления! Само държи полета.
     """
 
-    # NEW: Price as entered by user
+    # === PRICES (всички цени БЕЗ ДДС в базата) ===
     entered_price = models.DecimalField(
         _('Entered Price'),
         max_digits=10,
-        decimal_places=4,
-        default=Decimal('0.0000'),
-        help_text=_('Price as entered by user (before VAT processing)')
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_('Price as entered by user (may include VAT)')
     )
 
-    # Unit price (ALWAYS excluding VAT in database)
     unit_price = models.DecimalField(
         _('Unit Price'),
         max_digits=10,
-        decimal_places=4,
-        default=Decimal('0.0000'),
-        help_text=_('Price per unit ALWAYS excluding VAT')
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Unit price WITHOUT VAT (stored value)')
     )
 
-    # Discount fields
+    unit_price_with_vat = models.DecimalField(
+        _('Unit Price with VAT'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Unit price INCLUDING VAT (calculated)')
+    )
+
+    # === VAT ===
+    vat_rate = models.DecimalField(
+        _('VAT Rate'),
+        max_digits=5,
+        decimal_places=3,
+        default=Decimal('0.200'),
+        help_text=_('VAT rate (0.20 = 20%)')
+    )
+
+    vat_amount = models.DecimalField(
+        _('VAT Amount'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('VAT amount for this line')
+    )
+
+    # === DISCOUNTS ===
     discount_percent = models.DecimalField(
         _('Discount %'),
         max_digits=5,
@@ -1005,227 +899,81 @@ class FinancialLineMixin(models.Model):
         max_digits=10,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Calculated discount amount')
+        help_text=_('Discount amount')
     )
 
-    # VAT fields
-    vat_rate = models.DecimalField(
-        _('VAT Rate %'),
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('VAT rate percentage from product tax group')
-    )
-
-    vat_amount = models.DecimalField(
-        _('VAT Amount'),
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Calculated VAT amount')
-    )
-
-    # NEW: Net amount (quantity × unit_price - discount, excluding VAT)
-    net_amount = models.DecimalField(
-        _('Net Amount'),
+    # === TOTALS ===
+    line_subtotal = models.DecimalField(
+        _('Line Subtotal'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Line amount excluding VAT (after discount)')
+        help_text=_('Line total WITHOUT VAT')
     )
 
-    # RENAMED: line_total → gross_amount
-    gross_amount = models.DecimalField(
-        _('Gross Amount'),
+    line_total = models.DecimalField(
+        _('Line Total'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Line amount including VAT')
+        help_text=_('Line total INCLUDING VAT')
     )
 
     class Meta:
         abstract = True
 
-
-
-
-    def _process_entered_price(self):
+    def get_quantity_for_calculation(self) -> Decimal:
         """
-        Process entered price → unit price (VAT-aware)
-
-        FIXED: Handle zero entered_price with smart fallback logic
+        Връща количеството за изчисления
+        Override в наследниците според техните полета
         """
-        try:
-            from purchases.services.vat_service import SmartVATService
+        # За PurchaseRequestLine -> requested_quantity
+        if hasattr(self, 'requested_quantity'):
+            return self.requested_quantity or Decimal('1')
 
-            # =====================
-            # SMART FALLBACK for zero entered_price
-            # =====================
-            effective_entered_price = self.entered_price
+        # За PurchaseOrderLine -> ordered_quantity
+        if hasattr(self, 'ordered_quantity'):
+            return self.ordered_quantity or Decimal('1')
 
-            if not self.entered_price or self.entered_price == 0:
-                # Try to get fallback price using smart logic
-                fallback_price = self._get_fallback_price()
+        # За DeliveryLine -> received_quantity
+        if hasattr(self, 'received_quantity'):
+            return self.received_quantity or Decimal('1')
 
-                if fallback_price and fallback_price > 0:
-                    effective_entered_price = fallback_price
-                    # Optional: Log that we used fallback
-                    print(f"💡 Using fallback price {fallback_price} for {self.product.code}")
-                else:
-                    # No fallback available - set minimal values and return
-                    self.unit_price = Decimal('0.00')
-                    self.vat_rate = self._get_default_vat_rate()
-                    return
+        # Default
+        return Decimal('1')
 
-            # =====================
-            # NORMAL VAT PROCESSING
-            # =====================
-            result = SmartVATService.calculate_line_vat(
-                self, effective_entered_price, self.document
-            )
-
-            # Apply results
-            self.unit_price = result['unit_price']
-            self.vat_rate = result['vat_rate']
-            # Note: vat_amount and gross_amount calculated in calculate_totals()
-
-            # Update entered_price if we used fallback
-            if effective_entered_price != self.entered_price:
-                self.entered_price = effective_entered_price
-
-        except ImportError:
-            # Fallback if SmartVATService not available
-            if self.entered_price:
-                self.unit_price = self.entered_price
-            else:
-                self.unit_price = self._get_fallback_price() or Decimal('0.00')
-            self.vat_rate = self._get_default_vat_rate()
-
-    def _get_fallback_price(self) -> Decimal:
+    def process_entered_price(self):
         """
-        Get fallback price when entered_price is zero
-
-        IMPORTANT: Adjusts for VAT entry mode using existing system methods!
+        Обработва въведената цена
+        Делегира на VATCalculationService
         """
-        if not self.product:
-            return Decimal('0.00')
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-        # Get base price (always excluding VAT from database)
-        base_price_excl_vat = None
+        # Делегира изчислението
+        result = VATCalculationService.process_document_line(self, save=False)
 
-        # PRIORITY 1: Last purchase cost
-        if hasattr(self.product, 'last_purchase_cost') and self.product.last_purchase_cost:
-            base_price_excl_vat = self.product.last_purchase_cost
-
-        # PRIORITY 2: Current average cost
-        elif hasattr(self.product, 'current_avg_cost') and self.product.current_avg_cost:
-            base_price_excl_vat = self.product.current_avg_cost
-
-        # PRIORITY 3: Source order line price (for delivery lines)
-        elif hasattr(self, 'source_order_line') and self.source_order_line:
-            if hasattr(self.source_order_line, 'unit_price') and self.source_order_line.unit_price:
-                base_price_excl_vat = self.source_order_line.unit_price
-
-        # PRIORITY 4: Try product's get_estimated_purchase_price if available
-        elif hasattr(self.product, 'get_estimated_purchase_price'):
-            try:
-                estimated = self.product.get_estimated_purchase_price(self.unit)
-                if estimated and estimated > 0:
-                    base_price_excl_vat = estimated
-            except:
-                pass
-
-        if not base_price_excl_vat or base_price_excl_vat <= 0:
-            return Decimal('0.00')
-
-        # =====================
-        # ADJUST FOR VAT ENTRY MODE using existing system
-        # =====================
-        prices_entered_with_vat = self.document.get_price_entry_mode()
-
-        if prices_entered_with_vat:
-            # User enters prices INCLUDING VAT, so convert database price (excl VAT) → incl VAT
-            from purchases.services.vat_service import SmartVATService
-            vat_rate = SmartVATService._get_product_vat_rate(self)
-            fallback_price_incl_vat = base_price_excl_vat * (1 + vat_rate / 100)
-            return fallback_price_incl_vat
+        if result['success']:
+            # Полетата вече са обновени от service-а
+            pass
         else:
-            # User enters prices EXCLUDING VAT, so use database price directly
-            return base_price_excl_vat
-
-    def _get_default_vat_rate(self) -> Decimal:
-        """Get default VAT rate using existing system method"""
-        from purchases.services.vat_service import SmartVATService
-        return SmartVATService._get_product_vat_rate(self)
-
-    def calculate_totals(self):
-        """
-        Calculate all line totals with enhanced VAT logic
-        """
-        # Get quantity using polymorphic method
-        quantity = self.get_quantity() if hasattr(self, 'get_quantity') else Decimal('0')
-
-        if quantity and self.unit_price:
-            # Calculate base amounts (excluding VAT)
-            gross_amount_excl_vat = quantity * self.unit_price
-            self.discount_amount = gross_amount_excl_vat * (self.discount_percent / 100)
-            self.net_amount = gross_amount_excl_vat - self.discount_amount
-
-            # Calculate VAT
-            self.vat_amount = self.net_amount * (self.vat_rate / 100)
-
-            # Calculate gross amount (including VAT)
-            self.gross_amount = self.net_amount + self.vat_amount
-        else:
-            # Zero out calculations if no quantity or price
-            self.discount_amount = Decimal('0.00')
-            self.net_amount = Decimal('0.00')
-            self.vat_amount = Decimal('0.00')
-            self.gross_amount = Decimal('0.00')
+            raise ValueError(f"VAT calculation failed: {result.get('error')}")
 
     def save(self, *args, **kwargs):
         """
-        Enhanced save with VAT-aware price processing
+        Преизчислява при save
         """
-        # Process entered price → unit price (VAT-aware)
-        self._process_entered_price()
-
-        # Calculate all totals
-        self.calculate_totals()
+        # Изчисли преди save
+        if self.entered_price is not None or self.unit_price:
+            self.process_entered_price()
 
         super().save(*args, **kwargs)
 
-    def get_effective_cost(self) -> Decimal:
-        """
-        Get effective cost for inventory calculations
+        # Update document totals след save
+        if hasattr(self, 'document') and self.document:
+            if hasattr(self.document, 'recalculate_totals'):
+                self.document.recalculate_totals(save=True)
 
-        Returns:
-            Decimal: Cost amount according to company VAT status
-        """
-        if not hasattr(self, 'document'):
-            return self.unit_price
 
-        company = self.document.get_company()
-        if company and company.is_vat_applicable():
-            # VAT registered company → use net amount (excluding VAT)
-            return self.unit_price
-        else:
-            # Non-VAT company → use gross amount (real cost including VAT)
-            quantity = self.get_quantity() if hasattr(self, 'get_quantity') else Decimal('1')
-            return self.gross_amount / quantity if quantity else self.gross_amount
-
-    def get_vat_breakdown(self) -> dict:
-        """Get detailed VAT breakdown for this line"""
-        return {
-            'entered_price': self.entered_price,
-            'unit_price': self.unit_price,
-            'quantity': self.get_quantity() if hasattr(self, 'get_quantity') else None,
-            'net_amount': self.net_amount,
-            'vat_rate': self.vat_rate,
-            'vat_amount': self.vat_amount,
-            'gross_amount': self.gross_amount,
-            'effective_cost': self.get_effective_cost()
-        }
 
 
 

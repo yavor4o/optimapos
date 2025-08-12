@@ -13,15 +13,16 @@ SPECIALISTS:
 
 from .document_service import DocumentService
 from .approval_service import ApprovalService
-from .currency_service import CurrencyService  
-from .tax_service import TaxService
+# from .currency_service import CurrencyService
+# from .tax_service import TaxService
+from .vat_calculation_service import VATCalculationService
 
 # Export DocumentService as main entry point
 __all__ = [
     'DocumentService',    # MAIN ORCHESTRATOR
     'ApprovalService',    # Approval specialist
-    'CurrencyService',
-    'TaxService',
+    'VATCalculationService'
+
 ]
 
 # Version info
