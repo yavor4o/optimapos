@@ -954,8 +954,8 @@ class FinancialLineMixin(models.Model):
         from nomenclatures.services.vat_calculation_service import VATCalculationService
 
         # Намери entered_price
-        entered_price = getattr(self, 'entered_price', None) or getattr(self, 'entered_price', None)
-        if not entered_price:
+        entered_price = getattr(self, 'entered_price', None)
+        if entered_price is None:  # ✅ Само ако няма стойност
             return
 
         # Намери quantity

@@ -21,7 +21,7 @@ class PurchaseRequestLineInline(admin.TabularInline):
     model = PurchaseRequestLine
     extra = 1
 
-    # ✅ FIXED: Remove duplicate fields (estimated_price removed)
+
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
         'entered_price',  # ✅ ONLY ONE PRICE FIELD
@@ -413,7 +413,7 @@ class PurchaseRequestLineAdmin(admin.ModelAdmin):
 
     list_display = [
         'document', 'line_number', 'product', 'requested_quantity',
-        'entered_price', 'unit_price', 'vat_amount', 'gross_amount',  # ✅ FIXED: removed estimated_price
+        'entered_price', 'unit_price', 'vat_amount', 'gross_amount',
         'priority_display'
     ]
 

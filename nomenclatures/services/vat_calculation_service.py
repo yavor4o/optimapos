@@ -86,7 +86,7 @@ class VATCalculationService:
     # =====================
     # 2. VAT RATE DETECTION
     # =====================
-    DEFAULT_VAT_RATE = Decimal('0.20000')  # 20% като decimal
+
 
     @classmethod
     def get_vat_rate(cls, line=None, product=None, location=None) -> Decimal:
@@ -140,6 +140,7 @@ class VATCalculationService:
     # =====================
     # 3. CORE LINE CALCULATION
     # =====================
+    @classmethod
     def calculate_line_totals(
             cls,
             line,
