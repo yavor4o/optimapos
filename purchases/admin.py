@@ -1,138 +1,79 @@
-# purchases/admin.py - FIXED COMPLETE ADMIN
-import logging
+# purchases/admin.py - ПЪЛЕН АДМИН С ВСИЧКИ VAT ПОЛЕТА
 
+import logging
+from decimal import Decimal
 from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
+from django.utils.safestring import mark_safe
+from django.db.models import Sum, Count
+from django.utils import timezone
+from django.urls import path, reverse
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 
-# ✅ IMPORT САМО СЪЩЕСТВУВАЩИ МОДЕЛИ
-from purchases.models.requests import PurchaseRequestLine, PurchaseRequest
+from .models.requests import PurchaseRequest, PurchaseRequestLine
 
 logger = logging.getLogger(__name__)
 
+
 # =================================================================
-# INLINE ADMINS - FIXED WITH NEW FIELDS
+# PURCHASE REQUEST LINE INLINE - С ВСИЧКИ VAT ПОЛЕТА
 # =================================================================
 
 class PurchaseRequestLineInline(admin.TabularInline):
     model = PurchaseRequestLine
     extra = 1
 
+    # ✅ ВСИЧКИ ПОЛЕТА ВКЛЮЧИТЕЛНО VAT И ТОТАЛИ
     fields = [
-        'product', 'requested_quantity', 'unit',
-        'entered_price',  # ✅ ONLY entered_price now
-        'price_suggestion_info',
-        ('unit_price', 'vat_rate'),
-        ('net_amount', 'gross_amount'),
+        'line_number', 'product', 'requested_quantity', 'unit',
+        ('estimated_price', 'entered_price'),  # Input prices
+        ('unit_price', 'vat_rate'),  # Calculated prices
+        ('discount_percent', 'discount_amount'),  # Discounts
+        ('net_amount', 'vat_amount', 'gross_amount'),  # Totals
+        'suggested_supplier', 'priority'
     ]
 
     readonly_fields = [
-        'price_suggestion_info',
-        'unit_price', 'vat_rate',
+        'line_number', 'unit_price', 'vat_rate', 'discount_amount',
         'net_amount', 'vat_amount', 'gross_amount'
     ]
 
-    def price_suggestion_info(self, obj):
-        """Show price suggestion and processing info"""
-        if not obj or not obj.pk:
-            return format_html('<em>Save to see price info</em>')
-
-        info_parts = []
-
-        # Show current price
-        if obj.entered_price and obj.entered_price > 0:
-            info_parts.append(
-                f'<span style="color: blue;">💰 Price: {obj.entered_price}</span>'
-            )
-        else:
-            info_parts.append(
-                '<span style="color: orange;">⚠️ No price entered</span>'
-            )
-
-        # Show VAT processing result
-        if obj.unit_price and obj.unit_price > 0:
-            if obj.entered_price and obj.entered_price != obj.unit_price:
-                # VAT was processed (prices were extracted)
-                info_parts.append(
-                    f'<small>→ Processed: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
-                )
-            else:
-                # No VAT processing needed
-                info_parts.append(
-                    f'<small>→ Direct: {obj.unit_price} (VAT: {obj.vat_rate}%)</small>'
-                )
-
-        # Show auto-suggestion if available
-        if obj.product and (not obj.entered_price or obj.entered_price == 0):
-            try:
-                suggested = obj.product.get_estimated_purchase_price(obj.unit)
-                if suggested and suggested > 0:
-                    info_parts.append(
-                        f'<span style="color: green;">💡 Suggested: {suggested}</span>'
-                    )
-            except:
-                pass
-
-        return format_html('<br>'.join(info_parts))
-
-    price_suggestion_info.short_description = 'Price Info'
-
-    def save_formset(self, request, form, formset, change):
-        """Enhanced save with auto-suggestion"""
-        instances = formset.save(commit=False)
-
-        for instance in instances:
-            # Auto-suggest price if none entered
-            if (not instance.entered_price or instance.entered_price == 0) and instance.product:
-                try:
-                    suggested = instance.product.get_estimated_purchase_price(instance.unit)
-                    if suggested and suggested > 0:
-                        instance.entered_price = suggested
-                        messages.info(
-                            request,
-                            f'Auto-suggested price {suggested} for {instance.product.code}'
-                        )
-                except Exception as e:
-                    logger.warning(f"Auto-suggestion failed for {instance.product.code}: {e}")
-
-            instance.save()
-
-        for obj in formset.deleted_objects:
-            obj.delete()
-
-        formset.save_m2m()
-
-        # Recalculate document totals
-        if form.instance.pk and hasattr(form.instance, 'recalculate_totals'):
-            form.instance.recalculate_totals()
+    def get_extra(self, request, obj=None, **kwargs):
+        return 0 if obj else 1
 
 
 # =================================================================
-# PURCHASE REQUEST ADMIN - FIXED
+# PURCHASE REQUEST ADMIN - С ПЪЛНА FINANCIAL SUMMARY
 # =================================================================
 
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(admin.ModelAdmin):
+    """Purchase Request Admin с пълни VAT изчисления"""
+
     list_display = [
-        'document_number', 'supplier', 'status_display', 'urgency_display',
-        'estimated_total_display', 'lines_count', 'auto_approve_indicator',  # NEW
-        'requested_by', 'created_at'
+        'document_number', 'supplier', 'location', 'status_display',
+        'urgency_display', 'lines_count', 'estimated_total_display',
+        'calculated_total_display', 'vat_setting_display', 'requested_by', 'created_at'
     ]
 
     list_filter = [
-        'status', 'urgency_level', 'request_type',
-        'approval_required', 'created_at'
+        'status', 'urgency_level', 'location', 'supplier',
+        'prices_entered_with_vat', 'created_at', 'requested_by'
     ]
 
     search_fields = [
-        'document_number', 'supplier__name',
-        'business_justification', 'notes'
+        'document_number', 'supplier__name', 'requested_by__username',
+        'notes', 'external_reference'
     ]
+
+    date_hierarchy = 'created_at'
+    inlines = [PurchaseRequestLineInline]
 
     readonly_fields = [
         'document_number', 'created_at', 'updated_at',
-        'converted_to_order', 'converted_at', 'converted_by',
-        'auto_approve_preview_display',  # NEW
+        'complete_financial_summary'
     ]
 
     fieldsets = (
@@ -148,307 +89,635 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 'approved_by', 'approved_at'
             )
         }),
-        (_('Financial Settings'), {  # НОВО!
+        (_('VAT Settings'), {
             'fields': (
-                'prices_entered_with_vat',  # Добави това поле
+                'prices_entered_with_vat',
+            ),
+            'description': 'VAT calculation settings. Leave empty to use location defaults.'
+        }),
+        (_('Document Totals'), {
+            'fields': (
                 'subtotal', 'discount_total', 'vat_total', 'total'
             ),
             'classes': ('collapse',),
-            'description': 'Leave "Prices Entered With VAT" empty to use location default'
+            'description': 'Calculated from lines. Use admin actions to recalculate.'
+        }),
+        (_('Complete Financial Summary'), {
+            'fields': ('complete_financial_summary',),
+            'classes': ('collapse',)
         }),
         (_('Notes'), {
             'fields': ('notes',)
         }),
+        (_('System Info'), {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
     )
 
-    inlines = [PurchaseRequestLineInline]
+    # =====================
+    # DISPLAY METHODS
+    # =====================
+
+    def status_display(self, obj):
+        """Colored status display"""
+        colors = {
+            'draft': '#6c757d',
+            'pending': '#ffc107',
+            'approved': '#28a745',
+            'rejected': '#dc3545',
+            'converted': '#17a2b8',
+        }
+        color = colors.get(obj.status, '#6c757d')
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color,
+            obj.get_status_display() if hasattr(obj, 'get_status_display') else obj.status
+        )
+
+    status_display.short_description = _('Status')
+
+    def urgency_display(self, obj):
+        """Urgency with icons"""
+        icons = {
+            'low': '🔵',
+            'normal': '🟢',
+            'high': '🟡',
+            'urgent': '🔴',
+        }
+        icon = icons.get(obj.urgency_level, '⚫')
+        return format_html(
+            '{} {}',
+            icon,
+            obj.get_urgency_level_display() if hasattr(obj, 'get_urgency_level_display') else obj.urgency_level
+        )
+
+    urgency_display.short_description = _('Urgency')
+
+    def lines_count(self, obj):
+        """Number of lines"""
+        return obj.lines.count()
+
+    lines_count.short_description = _('Lines')
+
+    def estimated_total_display(self, obj):
+        """Simple estimated total"""
+        if not obj.pk:
+            return "—"
+
+        total = sum(
+            (line.estimated_price or 0) * (line.requested_quantity or 0)
+            for line in obj.lines.all()
+        )
+
+        return format_html(
+            '<span style="color: #6c757d;">{} лв</span>',
+            "{:.2f}".format(float(total))
+        )
+
+    estimated_total_display.short_description = _('Est. Total')
+
+    def calculated_total_display(self, obj):
+        """Calculated total with VAT"""
+        if not obj.pk:
+            return "—"
+
+        lines_with_calc = obj.lines.exclude(gross_amount=0)
+        if not lines_with_calc.exists():
+            return format_html('<em style="color: #999;">Not calculated</em>')
+
+        # Aggregate calculated amounts
+        totals = lines_with_calc.aggregate(
+            net_total=Sum('net_amount'),
+            vat_total=Sum('vat_amount'),
+            gross_total=Sum('gross_amount')
+        )
+
+        net = totals['net_total'] or 0
+        vat = totals['vat_total'] or 0
+        gross = totals['gross_total'] or 0
+
+        return format_html(
+            '<div><strong style="color: #28a745;">{} лв</strong></div>'
+            '<small style="color: #6c757d;">Net: {} | VAT: {}</small>',
+            "{:.2f}".format(float(gross)),
+            "{:.2f}".format(float(net)),
+            "{:.2f}".format(float(vat))
+        )
+
+    calculated_total_display.short_description = _('Calc. Total')
+
+    def vat_setting_display(self, obj):
+        """VAT setting indicator"""
+        if obj.prices_entered_with_vat is None:
+            # Use location default
+            if hasattr(obj.location, 'purchase_prices_include_vat'):
+                setting = obj.location.purchase_prices_include_vat
+                source = "Location"
+            else:
+                setting = False  # System default
+                source = "System"
+
+            return format_html(
+                '<span style="color: #6c757d;">{} ({})</span>',
+                "With VAT" if setting else "Without VAT",
+                source
+            )
+        else:
+            # Document override
+            return format_html(
+                '<strong style="color: #007bff;">{} (Document)</strong>',
+                "With VAT" if obj.prices_entered_with_vat else "Without VAT"
+            )
+
+    vat_setting_display.short_description = _('VAT Mode')
+
+    def complete_financial_summary(self, obj):
+        """Детайлна финансова разбивка"""
+        if not obj.pk:
+            return "Save request first to see financial summary"
+
+        lines = obj.lines.all()
+        lines_count = lines.count()
+
+        if not lines_count:
+            return "No lines added yet"
+
+        # Basic estimated stats
+        estimated_total = sum(
+            (line.estimated_price or 0) * (line.requested_quantity or 0)
+            for line in lines
+        )
+
+        # Calculated stats
+        calculated_lines = lines.exclude(gross_amount=0)
+        calculated_count = calculated_lines.count()
+
+        # VAT setting info
+        vat_mode = "Not specified (uses location/system default)"
+        if obj.prices_entered_with_vat is not None:
+            vat_mode = "Prices INCLUDE VAT" if obj.prices_entered_with_vat else "Prices EXCLUDE VAT"
+
+        summary_parts = [
+            "<strong>🏷️ VAT Settings</strong>",
+            "• VAT Mode: {}".format(vat_mode),
+            "",
+            "<strong>📊 Lines Summary</strong>",
+            "• Total Lines: {}".format(lines_count),
+            "• Calculated Lines: {}".format(calculated_count),
+            "• Estimated Total: {:.2f} лв".format(estimated_total),
+        ]
+
+        if calculated_count > 0:
+            # Detailed calculations
+            totals = calculated_lines.aggregate(
+                subtotal=Sum('net_amount'),
+                discount_total=Sum('discount_amount'),
+                vat_total=Sum('vat_amount'),
+                gross_total=Sum('gross_amount')
+            )
+
+            subtotal = totals['subtotal'] or 0
+            discount_total = totals['discount_total'] or 0
+            vat_total = totals['vat_total'] or 0
+            gross_total = totals['gross_total'] or 0
+
+            summary_parts.extend([
+                "",
+                "<strong>💰 Calculated Totals</strong>",
+                "• Subtotal (before discounts): {:.2f} лв".format(subtotal + discount_total),
+                "• Discount Total: {:.2f} лв".format(discount_total),
+                "• Net Amount (after discounts): {:.2f} лв".format(subtotal),
+                "• VAT Amount: {:.2f} лв".format(vat_total),
+                "• <strong>Gross Total (with VAT): {:.2f} лв</strong>".format(gross_total),
+            ])
+
+            # VAT breakdown by rate
+            vat_breakdown = {}
+            for line in calculated_lines:
+                rate = line.vat_rate or 0
+                if rate not in vat_breakdown:
+                    vat_breakdown[rate] = {
+                        'net': 0, 'vat': 0, 'gross': 0, 'lines': 0
+                    }
+                vat_breakdown[rate]['net'] += line.net_amount or 0
+                vat_breakdown[rate]['vat'] += line.vat_amount or 0
+                vat_breakdown[rate]['gross'] += line.gross_amount or 0
+                vat_breakdown[rate]['lines'] += 1
+
+            if vat_breakdown:
+                summary_parts.extend([
+                    "",
+                    "<strong>📈 VAT Breakdown</strong>"
+                ])
+                for rate, amounts in vat_breakdown.items():
+                    summary_parts.append(
+                        "• {:.1f}% VAT: Net {:.2f} + VAT {:.2f} = {:.2f} лв ({} lines)".format(
+                            rate, amounts['net'], amounts['vat'], amounts['gross'], amounts['lines']
+                        )
+                    )
+
+            # Document vs Calculated comparison
+            if hasattr(obj, 'total') and obj.total:
+                doc_total = obj.total
+                variance = abs(doc_total - gross_total)
+                if variance > Decimal('0.01'):
+                    summary_parts.extend([
+                        "",
+                        "<strong>⚠️ Total Variance</strong>",
+                        "• Document Total: {:.2f} лв".format(doc_total),
+                        "• Calculated Total: {:.2f} лв".format(gross_total),
+                        "• Variance: {:.2f} лв".format(variance),
+                        "• <em>Use 'Recalculate document totals' action to sync</em>"
+                    ])
+
+        if calculated_count < lines_count:
+            uncalculated = lines_count - calculated_count
+            summary_parts.extend([
+                "",
+                "<strong>⚠️ Missing Calculations</strong>",
+                "• {} lines need VAT calculation".format(uncalculated),
+                "• Use 'Calculate VAT for all lines' action"
+            ])
+
+        return format_html("<br>".join(summary_parts))
+
+    complete_financial_summary.short_description = _('Complete Financial Summary')
+
+    # =====================
+    # ACTIONS
+    # =====================
+
+    actions = [
+        'calculate_all_lines', 'recalculate_document_totals',
+        'toggle_vat_mode', 'reset_vat_calculations',
+        'mark_as_approved', 'mark_as_rejected'
+    ]
+
+    def calculate_all_lines(self, request, queryset):
+        """Calculate VAT for all lines in selected requests"""
+        total_lines = 0
+        calculated_lines = 0
+        errors = []
+
+        for req in queryset:
+            for line in req.lines.all():
+                if line.estimated_price and line.requested_quantity:
+                    try:
+                        from nomenclatures.services.vat_calculation_service import VATCalculationService
+
+                        calc_result = VATCalculationService.calculate_line_totals(
+                            line=line,
+                            entered_price=line.estimated_price,
+                            quantity=line.requested_quantity,
+                            document=line.document
+                        )
+
+                        # Apply ALL results
+                        line.entered_price = calc_result['entered_price']
+                        line.unit_price = calc_result['unit_price']
+                        line.vat_rate = calc_result['vat_rate']
+                        line.vat_amount = calc_result['vat_amount']
+                        line.discount_amount = calc_result.get('discount_amount', Decimal('0'))
+                        line.net_amount = calc_result['net_amount']
+                        line.gross_amount = calc_result['gross_amount']
+                        line.save()
+
+                        calculated_lines += 1
+
+                    except Exception as e:
+                        errors.append("Line {}: {}".format(line.pk, str(e)))
+
+                total_lines += 1
+
+        if calculated_lines:
+            self.message_user(
+                request,
+                "✅ Calculated VAT for {}/{} lines.".format(calculated_lines, total_lines),
+                level='SUCCESS'
+            )
+        if errors:
+            for error in errors[:5]:  # Show max 5 errors
+                self.message_user(request, "❌ Error: {}".format(error), level='ERROR')
+
+    calculate_all_lines.short_description = _('Calculate VAT for all lines')
+
+    def recalculate_document_totals(self, request, queryset):
+        """Recalculate document totals from lines"""
+        count = 0
+        for req in queryset:
+            try:
+                from nomenclatures.services.vat_calculation_service import VATCalculationService
+
+                totals = VATCalculationService.recalculate_document_totals(req)
+
+                # Update document fields
+                if hasattr(req, 'subtotal'):
+                    req.subtotal = totals['subtotal']
+                if hasattr(req, 'vat_total'):
+                    req.vat_total = totals['vat_total']
+                if hasattr(req, 'discount_total'):
+                    req.discount_total = totals['discount_total']
+                if hasattr(req, 'total'):
+                    req.total = totals['total']
+
+                req.save()
+                count += 1
+
+            except Exception as e:
+                self.message_user(
+                    request,
+                    "❌ Error recalculating {}: {}".format(req.document_number, str(e)),
+                    level='ERROR'
+                )
+
+        if count:
+            self.message_user(
+                request,
+                "✅ Recalculated totals for {} requests.".format(count),
+                level='SUCCESS'
+            )
+
+    recalculate_document_totals.short_description = _('Recalculate document totals')
+
+    def toggle_vat_mode(self, request, queryset):
+        """Toggle VAT mode for selected requests"""
+        count = 0
+        for req in queryset:
+            if req.prices_entered_with_vat is None:
+                req.prices_entered_with_vat = True  # Set to include VAT
+            else:
+                req.prices_entered_with_vat = not req.prices_entered_with_vat  # Toggle
+            req.save()
+            count += 1
+
+        self.message_user(
+            request,
+            "🔄 Toggled VAT mode for {} requests. Recalculate lines to apply changes.".format(count),
+            level='SUCCESS'
+        )
+
+    toggle_vat_mode.short_description = _('Toggle VAT mode')
+
+    def reset_vat_calculations(self, request, queryset):
+        """Reset all VAT calculations"""
+        if not request.user.is_superuser:
+            self.message_user(request, "❌ Only superusers can reset calculations.", level='ERROR')
+            return
+
+        total_lines = 0
+        for req in queryset:
+            for line in req.lines.all():
+                line.unit_price = Decimal('0.00')
+                line.vat_rate = Decimal('20.00')  # Reset to default
+                line.vat_amount = Decimal('0.00')
+                line.discount_amount = Decimal('0.00')
+                line.net_amount = Decimal('0.00')
+                line.gross_amount = Decimal('0.00')
+                line.save()
+                total_lines += 1
+
+        self.message_user(
+            request,
+            "🔄 Reset calculations for {} lines.".format(total_lines),
+            level='SUCCESS'
+        )
+
+    reset_vat_calculations.short_description = _('Reset VAT calculations (Superuser only)')
+
+    def mark_as_approved(self, request, queryset):
+        """Bulk approve requests"""
+        count = 0
+        for obj in queryset.filter(status='pending'):
+            obj.status = 'approved'
+            obj.approved_by = request.user
+            obj.approved_at = timezone.now()
+            obj.save()
+            count += 1
+
+        self.message_user(request, "✅ Approved {} requests.".format(count))
+
+    mark_as_approved.short_description = _('Mark as approved')
+
+    def mark_as_rejected(self, request, queryset):
+        """Bulk reject requests"""
+        count = 0
+        for obj in queryset.filter(status='pending'):
+            obj.status = 'rejected'
+            obj.rejection_reason = 'Bulk rejection from admin'
+            obj.save()
+            count += 1
+
+        self.message_user(request, "❌ Rejected {} requests.".format(count))
+
+    mark_as_rejected.short_description = _('Mark as rejected')
+
+    # =====================
+    # ENHANCED SAVE
+    # =====================
 
     def save_model(self, request, obj, form, change):
-        """Generate document number using DocumentService"""
+        """Enhanced save with DocumentService integration"""
 
-        if not change and not obj.document_number:  # Нов документ без номер
+        if not change:  # New document
             try:
                 from nomenclatures.services import DocumentService
 
+                if not obj.requested_by:
+                    obj.requested_by = request.user
+
+                data = {
+                    'supplier': obj.supplier,
+                    'location': obj.location,
+                    'document_date': obj.document_date or timezone.now().date(),
+                    'requested_by': obj.requested_by,
+                    'notes': obj.notes or '',
+                    'external_reference': obj.external_reference or '',
+                    'urgency_level': obj.urgency_level,
+                    'prices_entered_with_vat': obj.prices_entered_with_vat,
+                }
+
                 result = DocumentService.create_document(
                     model_class=PurchaseRequest,
-                    data={
-                        'supplier': obj.supplier,
-                        'location': obj.location,
-                        'document_date': obj.document_date,
-                        'requested_by': obj.requested_by or request.user,
-                        'notes': obj.notes or '',
-                        'external_reference': obj.external_reference or '',
-                    },
+                    data=data,
                     user=request.user,
                     location=obj.location
                 )
 
                 if result['success']:
-                    # Заместваме obj с новия от DocumentService
                     new_doc = result['document']
+                    for field in obj._meta.fields:
+                        if hasattr(new_doc, field.name):
+                            setattr(obj, field.name, getattr(new_doc, field.name))
                     obj.pk = new_doc.pk
-                    obj.document_number = new_doc.document_number
-                    obj.status = new_doc.status
-                    self.message_user(request, f'✅ Generated number: {new_doc.document_number}')
-                    return  # НЕ извикваме super() защото DocumentService вече е записал
+                    obj._state.adding = False
+
+                    self.message_user(
+                        request,
+                        "✅ Purchase Request {} created successfully".format(new_doc.document_number),
+                        level='SUCCESS'
+                    )
+                    return
+
                 else:
-                    self.message_user(request, f'❌ Error: {result["message"]}', level='ERROR')
+                    self.message_user(
+                        request,
+                        "❌ DocumentService Error: {}".format(result["message"]),
+                        level='ERROR'
+                    )
 
             except Exception as e:
-                self.message_user(request, f'⚠️ DocumentService error: {e}', level='WARNING')
+                self.message_user(
+                    request,
+                    "⚠️ DocumentService Exception: {}".format(str(e)),
+                    level='WARNING'
+                )
 
         # Set defaults
         if not obj.requested_by:
             obj.requested_by = request.user
         if not obj.status:
             obj.status = 'draft'
+        if not obj.document_date:
+            obj.document_date = timezone.now().date()
 
         super().save_model(request, obj, form, change)
 
-    def urgency_display(self, obj):
-        if obj.urgency_level == 'high':
-            return format_html('<span style="color: #F44336;">🔥 High</span>')
-        elif obj.urgency_level == 'medium':
-            return format_html('<span style="color: #FF9800;">⚡ Medium</span>')
-        else:
-            return format_html('<span style="color: #4CAF50;">📋 Normal</span>')
+    def save_related(self, request, form, formsets, change):
+        """Save related objects and optionally auto-calculate"""
+        super().save_related(request, form, formsets, change)
 
-    urgency_display.short_description = 'Urgency'
+        # Optional: Auto-calculate new lines
+        lines_calculated = 0
+        for line in form.instance.lines.all():
+            if (line.estimated_price and line.requested_quantity and
+                    (not line.gross_amount or line.gross_amount == 0)):
+                try:
+                    from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-    def lines_count(self, obj):
-        count = obj.lines.count()
-        return format_html('<strong>{}</strong>', count)
-
-    lines_count.short_description = 'Lines'
-
-    def estimated_total_display(self, obj):
-        # Legacy estimated calculation
-        try:
-            total = sum(
-                (getattr(line, 'entered_price', 0) or 0) * (getattr(line, 'requested_quantity', 0) or 0)
-                for line in obj.lines.all()
-            )
-            return float(total)
-        except Exception:
-            return '-'
-
-    estimated_total_display.short_description = 'Estimated'
-
-    def total_display(self, obj):
-        # VAT-calculated total
-        return float(obj.total) if hasattr(obj, 'total') else 0
-
-    def status_display(self, obj):
-        """Показва статуса както е записан в базата"""
-        colors = {
-            'draft': '#757575',
-            'submitted': '#FF9800',
-            'approved': '#4CAF50',
-            'converted': '#2196F3',
-            'rejected': '#F44336',
-            'cancelled': '#9E9E9E'
-        }
-        color = colors.get(obj.status, '#757575')
-
-        # Добави 🤖 ако е автоматично одобрен
-        label = obj.status
-        if obj.status == 'approved' and getattr(obj, 'was_auto_approved', False):
-            label += ' 🤖'
-
-        return format_html(
-            '<span style="background-color: {}; color: white; padding: 3px 8px; '
-            'border-radius: 3px; font-size: 11px; font-weight: bold;">{}</span>',
-            color, label
-        )
-
-    status_display.short_description = _('Status')
-
-    total_display.short_description = 'VAT Total'
-
-    def auto_approve_indicator(self, obj):
-        """Shows if request was auto-approved or can be auto-approved"""
-        try:
-            if obj.status == 'approved' and getattr(obj, 'was_auto_approved', False):
-                rule_name = getattr(obj, 'auto_approval_rule_used.name', "Unknown")
-                return format_html(
-                    '<span style="background-color: #4CAF50; color: white; padding: 2px 6px; '
-                    'border-radius: 3px; font-size: 10px;">🤖 AUTO: {}</span>',
-                    rule_name
-                )
-            elif obj.status == 'draft':
-                # Check if has auto-approve method
-                if hasattr(obj, 'is_auto_approvable'):
-                    preview = obj.is_auto_approvable()
-                    if preview.get('can_auto_approve', False):
-                        return format_html(
-                            '<span style="background-color: #2196F3; color: white; padding: 2px 6px; '
-                            'border-radius: 3px; font-size: 10px;">⚡ WILL AUTO-APPROVE</span>'
-                        )
-                    else:
-                        return format_html(
-                            '<span style="background-color: #FF9800; color: white; padding: 2px 6px; '
-                            'border-radius: 3px; font-size: 10px;">👤 MANUAL APPROVAL</span>'
-                        )
-                else:
-                    return format_html(
-                        '<span style="background-color: #FF9800; color: white; padding: 2px 6px; '
-                        'border-radius: 3px; font-size: 10px;">👤 MANUAL APPROVAL</span>'
+                    calc_result = VATCalculationService.calculate_line_totals(
+                        line=line,
+                        entered_price=line.estimated_price,
+                        quantity=line.requested_quantity,
+                        document=line.document
                     )
-            else:
-                return '-'
-        except Exception:
-            return '-'
 
-    auto_approve_indicator.short_description = _('Auto Approval')
+                    # Apply results
+                    line.entered_price = calc_result['entered_price']
+                    line.unit_price = calc_result['unit_price']
+                    line.vat_rate = calc_result['vat_rate']
+                    line.vat_amount = calc_result['vat_amount']
+                    line.discount_amount = calc_result.get('discount_amount', Decimal('0'))
+                    line.net_amount = calc_result['net_amount']
+                    line.gross_amount = calc_result['gross_amount']
+                    line.save()
 
-    def auto_approve_preview_display(self, obj):
-        """Detailed auto-approve preview for the admin form"""
-        if not obj.pk:
-            return "Save request first to see auto-approve preview"
+                    lines_calculated += 1
 
-        try:
-            if hasattr(obj, 'get_auto_approve_preview'):
-                preview_text = obj.get_auto_approve_preview()
-                # Format for HTML display
-                formatted_preview = preview_text.replace('\n', '<br>')
-                return format_html(
-                    '<div style="font-family: monospace; font-size: 12px; '
-                    'background-color: #f5f5f5; padding: 10px; border-radius: 4px;">{}</div>',
-                    formatted_preview
-                )
-            else:
-                return "Auto-approve preview not available"
-        except Exception as e:
-            return f"Preview error: {e}"
+                except Exception as e:
+                    logger.warning("Auto-calculation failed for line {}: {}".format(line.pk, str(e)))
 
-    auto_approve_preview_display.short_description = _('Auto-Approve Preview')
-
-    # =====================
-    # ENHANCED ACTIONS
-    # =====================
-
-    actions = [
-        'submit_requests_with_auto_approve',  # NEW
-        'preview_auto_approve_status',  # NEW
-        'approve_requests',
-    ]
-
-    def submit_requests_with_auto_approve(self, request, queryset):
-        """NEW: Submit requests with auto-approve check"""
-        submitted_count = 0
-        auto_approved_count = 0
-        error_count = 0
-
-        for req in queryset.filter(status='draft'):
-            try:
-                if hasattr(req, 'submit_for_approval'):
-                    result = req.submit_for_approval(request.user)
-                    if isinstance(result, dict) and result.get('success'):
-                        submitted_count += 1
-                        if result.get('auto_approved'):
-                            auto_approved_count += 1
-                    else:
-                        error_count += 1
-                else:
-                    # Fallback to simple status update
-                    req.status = 'submitted'
-                    req.save()
-                    submitted_count += 1
-
-            except Exception as e:
-                error_count += 1
-                self.message_user(
-                    request,
-                    f'Error submitting {req.document_number}: {e}',
-                    level=messages.ERROR
-                )
-
-        # Summary message
-        message_parts = []
-        if submitted_count > 0:
-            message_parts.append(f'Submitted {submitted_count} requests')
-        if auto_approved_count > 0:
-            message_parts.append(f'Auto-approved {auto_approved_count} requests')
-        if error_count > 0:
-            message_parts.append(f'{error_count} errors occurred')
-
-        self.message_user(request, ' | '.join(message_parts))
-
-    submit_requests_with_auto_approve.short_description = _('Submit with auto-approve check')
-
-    def preview_auto_approve_status(self, request, queryset):
-        """NEW: Preview auto-approve status for selected requests"""
-        preview_lines = []
-
-        for req in queryset:
-            try:
-                if hasattr(req, 'is_auto_approvable'):
-                    preview = req.is_auto_approvable()
-                    status = "✅ AUTO" if preview.get('can_auto_approve', False) else "👤 MANUAL"
-                    reason = preview.get('reason', 'No reason provided')
-                    preview_lines.append(f"{req.document_number}: {status} - {reason}")
-                else:
-                    preview_lines.append(f"{req.document_number}: 👤 MANUAL - Auto-approve not configured")
-            except Exception as e:
-                preview_lines.append(f"{req.document_number}: ❌ ERROR - {e}")
-
-        # Show preview in message
-        preview_text = '\n'.join(preview_lines[:10])  # Limit to 10 items
-        if len(preview_lines) > 10:
-            preview_text += f'\n... and {len(preview_lines) - 10} more'
-
-        self.message_user(
-            request,
-            f'Auto-approve preview:\n{preview_text}',
-            level=messages.INFO
-        )
-
-    preview_auto_approve_status.short_description = _('Preview auto-approve status')
-
-    def approve_requests(self, request, queryset):
-        """Standard approve action"""
-        count = 0
-        for req in queryset.filter(status='submitted'):
-            try:
-                if hasattr(req, 'approve'):
-                    req.approve(request.user)
-                else:
-                    req.status = 'approved'
-                    req.approved_by = request.user
-                    req.save()
-                count += 1
-            except Exception as e:
-                self.message_user(
-                    request,
-                    f'Error approving {req.document_number}: {e}',
-                    level=messages.ERROR
-                )
-
-        self.message_user(request, f'Approved {count} requests.')
-
-    approve_requests.short_description = _('Approve requests')
+        if lines_calculated > 0:
+            messages.success(
+                request,
+                "✅ Auto-calculated VAT for {} lines".format(lines_calculated)
+            )
 
 
 # =================================================================
-# LINE MODELS ADMIN - FIXED
+# PURCHASE REQUEST LINE STANDALONE ADMIN (Optional)
 # =================================================================
 
 @admin.register(PurchaseRequestLine)
 class PurchaseRequestLineAdmin(admin.ModelAdmin):
+    """Standalone admin for lines with all VAT fields"""
+
     list_display = [
         'document', 'line_number', 'product', 'requested_quantity',
-        'entered_price', 'unit_price', 'gross_amount'  # ✅ FIXED: added entered_price
+        'estimated_price', 'unit_price', 'vat_amount', 'gross_amount',
+        'priority_display'
     ]
 
-    list_filter = ['document__status', 'document__supplier']
-    search_fields = ['product__code', 'product__name', 'document__document_number']
+    list_filter = [
+        'document__status', 'priority', 'suggested_supplier',
+        'vat_rate'
+    ]
 
-    readonly_fields = ['unit_price', 'vat_rate', 'net_amount', 'vat_amount', 'gross_amount']
+    search_fields = [
+        'product__code', 'product__name', 'document__document_number'
+    ]
 
+    readonly_fields = [
+        'unit_price', 'vat_rate', 'discount_amount',
+        'net_amount', 'vat_amount', 'gross_amount'
+    ]
 
-# =================================================================
-# SUCCESS MESSAGE
-# =================================================================
+    fieldsets = (
+        (_('Document & Product'), {
+            'fields': ('document', 'line_number', 'product', 'unit')
+        }),
+        (_('Quantities & Pricing'), {
+            'fields': (
+                'requested_quantity', 'estimated_price', 'entered_price'
+            )
+        }),
+        (_('VAT Calculations'), {
+            'fields': (
+                'unit_price', 'vat_rate', 'discount_percent', 'discount_amount',
+                'net_amount', 'vat_amount', 'gross_amount'
+            ),
+            'classes': ('collapse',)
+        }),
+        (_('Additional Info'), {
+            'fields': (
+                'suggested_supplier', 'priority', 'item_justification'
+            ),
+            'classes': ('collapse',)
+        }),
+    )
 
-print("✅ PURCHASES ADMIN LOADED SUCCESSFULLY - ONLY WORKING MODELS")
+    def priority_display(self, obj):
+        if obj.priority > 0:
+            return format_html('<span style="color: #F44336;">🔥 {}</span>', obj.priority)
+        return '—'
+
+    priority_display.short_description = _('Priority')
+
+    actions = ['calculate_vat_for_lines']
+
+    def calculate_vat_for_lines(self, request, queryset):
+        """Calculate VAT for selected lines"""
+        calculated = 0
+        errors = []
+
+        for line in queryset:
+            if line.estimated_price and line.requested_quantity:
+                try:
+                    from nomenclatures.services.vat_calculation_service import VATCalculationService
+
+                    calc_result = VATCalculationService.calculate_line_totals(
+                        line=line,
+                        entered_price=line.estimated_price,
+                        quantity=line.requested_quantity,
+                        document=line.document
+                    )
+
+                    # Apply results
+                    for field, value in calc_result.items():
+                        if (hasattr(line, field) and
+                                field not in ['calculation_reason', 'vat_applicable', 'prices_include_vat']):
+                            setattr(line, field, value)
+
+                    line.save()
+                    calculated += 1
+
+                except Exception as e:
+                    errors.append("Line {}: {}".format(line.pk, str(e)))
+
+        if calculated:
+            self.message_user(request, "✅ Calculated {} lines".format(calculated))
+        if errors:
+            for error in errors[:3]:
+                self.message_user(request, "❌ {}".format(error), level='ERROR')
+
+    calculate_vat_for_lines.short_description = _('Calculate VAT for selected lines')

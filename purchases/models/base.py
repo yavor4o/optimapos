@@ -949,19 +949,52 @@ class FinancialLineMixin(models.Model):
 
     def process_entered_price(self):
         """
-        Обработва въведената цена
-        Делегира на VATCalculationService
+        ✅ FIXED: Обработва въведената цена със unified VATCalculationService
         """
         from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-        # Делегира изчислението
-        result = VATCalculationService.process_document_line(self, save=False)
+        # Намери entered_price
+        entered_price = getattr(self, 'entered_price', None) or getattr(self, 'estimated_price', None)
+        if not entered_price:
+            return
 
-        if result['success']:
-            # Полетата вече са обновени от service-а
-            pass
+        # Намери quantity
+        if hasattr(self, 'requested_quantity'):
+            quantity = self.requested_quantity
+        elif hasattr(self, 'ordered_quantity'):
+            quantity = self.ordered_quantity
+        elif hasattr(self, 'received_quantity'):
+            quantity = self.received_quantity
         else:
-            raise ValueError(f"VAT calculation failed: {result.get('error')}")
+            quantity = Decimal('1')
+
+        if not quantity:
+            return
+
+        try:
+            calc_result = VATCalculationService.calculate_line_totals(
+                line=self,
+                entered_price=entered_price,
+                quantity=quantity,
+                document=getattr(self, 'document', None)
+            )
+
+            # Apply results
+            if hasattr(self, 'unit_price'):
+                self.unit_price = calc_result['unit_price']
+            if hasattr(self, 'vat_rate'):
+                self.vat_rate = calc_result['vat_rate']
+            if hasattr(self, 'vat_amount'):
+                self.vat_amount = calc_result['vat_amount']
+            if hasattr(self, 'net_amount'):
+                self.net_amount = calc_result['net_amount']
+            if hasattr(self, 'gross_amount'):
+                self.gross_amount = calc_result['gross_amount']
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"VAT calculation failed: {e}")
 
     def save(self, *args, **kwargs):
         """
