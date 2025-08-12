@@ -285,7 +285,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         for req in queryset:
             for line in req.lines.all():
                 # ✅ FIXED: Use entered_price consistently
-                if line.entered_price and line.requested_quantity:
+                # Трябва да е:
+                if line.entered_price is not None and line.requested_quantity:
                     try:
                         from nomenclatures.services.vat_calculation_service import VATCalculationService
 
@@ -470,7 +471,8 @@ class PurchaseRequestLineAdmin(admin.ModelAdmin):
         errors = []
 
         for line in queryset:
-            if line.entered_price and line.requested_quantity:  # ✅ FIXED
+            # Трябва да е:
+            if line.entered_price is not None and line.requested_quantity:
                 try:
                     from nomenclatures.services.vat_calculation_service import VATCalculationService
 

@@ -738,7 +738,7 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
             product=self.product,
             unit=self.unit,
             ordered_quantity=self.requested_quantity,
-            unit_price=kwargs.get('unit_price', self.estimated_price or Decimal('0')),
+            unit_price=kwargs.get('unit_price', self.entered_price or Decimal('0')),  # ✅ FIXED
             notes=self.notes or '',
             **kwargs
         )
