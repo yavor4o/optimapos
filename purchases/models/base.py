@@ -370,32 +370,38 @@ class BaseDocument(models.Model):
         """
         Get effective price entry mode for this document
 
+        Йерархия на проверките:
+        1. Document level setting (prices_entered_with_vat)
+        2. Location level setting (purchase/sales_prices_include_vat)
+        3. System defaults (purchases=False, sales=True)
+
         Returns:
             bool: True if prices include VAT, False if exclude VAT
         """
-        # 1. Check document-level setting (if using FinancialMixin)
+        # 1. Document level - най-висок приоритет
         if hasattr(self, 'prices_entered_with_vat'):
             if self.prices_entered_with_vat is not None:
                 return self.prices_entered_with_vat
 
-        # 2. Check location setting based on app
+        # 2. Location level - втори приоритет
         if self.location:
             app_label = self._meta.app_label
 
             if app_label == 'purchases':
+                # За purchases проверяваме purchase_prices_include_vat
                 return getattr(self.location, 'purchase_prices_include_vat', False)
-            elif app_label == 'sales':
-                return getattr(self.location, 'sales_prices_include_vat', True)
-            else:
-                return False
 
-        # 3. Default based on app type
+            elif app_label == 'sales':
+                # За sales проверяваме sales_prices_include_vat
+                return getattr(self.location, 'sales_prices_include_vat', True)
+
+        # 3. System defaults - последен fallback
         if self._meta.app_label == 'purchases':
-            return False
+            return False  # Purchase prices обикновено БЕЗ ДДС
         elif self._meta.app_label == 'sales':
-            return True
+            return True  # Sales prices обикновено С ДДС
         else:
-            return False
+            return False  # Default за други apps
 
     def get_document_prefix(self):
         """Get document prefix from DocumentType or fallback"""
