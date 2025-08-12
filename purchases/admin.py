@@ -135,36 +135,31 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         'auto_approve_preview_display',  # NEW
     ]
 
-    fieldsets = [
-        (_('Document Info'), {
-            'fields': ('document_number', 'document_type', 'status', 'external_reference')
+    fieldsets = (
+        (_('Basic Information'), {
+            'fields': (
+                'document_number', 'supplier', 'location', 'status',
+                'urgency_level'
+            )
         }),
         (_('Request Details'), {
             'fields': (
-                'supplier', 'location', 'request_type', 'urgency_level',
-                'business_justification', 'expected_usage'
+                'document_date', 'external_reference', 'requested_by',
+                'approved_by', 'approved_at'
             )
         }),
-        (_('Approval Workflow'), {
+        (_('Financial Settings'), {  # НОВО!
             'fields': (
-                'approval_required', 'requested_by', 'approved_by', 'approved_at',
-                'rejection_reason'
-            )
-        }),
-        (_('Conversion Tracking'), {
-            'fields': (
-                'converted_to_order', 'converted_at', 'converted_by'
+                'prices_entered_with_vat',  # Добави това поле
+                'subtotal', 'discount_total', 'vat_total', 'total'
             ),
-            'classes': ('collapse',)
+            'classes': ('collapse',),
+            'description': 'Leave "Prices Entered With VAT" empty to use location default'
         }),
-        (_('System Info'), {
-            'fields': (
-                'created_at', 'updated_at',
-                'auto_approve_preview_display',  # NEW
-            ),
-            'classes': ('collapse',)
+        (_('Notes'), {
+            'fields': ('notes',)
         }),
-    ]
+    )
 
     inlines = [PurchaseRequestLineInline]
 
