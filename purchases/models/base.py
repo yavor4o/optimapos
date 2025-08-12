@@ -665,6 +665,9 @@ class BaseDocumentLine(models.Model):
             'decimal_places': getattr(self.unit, 'decimal_places', 3),
         }
 
+
+
+
 class PaymentMixin(models.Model):
     """
     Mixin за документи с плащания
@@ -716,6 +719,8 @@ class PaymentMixin(models.Model):
                     raise ValidationError({
                         'is_paid': _('Payment is required for this document type')
                     })
+
+
 class DeliveryMixin(models.Model):
     """
     Mixin за документи с delivery информация
@@ -972,8 +977,6 @@ class FinancialLineMixin(models.Model):
         if hasattr(self, 'document') and self.document:
             if hasattr(self.document, 'recalculate_totals'):
                 self.document.recalculate_totals(save=True)
-
-
 
 
 
