@@ -157,17 +157,7 @@ class LineManager(models.Manager):
 # =================================================================
 
 class BaseDocument(models.Model):
-    """
-    Base Document Model - PURE DATA MODEL
 
-    ✅ САМО data fields и validation
-    ✅ Read-only helper методи
-    ❌ БЕЗ business logic
-    ❌ БЕЗ workflow логика
-    ❌ БЕЗ document number generation
-
-    Всички документи ТРЯБВА да се създават през DocumentService!
-    """
 
     # =====================
     # DOCUMENT TYPE INTEGRATION
@@ -312,17 +302,10 @@ class BaseDocument(models.Model):
         if not self.location:
             raise ValidationError({'location': _('Location is required')})
 
-        # ❌ НЕ правим document type detection - DocumentService го прави
-        # ❌ НЕ проверяваме статуси - DocumentService го прави
-        # ❌ НЕ валидираме workflow - DocumentService го прави
+
 
     def save(self, *args, **kwargs):
-        """
-        MINIMAL save - БЕЗ business logic
 
-        За нови документи: ТРЯБВА да се използва DocumentService.create_document()
-        За updates: OK да се използва save()
-        """
         is_new = not self.pk
         skip_validation = kwargs.pop('skip_validation', False)
 
@@ -342,12 +325,7 @@ class BaseDocument(models.Model):
                     stacklevel=2
                 )
 
-                # В production може да хвърляме грешка:
-                # from django.conf import settings
-                # if not settings.DEBUG:
-                #     raise ValidationError(
-                #         "Documents must be created via DocumentService.create_document()"
-                #     )
+
 
             if not self.status:
                 logger.warning(
@@ -479,41 +457,6 @@ class BaseDocument(models.Model):
         actions = DocumentService.get_available_actions(self, user)
         return [a['status'] for a in actions if a.get('can_perform', False)]
 
-    # =====================
-    # DEPRECATED METHODS (за backward compatibility)
-    # =====================
-
-    @classmethod
-    def get_possible_document_types(cls):
-        """
-        DEPRECATED: DocumentService handles this
-        Kept for backward compatibility
-        """
-        warnings.warn(
-            "get_possible_document_types() is deprecated. "
-            "DocumentService handles document type detection.",
-            DeprecationWarning
-        )
-
-        try:
-            from nomenclatures.models import DocumentType
-            return DocumentType.objects.filter(
-                app_name=cls._meta.app_label,
-                is_active=True
-            )
-        except ImportError:
-            return []
-
-    def get_default_document_type(self):
-        """
-        DEPRECATED: DocumentService handles this
-        """
-        warnings.warn(
-            "get_default_document_type() is deprecated. "
-            "Use DocumentService for document creation.",
-            DeprecationWarning
-        )
-        return None
 
 
 # =================================================================
@@ -593,7 +536,7 @@ class BaseDocumentLine(models.Model):
         """Basic line validation - tolerant to None quantity"""
         super().clean()
 
-        # ✅ ПОПРАВКА: проверявай quantity само ако не е None
+
         if self.quantity is not None and self.quantity <= 0:
             raise ValidationError({
                 'quantity': _('Quantity must be greater than zero')
