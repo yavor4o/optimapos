@@ -418,7 +418,7 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
             if line.entered_price
         ) or Decimal('0.00')
 
-    # purchases/models/requests.py - FIX convert_to_order method
+
 
     # =====================
     # PROPERTIES
