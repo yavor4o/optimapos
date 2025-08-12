@@ -86,34 +86,53 @@ class VATCalculationService:
     # =====================
     # 2. VAT RATE DETECTION
     # =====================
+    DEFAULT_VAT_RATE = Decimal('0.20000')  # 20% като decimal
+
     @classmethod
     def get_vat_rate(cls, line=None, product=None, location=None) -> Decimal:
         """
-        🎯 CORE METHOD: Получава VAT rate за продукт/линия
-
-        Приоритет:
-        1. Line override (ако има)
-        2. Product VAT rate
-        3. Location default VAT rate
-        4. System default
+        ✅ FIXED: Връща VAT rate като decimal (0.20), НЕ като процент (20)
         """
         # 1. Line override
         if line and hasattr(line, 'vat_rate') and line.vat_rate is not None:
             return Decimal(str(line.vat_rate))
 
-        # 2. Product VAT rate
+        # 2. Product VAT rate - ФИКС за липсващ tax_group
         if not product and line and hasattr(line, 'product'):
             product = line.product
 
-        if product and hasattr(product, 'tax_group') and product.tax_group:
-            return Decimal(str(product.tax_group.rate))
+        # ✅ ROBUST VAT RATE DETECTION
+        if product:
+            # Check for various possible VAT fields
+            for field_name in ['vat_rate', 'tax_rate', 'default_vat_rate']:
+                if hasattr(product, field_name):
+                    rate = getattr(product, field_name)
+                    if rate is not None:
+                        rate = Decimal(str(rate))
+                        # Normalize: if > 1, assume percentage, convert to decimal
+                        if rate > 1:
+                            rate = rate / Decimal('100')
+                        return rate
+
+            # Check for tax_group if exists
+            if hasattr(product, 'tax_group') and product.tax_group:
+                if hasattr(product.tax_group, 'rate'):
+                    rate = Decimal(str(product.tax_group.rate))
+                    if rate > 1:
+                        rate = rate / Decimal('100')
+                    return rate
 
         # 3. Location default
-        if not location and line and hasattr(line, 'document') and hasattr(line.document, 'location'):
-            location = line.document.location
+        if not location and line and hasattr(line, 'document'):
+            document = line.document
+            if hasattr(document, 'location'):
+                location = document.location
 
         if location and hasattr(location, 'default_vat_rate'):
-            return Decimal(str(location.default_vat_rate))
+            rate = Decimal(str(location.default_vat_rate))
+            if rate > 1:
+                rate = rate / Decimal('100')
+            return rate
 
         # 4. System default
         return cls.DEFAULT_VAT_RATE
@@ -121,7 +140,6 @@ class VATCalculationService:
     # =====================
     # 3. CORE LINE CALCULATION
     # =====================
-    @classmethod
     def calculate_line_totals(
             cls,
             line,
@@ -130,108 +148,73 @@ class VATCalculationService:
             document=None
     ) -> Dict:
         """
-        🎯 MAIN METHOD: Пълно изчисление на линия
-
-        Args:
-            line: Document line instance
-            entered_price: Price as entered by user
-            quantity: Quantity (if None, get from line)
-            document: Parent document (if None, get from line)
-
-        Returns:
-            Dict: Complete calculation results
+        ✅ FIXED: Правилни VAT изчисления с decimal rates
         """
-
-        # ===== PREPARATION =====
         if not document and hasattr(line, 'document'):
             document = line.document
 
         if not quantity:
             quantity = cls._get_line_quantity(line)
 
-        result = {
-            'entered_price': entered_price,
-            'quantity': quantity,
-            'unit_price': entered_price,
-            'vat_rate': Decimal('0.00'),
-            'vat_amount': Decimal('0.00'),
-            'discount_amount': Decimal('0.00'),
-            'net_amount': Decimal('0.00'),
-            'gross_amount': Decimal('0.00'),
-            'effective_cost': entered_price,
-            'calculation_reason': '',
-            'vat_applicable': False,
-            'prices_include_vat': False
-        }
-
-        # ===== COMPANY VAT CHECK =====
-        if not cls._is_company_vat_registered():
-            result.update({
-                'unit_price': entered_price,
-                'net_amount': entered_price * quantity,
-                'gross_amount': entered_price * quantity,
-                'calculation_reason': 'Company not VAT registered',
-                'vat_applicable': False
-            })
-            return result
-
-        # ===== VAT RATE =====
-        vat_rate = cls.get_vat_rate(line)
+        # ===== VAT RATE като decimal =====
+        vat_rate = cls.get_vat_rate(line)  # Връща decimal (0.20)
 
         if vat_rate == 0:
-            result.update({
-                'vat_rate': Decimal('0.00'),
+            # No VAT calculation needed
+            net_amount = entered_price * quantity
+            return {
+                'entered_price': entered_price,
+                'quantity': quantity,
                 'unit_price': entered_price,
-                'net_amount': entered_price * quantity,
-                'gross_amount': entered_price * quantity,
+                'unit_price_with_vat': entered_price,
+                'vat_rate': Decimal('0.00000'),
+                'vat_amount': Decimal('0.00'),
+                'net_amount': cls._round_currency(net_amount),
+                'gross_amount': cls._round_currency(net_amount),
                 'calculation_reason': 'Product is VAT exempt (0% rate)',
                 'vat_applicable': False
-            })
-            return result
+            }
 
         # ===== PRICE ENTRY MODE =====
         prices_include_vat = cls.get_price_entry_mode(document) if document else False
 
-        # ===== VAT CALCULATION =====
+        # ===== VAT CALCULATION (FIXED) =====
         if prices_include_vat:
             # Цената включва ДДС → extract it
-            vat_multiplier = Decimal('1') + (vat_rate / Decimal('100'))
+            vat_multiplier = Decimal('1') + vat_rate  # 1 + 0.20 = 1.20
             unit_price = entered_price / vat_multiplier
-            calculation_reason = f'Extracted VAT ({vat_rate}%) from entered price'
+            unit_price_with_vat = entered_price
+            calculation_reason = f'Extracted VAT ({vat_rate * 100:.1f}%) from entered price'
         else:
             # Цената е без ДДС → add it
             unit_price = entered_price
-            calculation_reason = f'Added VAT ({vat_rate}%) to entered price'
+            unit_price_with_vat = entered_price * (Decimal('1') + vat_rate)
+            calculation_reason = f'Added VAT ({vat_rate * 100:.1f}%) to entered price'
 
-        # ===== AMOUNTS CALCULATION =====
-        # Get discount if any
+        # ===== DISCOUNT CALCULATION =====
         discount_percent = getattr(line, 'discount_percent', Decimal('0')) or Decimal('0')
+        gross_before_discount = unit_price * quantity
+        discount_amount = gross_before_discount * (discount_percent / Decimal('100'))
+        net_amount = gross_before_discount - discount_amount
 
-        # Base calculations
-        gross_amount_before_discount = unit_price * quantity
-        discount_amount = gross_amount_before_discount * (discount_percent / Decimal('100'))
-        net_amount = gross_amount_before_discount - discount_amount
-        vat_amount = net_amount * (vat_rate / Decimal('100'))
+        # ===== VAT AMOUNT =====
+        vat_amount = net_amount * vat_rate  # Decimal rate
         gross_amount = net_amount + vat_amount
 
-        # ===== EFFECTIVE COST =====
-        effective_cost = cls._calculate_effective_cost(unit_price, gross_amount, quantity)
-
-        # ===== FINAL RESULT =====
-        result.update({
+        return {
+            'entered_price': entered_price,
+            'quantity': quantity,
             'unit_price': cls._round_currency(unit_price),
-            'vat_rate': vat_rate,
+            'unit_price_with_vat': cls._round_currency(unit_price_with_vat),
+            'vat_rate': vat_rate,  # Keep as decimal for storage
             'vat_amount': cls._round_currency(vat_amount),
             'discount_amount': cls._round_currency(discount_amount),
             'net_amount': cls._round_currency(net_amount),
             'gross_amount': cls._round_currency(gross_amount),
-            'effective_cost': cls._round_currency(effective_cost),
             'calculation_reason': calculation_reason,
             'vat_applicable': True,
             'prices_include_vat': prices_include_vat
-        })
-
-        return result
+        }
 
     # =====================
     # 4. DOCUMENT TOTALS CALCULATION

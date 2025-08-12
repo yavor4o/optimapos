@@ -450,18 +450,42 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
     # FINANCIAL PLANNING
     # =====================
     def get_planning_cost(self):
+        """✅ FIXED: Use new VATCalculationService"""
         if not self.pk:
             return Decimal('0.00')
 
-        from purchases.services.vat_service import SmartVATService
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
         total_cost = Decimal('0')
 
         for line in self.lines.all():
-            effective_cost = SmartVATService.get_effective_cost(line)
-            quantity = line.get_quantity()
-            total_cost += effective_cost * quantity
+            # Use effective cost from line gross amount or calculate
+            if line.gross_amount:
+                effective_cost = line.gross_amount
+            elif line.entered_price and line.requested_quantity:
+                # Calculate on-the-fly
+                calc_result = VATCalculationService.calculate_line_totals(
+                    line, line.entered_price, line.requested_quantity
+                )
+                effective_cost = calc_result['gross_amount']
+            else:
+                effective_cost = Decimal('0')
+
+            total_cost += effective_cost
 
         return total_cost
+
+    def get_estimated_total(self):
+        """✅ FIXED: Use entered_price uniformly"""
+        if not self.pk:
+            return Decimal('0.00')
+
+        total = Decimal('0.00')
+        for line in self.lines.all():
+            qty = line.requested_quantity or 0
+            price = line.entered_price or 0  # Use entered_price consistently
+            total += qty * price
+
+        return total
 
     def get_financial_summary(self):
         if not self.pk:
@@ -481,17 +505,7 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
             'planning_cost': self.get_planning_cost()
         }
 
-    def get_estimated_total(self):
-        if not self.pk:
-            return Decimal('0.00')
 
-        total = Decimal('0.00')
-        for line in self.lines.all():
-            qty = line.requested_quantity or 0
-            price = line.entered_price or 0
-            total += qty * price
-
-        return total
 
 
 # =====================
@@ -558,17 +572,8 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
         help_text=_('Quantity requested for purchase')
     )
 
-    # =====================
-    # PRICING (Optional)
-    # =====================
-    estimated_price = models.DecimalField(
-        _('Estimated Unit Price'),
-        max_digits=10,
-        decimal_places=4,
-        null=True,
-        blank=True,
-        help_text=_('Estimated price per unit (optional, for budgeting)')
-    )
+
+
 
     # =====================
     # SUPPLIER SUGGESTION
@@ -647,7 +652,7 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
             })
 
         # Estimated price validation (if provided)
-        if self.estimated_price is not None and self.estimated_price < 0:
+        if self.entered_price is not None and self.entered_price < 0:
             raise ValidationError({
                 'estimated_price': _('Estimated price cannot be negative')
             })
@@ -662,11 +667,12 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
     # PROPERTIES
     # =====================
 
+    # ✅ FIXED PROPERTY
     @property
     def estimated_line_total(self):
-        """Calculate estimated total if price is provided"""
-        if self.estimated_price and self.requested_quantity:
-            return self.estimated_price * self.requested_quantity
+        """Calculate estimated total from entered_price"""
+        if self.entered_price and self.requested_quantity:
+            return self.entered_price * self.requested_quantity
         return None
 
     @property
