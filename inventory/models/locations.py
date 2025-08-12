@@ -102,6 +102,21 @@ class InventoryLocation(models.Model):
         help_text=_('Default expiry period for products without explicit expiry')
     )
 
+    # === PRICING & VAT SETTINGS ===
+    purchase_prices_include_vat = models.BooleanField(
+        _('Purchase Prices Include VAT'),
+        default=False,
+        help_text=_('Whether purchase prices for this location include VAT by default. '
+                    'Usually False for B2B purchases.')
+    )
+
+    sales_prices_include_vat = models.BooleanField(
+        _('Sales Prices Include VAT'),
+        default=True,
+        help_text=_('Whether sales prices for this location include VAT by default. '
+                    'Usually True for B2C sales.')
+    )
+
     # === PRICING ===
     default_markup_percentage = models.DecimalField(
         _('Default Markup Percentage'),
@@ -317,6 +332,32 @@ class InventoryLocation(models.Model):
             }
             for item in negative_items
         ]
+
+    def get_purchase_vat_mode(self) -> bool:
+        """Get whether purchase prices include VAT for this location"""
+        return self.purchase_prices_include_vat
+
+    def get_sales_vat_mode(self) -> bool:
+        """Get whether sales prices include VAT for this location"""
+        return self.sales_prices_include_vat
+
+    def get_vat_mode_for_document_type(self, app_label: str) -> bool:
+        """
+        Get VAT mode based on document type
+
+        Args:
+            app_label: 'purchases' or 'sales'
+
+        Returns:
+            bool: True if prices include VAT, False otherwise
+        """
+        if app_label == 'purchases':
+            return self.purchase_prices_include_vat
+        elif app_label == 'sales':
+            return self.sales_prices_include_vat
+        else:
+            # Default за други apps
+            return False
 
 
 class POSLocation(models.Model):
