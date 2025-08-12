@@ -169,10 +169,46 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     inlines = [PurchaseRequestLineInline]
 
     def save_model(self, request, obj, form, change):
-        if not change:
+        """Generate document number using DocumentService"""
+
+        if not change and not obj.document_number:  # Нов документ без номер
+            try:
+                from nomenclatures.services import DocumentService
+
+                result = DocumentService.create_document(
+                    model_class=PurchaseRequest,
+                    data={
+                        'supplier': obj.supplier,
+                        'location': obj.location,
+                        'document_date': obj.document_date,
+                        'requested_by': obj.requested_by or request.user,
+                        'notes': obj.notes or '',
+                        'external_reference': obj.external_reference or '',
+                    },
+                    user=request.user,
+                    location=obj.location
+                )
+
+                if result['success']:
+                    # Заместваме obj с новия от DocumentService
+                    new_doc = result['document']
+                    obj.pk = new_doc.pk
+                    obj.document_number = new_doc.document_number
+                    obj.status = new_doc.status
+                    self.message_user(request, f'✅ Generated number: {new_doc.document_number}')
+                    return  # НЕ извикваме super() защото DocumentService вече е записал
+                else:
+                    self.message_user(request, f'❌ Error: {result["message"]}', level='ERROR')
+
+            except Exception as e:
+                self.message_user(request, f'⚠️ DocumentService error: {e}', level='WARNING')
+
+        # Set defaults
+        if not obj.requested_by:
             obj.requested_by = request.user
-            obj.created_by = request.user
-        obj.updated_by = request.user
+        if not obj.status:
+            obj.status = 'draft'
+
         super().save_model(request, obj, form, change)
 
     def urgency_display(self, obj):
