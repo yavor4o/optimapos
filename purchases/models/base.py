@@ -908,20 +908,20 @@ class FinancialLineMixin(models.Model):
     )
 
     # === TOTALS ===
-    line_subtotal = models.DecimalField(
-        _('Line Subtotal'),
+    net_amount = models.DecimalField(
+        _('Net Amount'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Line total WITHOUT VAT')
+        help_text=_('Line amount excluding VAT')
     )
 
-    line_total = models.DecimalField(
-        _('Line Total'),
+    gross_amount = models.DecimalField(
+        _('Gross Amount'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Line total INCLUDING VAT')
+        help_text=_('Line amount including VAT')
     )
 
     class Meta:

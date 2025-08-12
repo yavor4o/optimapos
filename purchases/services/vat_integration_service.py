@@ -11,8 +11,8 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from purchases.models import PurchaseRequest, PurchaseOrder, DeliveryReceipt
-
+from purchases.models import  PurchaseOrder, DeliveryReceipt
+from purchases.models.requests import PurchaseRequest
 
 ogger = logging.getLogger(__name__)  # ✅ ADDED for error logging
 
