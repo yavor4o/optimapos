@@ -82,7 +82,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
                 'affects_inventory',
                 'inventory_direction',
                 'auto_create_movements',
-                'inventory_timing'
+
             )
         }),
         (_('Workflow Configuration'), {
