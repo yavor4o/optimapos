@@ -68,6 +68,11 @@ from .operational import (
     PaymentType,
 )
 
+from .statuses import (
+    DocumentStatus,
+    DocumentTypeStatus
+)
+
 # =====================
 # EXPORT DEFINITION - след всички импорти
 # =====================
@@ -96,6 +101,9 @@ __all__ = [
     # Operational
     'UnitOfMeasure',
     'PaymentType',
+
+    'DocumentStatus',
+    'DocumentTypeStatus',
 ]
 
 # Add conditional exports

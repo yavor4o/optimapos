@@ -125,16 +125,25 @@ class ApprovalRule(models.Model):
     # STATUS TRANSITION
     # =====================
 
-    from_status = models.CharField(
-        _('From Status'),
-        max_length=30,
-        help_text=_('Document status this rule applies from: "submitted", "draft"')
+    # НОВИ полета с ForeignKey
+    from_status_obj = models.ForeignKey(
+        'nomenclatures.DocumentStatus',
+        on_delete=models.PROTECT,
+        related_name='approval_rules_from',
+        verbose_name=_('From Status'),
+        help_text=_('Starting status for this transition'),
+        null=True,  # Временно nullable за миграция
+        blank=True
     )
 
-    to_status = models.CharField(
-        _('To Status'),
-        max_length=30,
-        help_text=_('Target status after approval: "approved", "rejected"')
+    to_status_obj = models.ForeignKey(
+        'nomenclatures.DocumentStatus',
+        on_delete=models.PROTECT,
+        related_name='approval_rules_to',
+        verbose_name=_('To Status'),
+        help_text=_('Target status for this transition'),
+        null=True,  # Временно nullable за миграция
+        blank=True
     )
 
     # =====================
@@ -294,29 +303,33 @@ class ApprovalRule(models.Model):
         verbose_name_plural = _('Approval Rules')
         ordering = ['document_type', 'approval_level', 'sort_order']
         indexes = [
-            models.Index(fields=['document_type', 'from_status', 'to_status']),
+            models.Index(fields=['document_type', 'from_status_obj', 'to_status_obj']),
             models.Index(fields=['approval_level', 'sort_order']),
             models.Index(fields=['min_amount', 'max_amount']),
             models.Index(fields=['approver_type', 'is_active']),
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=['document_type', 'from_status', 'to_status', 'approval_level'],
+                fields=['document_type', 'from_status_obj', 'to_status_obj', 'approval_level'],
                 name='unique_approval_rule_per_level'
             )
         ]
 
     def __str__(self):
+        """Updated string representation"""
+        from_status = self.from_status_obj.code if self.from_status_obj else self.from_status
+        to_status = self.to_status_obj.code if self.to_status_obj else self.to_status
+
         amount_range = f"{self.min_amount}"
         if self.max_amount:
             amount_range += f"-{self.max_amount}"
         else:
             amount_range += "+"
 
-        return f"{self.name} (Level {self.approval_level}): {self.from_status}→{self.to_status} ({amount_range} {self.currency})"
+        return f"{self.name} (L{self.approval_level}): {from_status}→{to_status} ({amount_range} {self.currency})"
 
     def clean(self):
-        """Simplified validation"""
+        """Updated validation"""
         super().clean()
 
         # Amount validation
@@ -324,6 +337,13 @@ class ApprovalRule(models.Model):
             raise ValidationError({
                 'max_amount': _('Maximum amount must be greater than minimum amount')
             })
+
+        # Status validation - NEW
+        if self.from_status_obj and self.to_status_obj:
+            if self.from_status_obj == self.to_status_obj:
+                raise ValidationError({
+                    'to_status_obj': _('Cannot transition to the same status')
+                })
 
         # Approver validation
         if self.approver_type == 'user' and not self.approver_user:
@@ -336,18 +356,15 @@ class ApprovalRule(models.Model):
                 'approver_role': _('Approver role is required when type is "role"')
             })
 
-        if self.approver_type == 'permission' and not self.approver_permission:
-            raise ValidationError({
-                'approver_permission': _('Approver permission is required when type is "permission"')
-            })
+    @property
+    def from_status_code(self):
+        """Get from_status code for compatibility"""
+        return self.from_status_obj.code if self.from_status_obj else self.from_status
 
-        # Clear conflicting approver fields
-        if self.approver_type != 'user':
-            self.approver_user = None
-        if self.approver_type != 'role':
-            self.approver_role = None
-        if self.approver_type != 'permission':
-            self.approver_permission = None
+    @property
+    def to_status_code(self):
+        """Get to_status code for compatibility"""
+        return self.to_status_obj.code if self.to_status_obj else self.to_status
 
     # =====================
     # BUSINESS METHODS

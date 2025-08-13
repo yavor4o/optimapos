@@ -150,6 +150,20 @@ class DocumentType(BaseNomenclature):
         help_text=_('Can attach files to documents of this type')
     )
 
+    statuses = models.ManyToManyField(
+        'nomenclatures.DocumentStatus',
+        through='DocumentTypeStatus',
+        blank=True,
+        related_name='document_types',
+        help_text=_('Available statuses for this document type')
+    )
+
+    allow_edit_completed = models.BooleanField(
+        _('Allow Edit When Completed'),
+        default=False,
+        help_text=_('Can completed documents be edited?')
+    )
+
     # =====================
     # MANAGERS & META
     # =====================
@@ -374,3 +388,86 @@ def create_basic_document_types():
             created_types.append(doc_type)
 
     return created_types
+
+
+def get_configured_statuses(self):
+    """Get all configured statuses ordered by workflow position"""
+    return self.statuses.filter(
+        type_configurations__document_type=self,
+        type_configurations__is_active=True
+    ).order_by('type_configurations__sort_order')
+
+
+def get_initial_status(self):
+    """Get the initial status for new documents"""
+    config = self.type_statuses.filter(
+        is_initial=True,
+        is_active=True
+    ).first()
+
+    if config:
+        return config.status
+
+    # Fallback
+    from .statuses import DocumentStatus
+    return DocumentStatus.objects.filter(code='draft').first()
+
+
+def get_initial_status_code(self):
+    """Get initial status code with fallback"""
+    status = self.get_initial_status()
+    return status.code if status else 'draft'
+
+
+def get_final_statuses(self):
+    """Get all final statuses"""
+    return self.statuses.filter(
+        type_configurations__document_type=self,
+        type_configurations__is_final=True,
+        type_configurations__is_active=True
+    )
+
+
+def get_cancellation_status(self):
+    """Get the cancellation status for this document type"""
+    config = self.type_statuses.filter(
+        is_cancellation=True,
+        is_active=True
+    ).first()
+
+    if config:
+        return config.status
+
+    # Fallback
+    from .statuses import DocumentStatus
+    return DocumentStatus.objects.filter(code='cancelled').first()
+
+
+def has_status(self, status_code):
+    """Check if this document type has a specific status"""
+    return self.statuses.filter(code=status_code).exists()
+
+
+def get_status_display_name(self, status_code):
+    """Get display name for a status (with custom override)"""
+    config = self.type_statuses.filter(
+        status__code=status_code,
+        is_active=True
+    ).first()
+
+    if config:
+        return config.get_display_name()
+
+    # Fallback
+    return status_code.replace('_', ' ').title()
+
+
+def can_edit_in_status(self, status_code):
+    """Check if documents can be edited in this status"""
+    # Special case for completed
+    if status_code == 'completed' and self.allow_edit_completed:
+        return True
+
+    # Check status configuration
+    status = self.statuses.filter(code=status_code).first()
+    return status.allow_edit if status else False
