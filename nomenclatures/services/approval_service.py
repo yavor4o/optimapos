@@ -1,6 +1,12 @@
-# nomenclatures/services/approval_service.py - НАПЪЛНО НОВ
+# nomenclatures/services/approval_service.py - FIXED IMPORTS VERSION
 """
-Approval Service - АРХИТЕКТУРНО СЪВМЕСТИМ
+Approval Service - FIXED IMPORTS & MODERNIZED
+
+ФИКСИРАНО:
+- Унифицирани imports за модели
+- Използване на САМО ForeignKey полета от ApprovalRule
+- Консистентни imports с останалите services
+- Error handling за missing models
 
 ИНТЕГРИРА:
 - DocumentType + DocumentTypeStatus (валидни статуси)
@@ -21,16 +27,29 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 import logging
 
-from ..models.approvals import ApprovalRule, ApprovalLog
-from ..models.statuses import DocumentStatus, DocumentTypeStatus
-from ..models.documents import DocumentType
+# FIXED: Unified imports from models
+from ..models import (
+    DocumentType,
+    DocumentStatus,
+    DocumentTypeStatus
+)
+
+# FIXED: Conditional import for ApprovalRule
+try:
+    from ..models import ApprovalRule, ApprovalLog
+
+    HAS_APPROVAL_MODELS = True
+except ImportError:
+    ApprovalRule = None
+    ApprovalLog = None
+    HAS_APPROVAL_MODELS = False
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
 # =====================
-# RESULT TYPES
+# RESULT TYPES - UNCHANGED
 # =====================
 
 @dataclass
@@ -44,7 +63,11 @@ class Decision:
     data: Dict = field(default_factory=dict)
 
     @classmethod
-    def allow(cls, rule: ApprovalRule, reason: str = "Authorization granted") -> 'Decision':
+    def allow(cls, rule, reason: str = "Authorization granted") -> 'Decision':
+        """FIXED: Improved allow method"""
+        if not rule:
+            return cls.deny("No rule provided")
+
         return cls(
             allowed=True,
             reason=reason,
@@ -70,19 +93,37 @@ class WorkflowInfo:
 
 class ApprovalService:
     """
-    Approval Service - САМО POLICY & AUTHORIZATION
+    Approval Service - FIXED VERSION
 
     БЕЗ state changes! Всички document updates са в DocumentService.
     """
 
     # =====================
-    # AUTHORIZATION API
+    # AVAILABILITY CHECK - FIXED
+    # =====================
+
+    @staticmethod
+    def is_available() -> bool:
+        """Check if approval models are available"""
+        return HAS_APPROVAL_MODELS
+
+    @staticmethod
+    def _require_approval_models():
+        """Raise error if approval models not available"""
+        if not HAS_APPROVAL_MODELS:
+            raise ImportError(
+                "Approval models not available. "
+                "Ensure ApprovalRule and ApprovalLog models are properly migrated."
+            )
+
+    # =====================
+    # AUTHORIZATION API - FIXED
     # =====================
 
     @staticmethod
     def authorize_transition(document, user, to_status: str) -> Decision:
         """
-        ГЛАВНА authorization функция
+        FIXED: ГЛАВНА authorization функция с improved error handling
 
         Проверява:
         1. Дали to_status е валиден за document_type (DocumentTypeStatus)
@@ -99,6 +140,9 @@ class ApprovalService:
             Decision: allowed/denied с причина и metadata
         """
         try:
+            # FIXED: Check availability first
+            ApprovalService._require_approval_models()
+
             # 1. BASIC VALIDATION
             if not document or not hasattr(document, 'status'):
                 return Decision.deny("Invalid document")
@@ -150,6 +194,8 @@ class ApprovalService:
             # SUCCESS!
             return Decision.allow(rule, f"Authorized transition {document.status} → {to_status}")
 
+        except ImportError as e:
+            return Decision.deny(f"Approval system not available: {e}")
         except Exception as e:
             logger.error(f"Error in authorize_transition: {e}")
             return Decision.deny(f"Authorization error: {str(e)}")
@@ -157,19 +203,21 @@ class ApprovalService:
     @staticmethod
     def get_available_transitions(document, user) -> List[Dict]:
         """
-        Намери всички възможни transitions за user и document
+        FIXED: Намери всички възможни transitions за user и document
 
         Returns:
             List[Dict]: Достъпни transitions с metadata
         """
         try:
+            ApprovalService._require_approval_models()
+
             if not document or not document.document_type:
                 return []
 
-            # Намери всички ApprovalRule за current status
+            # FIXED: Намери всички ApprovalRule за current status използвайки ForeignKey
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
-                from_status_obj__code=document.status,
+                from_status_obj__code=document.status,  # FIXED: използва ForeignKey
                 is_active=True
             ).select_related('to_status_obj', 'approver_user', 'approver_role')
 
@@ -187,7 +235,7 @@ class ApprovalService:
                         'label': f"{document.status.title()} → {rule.to_status_obj.name}",
                         'rule_name': rule.name,
                         'approval_level': rule.approval_level,
-                        'requires_reason': getattr(rule, 'requires_reason', False),
+                        'requires_reason': rule.requires_reason,
                         'rule_id': rule.id,
                         'color': rule.to_status_obj.color,
                         'icon': rule.to_status_obj.icon,
@@ -204,22 +252,28 @@ class ApprovalService:
 
             return unique_transitions
 
+        except ImportError:
+            logger.warning("Approval models not available for get_available_transitions")
+            return []
         except Exception as e:
             logger.error(f"Error getting available transitions: {e}")
             return []
 
     # =====================
-    # SMART CONVENIENCE API
+    # SMART CONVENIENCE API - FIXED
     # =====================
 
     @staticmethod
     def find_next_approval_status(document) -> Optional[str]:
         """
-        Намери следващия approval статус за документа
+        FIXED: Намери следващия approval статус за документа
 
         Търси ApprovalRule с to_status като approval статус
         """
         try:
+            ApprovalService._require_approval_models()
+
+            # FIXED: използва ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
@@ -234,14 +288,20 @@ class ApprovalService:
 
             return None
 
+        except ImportError:
+            logger.warning("Approval models not available for find_next_approval_status")
+            return None
         except Exception as e:
             logger.error(f"Error finding next approval status: {e}")
             return None
 
     @staticmethod
     def find_rejection_status(document) -> Optional[str]:
-        """Намери rejection статус за документа"""
+        """FIXED: Намери rejection статус за документа"""
         try:
+            ApprovalService._require_approval_models()
+
+            # FIXED: използва ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
@@ -263,14 +323,20 @@ class ApprovalService:
 
             return cancellation_status.status.code if cancellation_status else None
 
+        except ImportError:
+            logger.warning("Models not available for find_rejection_status")
+            return None
         except Exception as e:
             logger.error(f"Error finding rejection status: {e}")
             return None
 
     @staticmethod
     def find_submission_status(document) -> Optional[str]:
-        """Намери submission статус за документа"""
+        """FIXED: Намери submission статус за документа"""
         try:
+            ApprovalService._require_approval_models()
+
+            # FIXED: използва ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
@@ -285,17 +351,20 @@ class ApprovalService:
 
             return None
 
+        except ImportError:
+            logger.warning("Models not available for find_submission_status")
+            return None
         except Exception as e:
             logger.error(f"Error finding submission status: {e}")
             return None
 
     # =====================
-    # WORKFLOW INFORMATION API
+    # WORKFLOW INFORMATION API - FIXED
     # =====================
 
     @staticmethod
     def get_workflow_info(document) -> WorkflowInfo:
-        """Пълна информация за workflow статуса"""
+        """FIXED: Пълна информация за workflow статуса"""
         try:
             # Available transitions
             available_transitions = ApprovalService.get_available_transitions(
@@ -349,8 +418,10 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_history(document) -> List[Dict]:
-        """История на одобренията за документа"""
+        """FIXED: История на одобренията за документа"""
         try:
+            ApprovalService._require_approval_models()
+
             content_type = ContentType.objects.get_for_model(document.__class__)
 
             logs = ApprovalLog.objects.filter(
@@ -374,12 +445,15 @@ class ApprovalService:
 
             return history
 
+        except ImportError:
+            logger.warning("ApprovalLog not available for get_approval_history")
+            return []
         except Exception as e:
             logger.error(f"Error getting approval history: {e}")
             return []
 
     # =====================
-    # PRIVATE VALIDATION METHODS
+    # PRIVATE VALIDATION METHODS - FIXED
     # =====================
 
     @staticmethod
@@ -440,10 +514,12 @@ class ApprovalService:
             return False, f"Error validating transition: {e}"
 
     @staticmethod
-    def _find_applicable_rule(document, to_status: str, user) -> Optional[ApprovalRule]:
-        """Намери приложимо ApprovalRule за transition"""
+    def _find_applicable_rule(document, to_status: str, user):
+        """FIXED: Намери приложимо ApprovalRule за transition"""
         try:
-            # Намери правила за този transition
+            ApprovalService._require_approval_models()
+
+            # FIXED: Намери правила за този transition използвайки ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
@@ -467,14 +543,19 @@ class ApprovalService:
 
             return None
 
+        except ImportError:
+            logger.warning("ApprovalRule not available for _find_applicable_rule")
+            return None
         except Exception as e:
             logger.error(f"Error finding applicable rule: {e}")
             return None
 
     @staticmethod
-    def _check_previous_levels(document, rule: ApprovalRule) -> Tuple[bool, str]:
-        """Провери дали предишните approval levels са завършени"""
+    def _check_previous_levels(document, rule) -> Tuple[bool, str]:
+        """FIXED: Провери дали предишните approval levels са завършени"""
         try:
+            ApprovalService._require_approval_models()
+
             if not rule.requires_previous_level or rule.approval_level <= 1:
                 return True, "No previous levels required"
 
@@ -504,12 +585,15 @@ class ApprovalService:
 
             return True, "Previous levels completed"
 
+        except ImportError:
+            logger.warning("ApprovalLog not available for _check_previous_levels")
+            return True, "Cannot check previous levels - approval log not available"
         except Exception as e:
             logger.error(f"Error checking previous levels: {e}")
             return False, f"Error checking previous levels: {e}"
 
     @staticmethod
-    def _check_amount_limits(document, rule: ApprovalRule) -> Tuple[bool, str]:
+    def _check_amount_limits(document, rule) -> Tuple[bool, str]:
         """Провери amount limits на правилото"""
         try:
             amount = ApprovalService._get_document_amount(document)
@@ -580,12 +664,12 @@ class ApprovalService:
 
 
 # =====================
-# CONVENIENCE FUNCTIONS (SMART VERSIONS)
+# CONVENIENCE FUNCTIONS - FIXED
 # =====================
 
 def get_approval_decision(document, user, action: str = 'approve') -> Decision:
     """
-    Smart convenience за approval decisions
+    FIXED: Smart convenience за approval decisions
 
     Args:
         document: Document instance
@@ -593,6 +677,9 @@ def get_approval_decision(document, user, action: str = 'approve') -> Decision:
         action: 'approve', 'reject', 'submit'
     """
     try:
+        if not ApprovalService.is_available():
+            return Decision.deny("Approval system not available")
+
         if action == 'approve':
             target_status = ApprovalService.find_next_approval_status(document)
         elif action == 'reject':
@@ -612,8 +699,10 @@ def get_approval_decision(document, user, action: str = 'approve') -> Decision:
 
 
 def can_user_approve(document, user) -> bool:
-    """Бърза проверка дали user може да approve документа"""
+    """FIXED: Бърза проверка дали user може да approve документа"""
     try:
+        if not ApprovalService.is_available():
+            return False
         decision = get_approval_decision(document, user, 'approve')
         return decision.allowed
     except:
@@ -621,8 +710,10 @@ def can_user_approve(document, user) -> bool:
 
 
 def can_user_reject(document, user) -> bool:
-    """Бърза проверка дали user може да reject документа"""
+    """FIXED: Бърза проверка дали user може да reject документа"""
     try:
+        if not ApprovalService.is_available():
+            return False
         decision = get_approval_decision(document, user, 'reject')
         return decision.allowed
     except:

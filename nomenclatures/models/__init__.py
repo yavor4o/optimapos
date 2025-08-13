@@ -1,11 +1,12 @@
-# nomenclatures/models/__init__.py - COMPLETE VERSION
+# nomenclatures/models/__init__.py - FIXED COMPLETE VERSION
 """
-Nomenclatures models package - СИНХРОНИЗИРАНА ВЕРСИЯ
+Nomenclatures models package - ПЪЛНО СИНХРОНИЗИРАНА ВЕРСИЯ
 
 Архитектура:
 - base.py: Базови класове и managers
 - documents.py: DocumentType (CLEAN REFACTORED)
-- workflow.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
+- statuses.py: DocumentStatus, DocumentTypeStatus (NEW)
+- approvals.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
 - numbering.py: NumberingConfiguration system (NEW)
 - product.py: ProductGroup, Brand, ProductType
 - financial.py: Currency, ExchangeRate, TaxGroup
@@ -22,29 +23,38 @@ from .base import BaseNomenclature, ActiveManager
 # Documents & Workflow
 from .documents import DocumentType, DocumentTypeManager, get_document_type_by_key
 
-# Approvals - FIXED: добавени в импортите
+# Statuses - FIXED: правилен import
+from .statuses import DocumentStatus, DocumentTypeStatus
+
+# Approvals - FIXED: с правилно error handling
 try:
     from .approvals import ApprovalRule, ApprovalLog, ApprovalRuleManager
+    HAS_APPROVAL_MODELS = True
 except ImportError:
     ApprovalRule = None
     ApprovalLog = None
     ApprovalRuleManager = None
+    HAS_APPROVAL_MODELS = False
 
-# Numbering - NEW: добавен в импортите
+# Numbering - FIXED: с правилно error handling
 try:
     from .numbering import (
         NumberingConfiguration,
+        NumberingConfigurationManager,
         LocationNumberingAssignment,
         UserNumberingPreference,
         generate_document_number,
         get_numbering_config_for_document
     )
+    HAS_NUMBERING_MODELS = True
 except ImportError:
     NumberingConfiguration = None
+    NumberingConfigurationManager = None
     LocationNumberingAssignment = None
     UserNumberingPreference = None
     generate_document_number = None
     get_numbering_config_for_document = None
+    HAS_NUMBERING_MODELS = False
 
 # Product related
 from .product import (
@@ -68,13 +78,8 @@ from .operational import (
     PaymentType,
 )
 
-from .statuses import (
-    DocumentStatus,
-    DocumentTypeStatus
-)
-
 # =====================
-# EXPORT DEFINITION - след всички импорти
+# EXPORT DEFINITION - FIXED COMPLETE VERSION
 # =====================
 __all__ = [
     # Base
@@ -85,6 +90,10 @@ __all__ = [
     'DocumentType',
     'DocumentTypeManager',
     'get_document_type_by_key',
+
+    # Statuses - FIXED: добавени
+    'DocumentStatus',
+    'DocumentTypeStatus',
 
     # Product
     'ProductGroup',
@@ -101,18 +110,20 @@ __all__ = [
     # Operational
     'UnitOfMeasure',
     'PaymentType',
-
-    'DocumentStatus',
-    'DocumentTypeStatus',
 ]
 
-# Add conditional exports
-if ApprovalRule:
-    __all__.extend(['ApprovalRule', 'ApprovalLog', 'ApprovalRuleManager'])
+# FIXED: Add conditional exports with proper completion
+if HAS_APPROVAL_MODELS:
+    __all__.extend([
+        'ApprovalRule',
+        'ApprovalLog',
+        'ApprovalRuleManager'
+    ])
 
-if NumberingConfiguration:
+if HAS_NUMBERING_MODELS:
     __all__.extend([
         'NumberingConfiguration',
+        'NumberingConfigurationManager',
         'LocationNumberingAssignment',
         'UserNumberingPreference',
         'generate_document_number',
@@ -120,29 +131,27 @@ if NumberingConfiguration:
     ])
 
 # =====================
-# METADATA
+# CONVENIENCE IMPORTS (за лесно debugging)
 # =====================
-__version__ = '3.0.0'  # DOCUMENT-SERVICE INTEGRATED VERSION
+
+def get_available_models():
+    """Get info about available models for debugging"""
+    info = {
+        'base_models': ['BaseNomenclature', 'ActiveManager'],
+        'document_models': ['DocumentType', 'DocumentStatus', 'DocumentTypeStatus'],
+        'approval_models': HAS_APPROVAL_MODELS,
+        'numbering_models': HAS_NUMBERING_MODELS,
+        'product_models': ['ProductGroup', 'Brand', 'ProductType'],
+        'financial_models': ['Currency', 'ExchangeRate', 'TaxGroup', 'PriceGroup'],
+        'operational_models': ['UnitOfMeasure', 'PaymentType']
+    }
+    return info
+
+# =====================
+# VERSION INFO
+# =====================
+__version__ = '4.0.0'  # FIXED COMPLETE VERSION
 __author__ = 'Your Company'
-__description__ = 'Nomenclatures models with DocumentService integration'
 
-# =====================
-# PACKAGE VALIDATION - DEBUG РЕЖИМ
-# =====================
-import sys
-
-if 'runserver' in sys.argv or 'test' in sys.argv:
-    # Валидираме че всички импорти в __all__ наистина съществуват
-    _missing_imports = []
-    for name in __all__:
-        if name not in globals() or globals()[name] is None:
-            _missing_imports.append(name)
-
-    if _missing_imports:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(
-            f"nomenclatures.models.__init__.py: Missing or None imports: {_missing_imports}"
-        )
-        # Remove missing from __all__ to prevent import errors
-        __all__ = [name for name in __all__ if name not in _missing_imports]
+# Export version for external use
+__all__.extend(['__version__', 'get_available_models'])
