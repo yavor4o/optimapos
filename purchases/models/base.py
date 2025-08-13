@@ -305,8 +305,8 @@ class BaseDocument(models.Model):
     def save(self, *args, **kwargs):
         # Автоматично номериране
         if not self.pk and not self.document_number:
-            from nomenclatures.services import DocumentService
-            self.document_number = DocumentService.(self)
+            from nomenclatures.services.document_service import DocumentService
+            self.document_number = DocumentService.generate_number_for(self)
 
         super().save(*args, **kwargs)
 

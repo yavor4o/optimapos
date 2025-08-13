@@ -1014,6 +1014,33 @@ class DocumentService:
             # Basic fallback
             return queryset.exclude(status__in=['cancelled', 'closed', 'deleted'])
 
+    # В края на nomenclatures/services/document_service.py
+
+    @staticmethod
+    def generate_number_for(instance):
+        """Generate number for existing model instance (for admin save())"""
+        try:
+            from django.utils import timezone
+
+            # Fallback - simple generation
+            prefix = instance.__class__.__name__[:3].upper()
+            timestamp = timezone.now().strftime("%y%m%d%H%M%S")
+
+            # ЗАДАЙ СТАТУС АКО НЯМА
+            if hasattr(instance, 'status') and not instance.status:
+                instance.status = 'draft'
+
+            return f"{prefix}{timestamp}"
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error generating number: {e}")
+
+            # Ultra fallback
+            import uuid
+            return f"DOC{str(uuid.uuid4())[:8].upper()}"
+
 
 # =====================
 # CONVENIENCE FUNCTIONS
