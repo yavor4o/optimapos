@@ -340,31 +340,10 @@ if HAS_NUMBERING_MODELS:
         # В purchases/admin.py - PurchaseRequestAdmin
 
         def save_model(self, request, obj, form, change):
-            """Enhanced save with DocumentService integration"""
-
-            if not change:  # Нов документ
-                if not obj.document_number:  # Няма номер
-                    # 🎯 ТУК извикваме DocumentService
-                    from nomenclatures.services import DocumentService
-
-                    result = DocumentService.create_document(
-                        model_class=obj.__class__,
-                        data={
-                            'supplier': obj.supplier,
-                            'location': obj.location,
-                            'requested_by': obj.requested_by or request.user,
-                            # ... други полета
-                        },
-                        user=request.user,
-                        location=obj.location
-                    )
-
-                    if result['success']:
-                        # Заместваме obj с новия от сервиса
-                        obj = result['document']
-                    else:
-                        messages.error(request, f"Error: {result['message']}")
-
+            """Save numbering configuration"""
+            if not change:  # Нов обект
+                if hasattr(obj, 'created_by'):
+                    obj.created_by = request.user
             super().save_model(request, obj, form, change)
 
 

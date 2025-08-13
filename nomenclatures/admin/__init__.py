@@ -9,6 +9,7 @@ from .product import ProductGroupAdmin, BrandAdmin, ProductTypeAdmin
 from .financial import CurrencyAdmin, ExchangeRateAdmin, TaxGroupAdmin, PriceGroupAdmin
 from .operational import UnitOfMeasureAdmin, PaymentTypeAdmin
 from .documents import DocumentTypeAdmin
+from .statuses import DocumentStatusAdmin, DocumentTypeStatusInline
 
 # ✅ НОВО: Import numbering admin
 try:
