@@ -513,6 +513,26 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
                 'priority': _('Priority cannot be negative')
             })
 
+        # 🎯 PRODUCT RESTRICTIONS VALIDATION
+
+        if self.product:
+            from products.services.validation_service import ProductValidationService
+
+            can_purchase, message, details = ProductValidationService.can_purchase_product(
+                product=self.product,
+                quantity=self.requested_quantity
+            )
+
+            if not can_purchase:
+                raise ValidationError({
+                    'product': f"Cannot purchase this product: {message}"
+                })
+
+            # Показвай предупреждения като info
+            if 'warning' in details:
+                # В реален проект може да се логне или покаже като warning
+                pass
+
     # =====================
     # PROPERTIES
     # =====================

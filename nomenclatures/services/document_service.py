@@ -846,3 +846,38 @@ class DocumentService:
             'button_style': 'secondary',
             'icon': 'fas fa-arrow-right'
         }
+
+    # nomenclatures/services/document_service.py - ДОБАВИ САМО ТЕЗИ РЕДОВЕ
+
+    @staticmethod
+    def generate_number_for(instance):
+        """Generate number for existing model instance (for admin save())"""
+        try:
+            from nomenclatures.models.numbering import generate_document_number
+
+            # Намери DocumentType
+            document_type = DocumentService._get_document_type_for_model(instance.__class__)
+
+            if document_type:
+                # ЗАДАЙ СТАТУС АКО НЯМА
+                if hasattr(instance, 'status') and not instance.status:
+                    instance.status = DocumentService._get_initial_status(document_type)
+
+                return generate_document_number(
+                    document_type=document_type,
+                    location=getattr(instance, 'location', None),
+                    user=getattr(instance, 'created_by', None)
+                )
+        except:
+            pass
+
+        # Fallback
+        from datetime import datetime
+        prefix = instance.__class__.__name__[:3].upper()
+        timestamp = datetime.now().strftime("%y%m%d%H%M%S")
+
+        # ЗАДАЙ СТАТУС И ТУК
+        if hasattr(instance, 'status') and not instance.status:
+            instance.status = 'draft'
+
+        return f"{prefix}{timestamp}"

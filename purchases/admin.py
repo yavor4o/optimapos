@@ -111,6 +111,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         }),
     )
 
+
+
     # All display methods remain the same...
     def status_display(self, obj):
         colors = {

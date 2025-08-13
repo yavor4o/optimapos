@@ -302,42 +302,12 @@ class BaseDocument(models.Model):
         if not self.location:
             raise ValidationError({'location': _('Location is required')})
 
-
-
     def save(self, *args, **kwargs):
+        # Автоматично номериране
+        if not self.pk and not self.document_number:
+            from nomenclatures.services.document_service import DocumentService
+            self.document_number = DocumentService.generate_number_for(self)
 
-        is_new = not self.pk
-        skip_validation = kwargs.pop('skip_validation', False)
-
-        # ПРОВЕРКА: Нови документи трябва да идват от DocumentService
-        if is_new:
-            if not self.document_number:
-                # В development - warning
-                warnings.warn(
-                    f"\n"
-                    f"{'=' * 60}\n"
-                    f"DEPRECATION WARNING:\n"
-                    f"{self.__class__.__name__} created without DocumentService!\n"
-                    f"This will be an ERROR in production.\n"
-                    f"Use: DocumentService.create_document() instead\n"
-                    f"{'=' * 60}",
-                    DeprecationWarning,
-                    stacklevel=2
-                )
-
-
-
-            if not self.status:
-                logger.warning(
-                    f"{self.__class__.__name__} created without initial status. "
-                    f"DocumentService should set this."
-                )
-
-        # Базова валидация (ако не е skip-ната)
-        if not skip_validation:
-            self.full_clean()
-
-        # Стандартен Django save - БЕЗ допълнителна логика
         super().save(*args, **kwargs)
 
     # =====================

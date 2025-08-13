@@ -91,38 +91,45 @@ class VATCalculationService:
     @classmethod
     def get_vat_rate(cls, line=None, product=None, location=None) -> Decimal:
         """
-        ✅ FIXED: Връща VAT rate като decimal (0.20), НЕ като процент (20)
-        """
-        # 1. Line override
-        if line and hasattr(line, 'vat_rate') and line.vat_rate is not None:
-            return Decimal(str(line.vat_rate))
+        ✅ FIXED: Правилна йерархия за VAT rate detection
 
-        # 2. Product VAT rate - ФИКС за липсващ tax_group
+        НОВА ЙЕРАРХИЯ:
+        1. Product tax_group (основен източник)
+        2. Line override (само ако е ръчно променен)
+        3. Location default
+        4. System default
+        """
+
+        # 1. PRODUCT TAX_GROUP (ПЪРВО!) 🎯
         if not product and line and hasattr(line, 'product'):
             product = line.product
 
-        # ✅ ROBUST VAT RATE DETECTION
-        if product:
-            # Check for various possible VAT fields
-            for field_name in ['vat_rate', 'tax_rate', 'default_vat_rate']:
-                if hasattr(product, field_name):
-                    rate = getattr(product, field_name)
-                    if rate is not None:
-                        rate = Decimal(str(rate))
-                        # Normalize: if > 1, assume percentage, convert to decimal
-                        if rate > 1:
-                            rate = rate / Decimal('100')
-                        return rate
+        if product and hasattr(product, 'tax_group') and product.tax_group:
+            if hasattr(product.tax_group, 'rate'):
+                rate = Decimal(str(product.tax_group.rate))
+                # Normalize: if > 1, assume percentage, convert to decimal
+                if rate > 1:
+                    rate = rate / Decimal('100')
 
-            # Check for tax_group if exists
-            if hasattr(product, 'tax_group') and product.tax_group:
-                if hasattr(product.tax_group, 'rate'):
-                    rate = Decimal(str(product.tax_group.rate))
-                    if rate > 1:
-                        rate = rate / Decimal('100')
-                    return rate
+                # 🔄 Auto-populate line.vat_rate за consistency
+                if line and hasattr(line, 'vat_rate'):
+                    # Само ако линията има default стойност (20% или 0.200)
+                    if line.vat_rate in [Decimal('20.00'), Decimal('0.200'), None]:
+                        line.vat_rate = rate
+                        # НЕ записваме веднага - само update в паметта
 
-        # 3. Location default
+                return rate
+
+        # 2. LINE OVERRIDE (само ако е различна от default стойности)
+        if line and hasattr(line, 'vat_rate') and line.vat_rate is not None:
+            # Игнорирай default стойности от миграциите
+            if line.vat_rate not in [Decimal('20.00'), Decimal('0.200')]:
+                rate = Decimal(str(line.vat_rate))
+                if rate > 1:
+                    rate = rate / Decimal('100')
+                return rate
+
+        # 3. LOCATION DEFAULT
         if not location and line and hasattr(line, 'document'):
             document = line.document
             if hasattr(document, 'location'):
@@ -134,8 +141,10 @@ class VATCalculationService:
                 rate = rate / Decimal('100')
             return rate
 
-        # 4. System default
+        # 4. SYSTEM DEFAULT
         return cls.DEFAULT_VAT_RATE
+
+
 
     # =====================
     # 3. CORE LINE CALCULATION
