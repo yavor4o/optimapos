@@ -23,17 +23,18 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
-        'entered_price', 'line_total_display', 'suggested_supplier',
-        'priority', 'item_justification'
+        'entered_price', 'line_total_display',
+        'priority',
     ]
 
     readonly_fields = ['line_number', 'line_total_display']
 
-    def line_total_display(self, obj):  # ✅ РАЗЛИЧНО ИМЕ!
+    def line_total_display(self, obj):
         """Display total for THIS LINE"""
         if obj and obj.pk and obj.entered_price:
             total = obj.requested_quantity * obj.entered_price
-            return format_html('<strong>{:.2f} лв</strong>', float(total))
+            # 🔥 TEST: Върни простичък string вместо format_html
+            return f"{float(total):.2f} лв"
         return '-'
 
     line_total_display.short_description = _('Line Total')
