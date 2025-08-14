@@ -23,20 +23,20 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
-        'entered_price', 'estimated_total_display', 'suggested_supplier',
+        'entered_price', 'line_total_display', 'suggested_supplier',
         'priority', 'item_justification'
     ]
 
-    readonly_fields = ['line_number', 'estimated_total_display']
+    readonly_fields = ['line_number', 'line_total_display']
 
-    def estimated_total_display(self, obj):
-        """Display estimated total for line using entered_price"""
-        if obj and obj.pk and obj.entered_price:  # ✅ entered_price
-            total = obj.requested_quantity * obj.entered_price  # ✅ entered_price
+    def line_total_display(self, obj):  # ✅ РАЗЛИЧНО ИМЕ!
+        """Display total for THIS LINE"""
+        if obj and obj.pk and obj.entered_price:
+            total = obj.requested_quantity * obj.entered_price
             return format_html('<strong>{:.2f} лв</strong>', float(total))
         return '-'
 
-    estimated_total_display.short_description = _('Est. Total')
+    line_total_display.short_description = _('Line Total')
 
     def get_extra(self, request, obj=None, **kwargs):
         """No extra lines for existing objects"""
@@ -255,14 +255,30 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     urgency_badge.admin_order_field = 'urgency_level'
 
     def estimated_total_display(self, obj):
-        """Estimated total with formatting"""
+        print("🔥 STEP 1: Method called")
+
         try:
+            print("🔥 STEP 2: Trying to get total")
             total = obj.get_estimated_total()
+            print(f"🔥 STEP 3: Got total = {total}")
+            print(f"🔥 STEP 4: Total type = {type(total)}")
+            print(f"🔥 STEP 5: Total > 0? {total > 0}")
+            print(f"🔥 STEP 6: bool(total)? {bool(total)}")
+
             if total:
-                return format_html('<strong>{:.2f} лв</strong>', float(total))
-        except:
-            pass
-        return '—'
+                print("🔥 STEP 7: Total is truthy, formatting...")
+                result = f"{float(total):.2f} лв"
+                print(f"🔥 STEP 8: Formatted result = {result}")
+                return result
+            else:
+                print("🔥 STEP 7: Total is falsy, returning —")
+                return '—'
+
+        except Exception as e:
+            print(f"🔥 ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            return '—'
 
     estimated_total_display.short_description = _('Est. Total')
 

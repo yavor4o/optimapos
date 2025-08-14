@@ -14,10 +14,7 @@ FEATURES:
 """
 
 # Import ONLY existing admin classes
-from .request import (
-    PurchaseRequestAdmin,
-    PurchaseRequestLineInline,
-)
+from purchases.admin.request import PurchaseRequestAdmin, PurchaseRequestLineInline
 
 # Export all available admin classes
 __all__ = [
@@ -29,3 +26,5 @@ __all__ = [
 # Version info
 __version__ = '1.0.0'
 __author__ = 'Your Company'
+
+
