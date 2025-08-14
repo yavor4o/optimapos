@@ -319,10 +319,13 @@ class InventoryItemAdmin(admin.ModelAdmin):
     product_display.short_description = _('Product')
 
     def current_qty_display(self, obj):
-        """Current quantity with color coding and trend"""
+        """Current quantity with color coding and trend - FIXED"""
         try:
             qty = float(obj.current_qty or 0)
             min_qty = float(obj.min_stock_level or 0)
+
+            # FIXED: Safely check is_overstocked
+            is_overstocked = getattr(obj, 'is_overstocked', False)
 
             if qty <= 0:
                 color = 'red'
@@ -330,20 +333,27 @@ class InventoryItemAdmin(admin.ModelAdmin):
             elif qty <= min_qty:
                 color = 'orange'
                 icon = '⚠️'
-            elif obj.is_overstocked:
+            elif is_overstocked:
                 color = 'purple'
                 icon = '📈'
             else:
                 color = 'green'
                 icon = '✅'
 
+            # FIXED: Format numbers before format_html
+            available_qty = float(obj.available_qty or 0)
+
             return format_html(
-                '{} <strong style="color: {};">{:.3f}</strong><br>'
-                '<small>Available: {:.3f}</small>',
-                icon, color, qty, float(obj.available_qty)
+                '{} <strong style="color: {};">{}</strong><br>'
+                '<small>Available: {}</small>',
+                icon, color, f'{qty:.3f}', f'{available_qty:.3f}'
             )
-        except (TypeError, ValueError):
-            return format_html('<span style="color: red;">ERROR</span>')
+        except (TypeError, ValueError, AttributeError) as e:
+            # FIXED: More specific error info
+            return format_html(
+                '<span style="color: red;">ERROR: {}</span>',
+                str(e)[:50]  # Truncate error message
+            )
 
     current_qty_display.short_description = _('Current Qty')
 

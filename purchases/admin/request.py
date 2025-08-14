@@ -843,3 +843,13 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             'lines__product',
             'lines__unit'
         )
+
+    class Media:
+        js = (
+            'purchases/js/purchase_request_line.js',  # ← ДОБАВИ ТОВА
+        )
+        css = {
+            'all': (
+                # Можеш да добавиш CSS файл ако искаш
+            )
+        }
