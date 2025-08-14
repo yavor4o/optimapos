@@ -1,61 +1,85 @@
-# purchases/models/__init__.py - CLEAN VERSION
+# purchases/models/__init__.py - CLEAN EXPLICIT IMPORTS
 
 """
-Purchases models - clean organized structure
+Purchases models package - Clean organized structure
 
-Models:
-- PurchaseRequest: Заявки за покупка (БЕЗ финансови данни)
-- PurchaseOrder: Поръчки към доставчици (С финансови данни)
-- DeliveryReceipt: Доставки и получаване (С всички данни)
+АРХИТЕКТУРА:
+- base.py: BaseDocument, mixins и managers
+- requests.py: PurchaseRequest заявки (БЕЗ финансови данни)
+- orders.py: PurchaseOrder поръчки (С финансови данни)
+- deliveries.py: DeliveryReceipt доставки (С всички данни)
+
+ПРИНЦИП: Explicit imports за максимална яснота
 """
 
-# Import all models from the organized structure
+# =====================
+# BASE CLASSES & MIXINS
+# =====================
 from .base import (
+    # Managers
     DocumentManager,
     LineManager,
+
+    # Base models
     BaseDocument,
     BaseDocumentLine,
-    FinancialMixin,
-    PaymentMixin,
-    DeliveryMixin,
-    FinancialLineMixin
+
+    # Mixins за различни функционалности
+    FinancialMixin,  # За документи с финансови данни
+    PaymentMixin,  # За документи с плащания
+    DeliveryMixin,  # За документи с доставки
+    FinancialLineMixin  # За редове с финансови данни
 )
 
+# =====================
+# REQUEST MODELS (БЕЗ финансови данни)
+# =====================
+from .requests import (
+    PurchaseRequest,  # Главният модел за заявки
+    PurchaseRequestLine,  # Редове на заявки
+    PurchaseRequestManager  # Специализиран manager
+)
 
-
-
-
+# =====================
+# ORDER MODELS (С финансови данни)
+# =====================
 from .orders import (
-    PurchaseOrder,
-    PurchaseOrderLine,
-    PurchaseOrderManager,
-    PurchaseOrderLineManager
+    PurchaseOrder,  # Главният модел за поръчки
+    PurchaseOrderLine,  # Редове на поръчки
+    PurchaseOrderManager,  # Manager за поръчки
+    PurchaseOrderLineManager  # Manager за редове
 )
 
+# =====================
+# DELIVERY MODELS (С всички данни)
+# =====================
 from .deliveries import (
-    DeliveryReceipt,
-    DeliveryLine,
-    DeliveryReceiptManager,
-    DeliveryLineManager
+    DeliveryReceipt,  # Главният модел за доставки
+    DeliveryLine,  # Редове на доставки
+    DeliveryReceiptManager,  # Manager за доставки
+    DeliveryLineManager  # Manager за редове
 )
 
-# Export everything for Django auto-discovery
+# =====================
+# DJANGO AUTO-DISCOVERY EXPORTS
+# =====================
 __all__ = [
-    # Base classes
+    # Base infrastructure
     'DocumentManager',
     'LineManager',
     'BaseDocument',
     'BaseDocumentLine',
 
-    # Mixin classes
+    # Mixins
     'FinancialMixin',
     'PaymentMixin',
     'DeliveryMixin',
     'FinancialLineMixin',
 
-    # Document types
-    # 'DocumentType',
-
+    # Request models
+    'PurchaseRequest',
+    'PurchaseRequestLine',
+    'PurchaseRequestManager',
 
     # Order models
     'PurchaseOrder',
@@ -70,6 +94,20 @@ __all__ = [
     'DeliveryLineManager',
 ]
 
-# Version info
-__version__ = '3.0.0'  # NEW CLEAN VERSION
+# =====================
+# PACKAGE METADATA
+# =====================
+__version__ = '3.2.0'  # CLEAN EXPLICIT VERSION
 __author__ = 'Your Company'
+
+
+# Development helper
+def get_available_models():
+    """Helper за development - показва всички налични модели"""
+    return {
+        'requests': ['PurchaseRequest', 'PurchaseRequestLine'],
+        'orders': ['PurchaseOrder', 'PurchaseOrderLine'],
+        'deliveries': ['DeliveryReceipt', 'DeliveryLine'],
+        'base': ['BaseDocument', 'BaseDocumentLine'],
+        'mixins': ['FinancialMixin', 'PaymentMixin', 'DeliveryMixin', 'FinancialLineMixin']
+    }
