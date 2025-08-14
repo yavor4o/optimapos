@@ -35,11 +35,10 @@ class PurchaseRequestLineInline(admin.TabularInline):
     readonly_fields = ['line_number', 'estimated_total_display']
 
     def estimated_total_display(self, obj):
-        """Display estimated total for line"""
-        if obj and obj.pk:
-            total = obj.estimated_line_total
-            if total:
-                return format_html('<strong>{:.2f} лв</strong>', float(total))
+        """Display estimated total for line using entered_price"""
+        if obj and obj.pk and obj.entered_price:  # ✅ entered_price
+            total = obj.requested_quantity * obj.entered_price  # ✅ entered_price
+            return format_html('<strong>{:.2f} лв</strong>', float(total))
         return '-'
 
     estimated_total_display.short_description = _('Est. Total')
