@@ -619,28 +619,22 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
                 pass
 
     def get_estimated_price(self):
-        """Използва InventoryService за estimated price"""
-        availability = InventoryService.check_availability(
-            self.request.location,
-            self.product,
-            Decimal('0')
-        )
-
-        # Проста логика: last_purchase_cost -> avg_cost -> 0
-        return (
-                availability['last_purchase_cost'] or
-                availability['avg_cost'] or
+        try:
+            from inventory.services import InventoryService
+            availability = InventoryService.check_availability(
+                self.document.location,  # ✅ FIXED!
+                self.product,
                 Decimal('0')
-        )
+            )
+            return availability.get('last_purchase_cost') or availability.get('avg_cost') or Decimal('0')
+        except:
+            return Decimal('0')
 
     # =====================
     # PROPERTIES - UNCHANGED
     # =====================
 
-    @property
-    def estimated_line_total(self):
-        """Общо за реда = quantity * estimated_price"""
-        return self.requested_quantity * self.get_estimated_price()
+
 
     @property
     def estimated_line_total(self):

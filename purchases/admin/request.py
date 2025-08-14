@@ -1,18 +1,13 @@
 # purchases/admin/request.py - SYNCHRONIZED WITH REAL MODEL
-import self
+
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.utils.safestring import mark_safe
-from django.db.models import Count, Sum, Q, Prefetch
 from django.utils import timezone
 from django.contrib import messages
 from django.urls import path, reverse
 from django.shortcuts import redirect
-from django.http import JsonResponse, HttpResponse
 from django.template.response import TemplateResponse
-from decimal import Decimal
-import json
 
 from purchases.models.requests import PurchaseRequestLine, PurchaseRequest
 
