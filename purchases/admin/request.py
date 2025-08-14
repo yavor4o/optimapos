@@ -1,21 +1,4 @@
-# purchases/admin/requests.py - SYNCHRONIZED WITH NOMENCLATURES
-"""
-Purchase Request Admin - ПЪЛНО СИНХРОНИЗИРАН
-
-FEATURES:
-- Live workflow testing с DocumentService
-- Approval actions използващи ApprovalService
-- Real-time status transitions
-- DocumentType configuration display
-- ApprovalRule testing interface
-- Workflow history и audit trail
-
-TESTING CAPABILITIES:
-- Test всички possible transitions
-- Test approval rules по user/role/amount
-- Validate DocumentTypeStatus configurations
-- Monitor ApprovalLog entries
-"""
+# purchases/admin/request.py - SYNCHRONIZED WITH REAL MODEL
 
 from django.contrib import admin
 from django.utils.html import format_html
@@ -39,14 +22,14 @@ from purchases.models.requests import PurchaseRequestLine, PurchaseRequest
 # =================================================================
 
 class PurchaseRequestLineInline(admin.TabularInline):
-    """Enhanced inline for request lines with workflow info"""
+    """Enhanced inline for request lines matching real model fields"""
     model = PurchaseRequestLine
     extra = 1
 
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
         'entered_price', 'estimated_total_display', 'suggested_supplier',
-        'priority', 'required_by_date'
+        'priority', 'item_justification'
     ]
 
     readonly_fields = ['line_number', 'estimated_total_display']
@@ -54,7 +37,7 @@ class PurchaseRequestLineInline(admin.TabularInline):
     def estimated_total_display(self, obj):
         """Display estimated total for line"""
         if obj and obj.pk:
-            total = obj.get_estimated_total()
+            total = obj.estimated_line_total
             if total:
                 return format_html('<strong>{:.2f} лв</strong>', float(total))
         return '-'
@@ -73,9 +56,9 @@ class PurchaseRequestLineInline(admin.TabularInline):
 @admin.register(PurchaseRequest)
 class PurchaseRequestAdmin(admin.ModelAdmin):
     """
-    Purchase Request Admin - SYNCHRONIZED & TESTABLE
+    Purchase Request Admin - SYNCHRONIZED WITH REAL MODEL
 
-    Provides complete workflow testing interface
+    Matches all fields from the synchronized requests.py model
     """
 
     # =====================
@@ -86,10 +69,10 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         'document_number_display',
         'supplier_display',
         'status_display',
-        'workflow_stage_display',
         'urgency_badge',
         'estimated_total_display',
         'requested_by_display',
+        'approval_status_display',
         'created_at_display',
         'workflow_actions'
     ]
@@ -100,8 +83,10 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         'request_type',
         'document_type',
         'requested_by',
+        'approval_required',
         'created_at',
         ('converted_to_order', admin.EmptyFieldListFilter),
+        ('approved_by', admin.EmptyFieldListFilter),
     ]
 
     search_fields = [
@@ -114,7 +99,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     ]
 
     # =====================
-    # FORM ORGANIZATION
+    # FORM ORGANIZATION - MATCHING REAL MODEL
     # =====================
 
     fieldsets = (
@@ -136,13 +121,22 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         (_('Requestor Information'), {
             'fields': (
-                ('requested_by', 'requested_for'),
+                'requested_by',
             )
+        }),
+
+        (_('Approval Information'), {
+            'fields': (
+                'approval_required',
+                ('approved_by', 'approved_at'),
+                'rejection_reason',
+            ),
+            'classes': ('collapse',)
         }),
 
         (_('Financial Summary'), {
             'fields': (
-                ('subtotal', 'vat_amount'),
+                ('subtotal', 'vat_total'),
                 ('discount_total', 'total'),
                 'prices_entered_with_vat',
             ),
@@ -187,7 +181,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     inlines = [PurchaseRequestLineInline]
 
     # =====================
-    # CUSTOM DISPLAY METHODS
+    # CUSTOM DISPLAY METHODS - UPDATED FOR REAL MODEL
     # =====================
 
     def document_number_display(self, obj):
@@ -247,31 +241,6 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     status_display.short_description = _('Status')
     status_display.admin_order_field = 'status'
 
-    def workflow_stage_display(self, obj):
-        """Current workflow stage with progress"""
-        try:
-            from nomenclatures.services import ApprovalService
-            workflow_info = ApprovalService.get_workflow_info(obj)
-
-            total_stages = len(workflow_info.configured_statuses)
-            current_stage = 0
-
-            for i, stage in enumerate(workflow_info.configured_statuses):
-                if stage['code'] == obj.status:
-                    current_stage = i + 1
-                    break
-
-            progress_percent = (current_stage / total_stages * 100) if total_stages else 0
-
-            return format_html(
-                '<div title="Stage {}/{}"><div style="background: #e9ecef; height: 8px; border-radius: 4px;"><div style="background: #28a745; height: 8px; width: {}%; border-radius: 4px;"></div></div></div>',
-                current_stage, total_stages, progress_percent
-            )
-        except:
-            return format_html('<span style="color: #6c757d;">—</span>')
-
-    workflow_stage_display.short_description = _('Progress')
-
     def urgency_badge(self, obj):
         """Urgency level with color coding"""
         colors = {
@@ -294,7 +263,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     def estimated_total_display(self, obj):
         """Estimated total with formatting"""
         try:
-            total = obj.get_total_estimated_cost()
+            total = obj.get_estimated_total()
             if total:
                 return format_html('<strong>{:.2f} лв</strong>', float(total))
         except:
@@ -317,6 +286,22 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     requested_by_display.short_description = _('Requested By')
     requested_by_display.admin_order_field = 'requested_by__last_name'
 
+    def approval_status_display(self, obj):
+        """Approval status from model fields"""
+        if obj.approved_by and obj.approved_at:
+            return format_html(
+                '<span style="color: #28a745;">✓ {}</span>',
+                obj.approved_by.get_full_name() or obj.approved_by.username
+            )
+        elif obj.rejection_reason:
+            return format_html('<span style="color: #dc3545;">✗ Rejected</span>')
+        elif obj.approval_required:
+            return format_html('<span style="color: #ffc107;">⏳ Pending</span>')
+        else:
+            return format_html('<span style="color: #6c757d;">N/A</span>')
+
+    approval_status_display.short_description = _('Approval')
+
     def created_at_display(self, obj):
         """Friendly date display"""
         return format_html(
@@ -334,13 +319,13 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             return '—'
 
         try:
-            actions = obj.get_available_actions(user=None)  # We'll pass real user in view
+            actions = obj.get_available_actions(user=None)
 
             if not actions:
                 return format_html('<span style="color: #6c757d;">No actions</span>')
 
             buttons = []
-            for action in actions[:3]:  # Limit to 3 actions in list view
+            for action in actions[:2]:  # Limit to 2 actions in list view
                 style_map = {
                     'primary': '#007bff',
                     'success': '#28a745',
@@ -358,18 +343,18 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                     action.get('status', ''),
                     bg_color,
                     action.get('reason', ''),
-                    action.get('label', '')[:10]
+                    action.get('label', '')[:8]
                 ))
 
             return format_html(''.join(buttons))
 
         except Exception as e:
-            return format_html('<span style="color: #dc3545;">Error: {}</span>', str(e)[:20])
+            return format_html('<span style="color: #dc3545;">Error</span>')
 
     workflow_actions.short_description = _('Actions')
 
     # =====================
-    # READONLY FIELD DISPLAYS
+    # READONLY FIELD DISPLAYS - UPDATED
     # =====================
 
     def workflow_summary_display(self, obj):
@@ -380,50 +365,44 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         html = ['<div style="font-family: monospace; font-size: 12px; line-height: 1.4;">']
 
         try:
-            from nomenclatures.services import ApprovalService, DocumentService
-
             # Current status info
             html.append('<h4 style="color: #0066cc;">📋 Current Status</h4>')
-            status_info = DocumentService._get_status_info(obj)
-            html.append(f'<p><strong>Status:</strong> {obj.status} ({status_info.get("name", "Unknown")})</p>')
+            html.append(f'<p><strong>Status:</strong> {obj.status}</p>')
             html.append(
                 f'<p><strong>Document Type:</strong> {obj.document_type.name if obj.document_type else "Not set"}</p>')
+            html.append(f'<p><strong>Can Edit:</strong> {"Yes" if obj.can_edit() else "No"}</p>')
 
-            # Workflow info
-            workflow_info = ApprovalService.get_workflow_info(obj)
+            # Model-specific info
+            html.append('<h4 style="color: #0066cc;">📝 Request Info</h4>')
+            html.append(f'<p><strong>Approval Required:</strong> {"Yes" if obj.approval_required else "No"}</p>')
+            html.append(f'<p><strong>Urgency:</strong> {obj.get_urgency_level_display()}</p>')
+            html.append(f'<p><strong>Request Type:</strong> {obj.get_request_type_display()}</p>')
 
-            html.append('<h4 style="color: #0066cc;">🔄 Available Transitions</h4>')
-            if workflow_info.available_transitions:
-                html.append('<ul>')
-                for trans in workflow_info.available_transitions:
-                    html.append(
-                        f'<li><strong>{trans["to_status"]}</strong>: {trans["label"]} (Rule ID: {trans.get("rule_id", "N/A")})</li>')
-                html.append('</ul>')
-            else:
-                html.append('<p style="color: #6c757d;">No transitions available</p>')
+            # Workflow info from nomenclatures
+            try:
+                workflow_info = obj.get_workflow_info()
+                if workflow_info:
+                    html.append('<h4 style="color: #0066cc;">🔄 Available Transitions</h4>')
+                    if workflow_info.available_transitions:
+                        html.append('<ul>')
+                        for trans in workflow_info.available_transitions:
+                            html.append(f'<li><strong>{trans["to_status"]}</strong>: {trans["label"]}</li>')
+                        html.append('</ul>')
+                    else:
+                        html.append('<p style="color: #6c757d;">No transitions available</p>')
+            except:
+                pass
 
-            # Configured statuses
-            html.append('<h4 style="color: #0066cc;">⚙️ Configured Statuses</h4>')
-            if workflow_info.configured_statuses:
-                html.append('<ul>')
-                for status in workflow_info.configured_statuses:
-                    badges = []
-                    if status.get('is_initial'): badges.append('INITIAL')
-                    if status.get('is_final'): badges.append('FINAL')
-                    if status.get('is_cancellation'): badges.append('CANCEL')
-
-                    badge_str = f" [{', '.join(badges)}]" if badges else ""
-                    html.append(
-                        f'<li><span style="color: {status.get("color", "#000")}">{status["name"]}</span>{badge_str}</li>')
-                html.append('</ul>')
+            # Legacy approval info
+            if obj.approved_by:
+                html.append('<h4 style="color: #0066cc;">👤 Legacy Approval</h4>')
+                html.append(f'<p><strong>Approved By:</strong> {obj.approved_by.get_full_name()}</p>')
+                html.append(f'<p><strong>Approved At:</strong> {obj.approved_at}</p>')
 
             # Test buttons
             html.append('<h4 style="color: #0066cc;">🧪 Testing Actions</h4>')
             html.append(
                 f'<a href="{reverse("admin:purchases_purchaserequest_test_workflow", args=[obj.pk])}" target="_blank" style="background: #28a745; color: white; padding: 4px 8px; border-radius: 3px; text-decoration: none;">Test Workflow</a>')
-            html.append(' ')
-            html.append(
-                f'<a href="{reverse("admin:purchases_purchaserequest_approval_test", args=[obj.pk])}" target="_blank" style="background: #dc3545; color: white; padding: 4px 8px; border-radius: 3px; text-decoration: none;">Test Approvals</a>')
 
         except Exception as e:
             html.append(f'<p style="color: #dc3545;">Error loading workflow info: {e}</p>')
@@ -439,7 +418,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             return 'Save document first'
 
         try:
-            actions = obj.get_available_actions(user=self.current_user if hasattr(self, 'current_user') else None)
+            actions = obj.get_available_actions(user=getattr(self, 'current_user', None))
 
             if not actions:
                 return format_html('<span style="color: #6c757d;">No actions available</span>')
@@ -471,42 +450,66 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     available_actions_display.short_description = _('Available Actions')
 
     def approval_history_display(self, obj):
-        """Approval history from ApprovalLog"""
+        """Approval history from ApprovalLog + legacy fields"""
         if not obj.pk:
             return 'Save document first'
 
+        html = ['<div style="font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto;">']
+
         try:
+            # Get nomenclatures history
             history = obj.get_approval_history()
 
-            if not history:
-                return format_html('<span style="color: #6c757d;">No approval history</span>')
+            # Add legacy approval info
+            legacy_entries = []
+            if obj.approved_by and obj.approved_at:
+                legacy_entries.append({
+                    'action': 'APPROVED (Legacy)',
+                    'actor': obj.approved_by.get_full_name(),
+                    'timestamp': obj.approved_at.strftime('%Y-%m-%d %H:%M'),
+                    'from_status': 'submitted',
+                    'to_status': 'approved'
+                })
 
-            html = ['<div style="font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto;">']
+            if obj.rejection_reason:
+                legacy_entries.append({
+                    'action': 'REJECTED (Legacy)',
+                    'actor': 'System',
+                    'timestamp': obj.updated_at.strftime('%Y-%m-%d %H:%M'),
+                    'comments': obj.rejection_reason
+                })
 
-            for entry in history[:10]:  # Last 10 entries
-                timestamp = entry.get('timestamp', 'Unknown')
-                actor = entry.get('actor', 'Unknown')
-                action = entry.get('action', 'Unknown')
-                from_status = entry.get('from_status', '')
-                to_status = entry.get('to_status', '')
+            all_entries = list(history) + legacy_entries
 
-                html.append(f'''
-                    <div style="padding: 4px; border-bottom: 1px solid #dee2e6;">
-                        <strong>{action.upper()}</strong> {from_status} → {to_status}<br>
-                        <small>By: {actor} | {timestamp}</small>
-                    </div>
-                ''')
+            if not all_entries:
+                html.append('<span style="color: #6c757d;">No approval history</span>')
+            else:
+                for entry in all_entries[:10]:  # Last 10 entries
+                    timestamp = entry.get('timestamp', 'Unknown')
+                    actor = entry.get('actor', 'Unknown')
+                    action = entry.get('action', 'Unknown')
+                    from_status = entry.get('from_status', '')
+                    to_status = entry.get('to_status', '')
+                    comments = entry.get('comments', '')
 
-            html.append('</div>')
-            return format_html(''.join(html))
+                    html.append(f'''
+                        <div style="padding: 4px; border-bottom: 1px solid #dee2e6;">
+                            <strong>{action.upper()}</strong> {from_status} → {to_status}<br>
+                            <small>By: {actor} | {timestamp}</small>
+                            {f'<div style="font-style: italic;">{comments}</div>' if comments else ''}
+                        </div>
+                    ''')
 
         except Exception as e:
-            return format_html('<span style="color: #dc3545;">Error: {}</span>', str(e))
+            html.append(f'<span style="color: #dc3545;">Error: {e}</span>')
+
+        html.append('</div>')
+        return format_html(''.join(html))
 
     approval_history_display.short_description = _('Approval History')
 
     # =====================
-    # CUSTOM URLs & VIEWS
+    # CUSTOM URLs & VIEWS - SIMPLIFIED
     # =====================
 
     def get_urls(self):
@@ -522,16 +525,6 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 '<int:object_id>/test-workflow/',
                 self.admin_site.admin_view(self.test_workflow_view),
                 name='purchases_purchaserequest_test_workflow'
-            ),
-            path(
-                '<int:object_id>/test-approvals/',
-                self.admin_site.admin_view(self.test_approvals_view),
-                name='purchases_purchaserequest_approval_test'
-            ),
-            path(
-                'workflow-ajax/',
-                self.admin_site.admin_view(self.workflow_ajax_view),
-                name='purchases_purchaserequest_workflow_ajax'
             ),
         ]
         return custom_urls + urls
@@ -550,10 +543,10 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             try:
                 result = obj.transition_to(status, request.user, comments)
 
-                if result.ok:
+                if hasattr(result, 'ok') and result.ok:
                     messages.success(request, f'Successfully transitioned to {status}')
                 else:
-                    messages.error(request, f'Transition failed: {result.msg}')
+                    messages.error(request, f'Transition failed: {getattr(result, "msg", "Unknown error")}')
 
             except Exception as e:
                 messages.error(request, f'Error: {str(e)}')
@@ -561,118 +554,29 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         return redirect('admin:purchases_purchaserequest_change', object_id)
 
     def test_workflow_view(self, request, object_id):
-        """Workflow testing interface"""
+        """Simple workflow testing interface"""
         obj = self.get_object(request, object_id)
         if not obj:
             return redirect('admin:purchases_purchaserequest_changelist')
 
-        try:
-            from nomenclatures.services import ApprovalService, DocumentService
+        context = {
+            'title': f'Workflow Testing - {obj.document_number}',
+            'object': obj,
+            'available_actions': obj.get_available_actions(request.user),
+            'can_edit': obj.can_edit(request.user),
+            'workflow_info': obj.get_workflow_info(),
+        }
 
-            # Get workflow information
-            workflow_info = ApprovalService.get_workflow_info(obj)
-            actions = obj.get_available_actions(request.user)
-            can_edit = obj.can_edit(request.user)
-
-            # Test data
-            test_data = {
-                'document': obj,
-                'workflow_info': workflow_info,
-                'available_actions': actions,
-                'can_edit': can_edit,
-                'current_user': request.user,
-            }
-
-        except Exception as e:
-            messages.error(request, f'Error loading workflow info: {e}')
-            return redirect('admin:purchases_purchaserequest_change', object_id)
-
-        return TemplateResponse(request, 'admin/purchases/test_workflow.html', test_data)
-
-    def test_approvals_view(self, request, object_id):
-        """Approval rules testing interface"""
-        obj = self.get_object(request, object_id)
-        if not obj:
-            return redirect('admin:purchases_purchaserequest_changelist')
-
-        try:
-            from nomenclatures.services import ApprovalService
-            from nomenclatures.models import ApprovalRule
-
-            # Get applicable approval rules
-            rules = ApprovalRule.objects.filter(
-                document_type=obj.document_type,
-                is_active=True
-            ).order_by('approval_level', 'sort_order')
-
-            # Test each rule
-            rule_tests = []
-            for rule in rules:
-                can_approve = rule.can_user_approve(request.user, obj)
-                rule_tests.append({
-                    'rule': rule,
-                    'can_approve': can_approve,
-                    'user_matches': can_approve
-                })
-
-            test_data = {
-                'document': obj,
-                'rules': rule_tests,
-                'current_user': request.user,
-            }
-
-        except Exception as e:
-            messages.error(request, f'Error loading approval rules: {e}')
-            return redirect('admin:purchases_purchaserequest_change', object_id)
-
-        return TemplateResponse(request, 'admin/purchases/test_approvals.html', test_data)
-
-    def workflow_ajax_view(self, request):
-        """AJAX endpoint for real-time workflow updates"""
-        if request.method != 'POST':
-            return JsonResponse({'error': 'POST required'})
-
-        try:
-            data = json.loads(request.body)
-            object_id = data.get('object_id')
-            action = data.get('action')
-            new_status = data.get('status')
-            comments = data.get('comments', '')
-
-            obj = PurchaseRequest.objects.get(pk=object_id)
-
-            if action == 'transition':
-                result = obj.transition_to(new_status, request.user, comments)
-
-                return JsonResponse({
-                    'success': result.ok,
-                    'message': result.msg,
-                    'new_status': obj.status,
-                    'data': result.data
-                })
-
-            elif action == 'get_actions':
-                actions = obj.get_available_actions(request.user)
-                return JsonResponse({
-                    'success': True,
-                    'actions': actions
-                })
-
-            else:
-                return JsonResponse({'error': 'Unknown action'})
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)})
+        return TemplateResponse(request, 'admin/purchases/test_workflow.html', context)
 
     # =====================
-    # ADMIN ACTIONS
+    # ADMIN ACTIONS - UPDATED
     # =====================
 
     actions = [
         'test_document_service',
         'test_approval_service',
-        'bulk_transition',
-        'generate_document_numbers',
+        'sync_with_nomenclatures',
         'validate_workflow_config'
     ]
 
@@ -683,14 +587,9 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         for obj in queryset:
             try:
-                # Test can_edit
                 can_edit = obj.can_edit(request.user)
-
-                # Test get_available_actions
                 actions = obj.get_available_actions(request.user)
-
                 tested += 1
-
             except Exception as e:
                 errors.append(f'{obj.document_number}: {str(e)}')
 
@@ -709,16 +608,9 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         for obj in queryset:
             try:
-                from nomenclatures.services import ApprovalService
-
-                # Test workflow info
-                workflow_info = ApprovalService.get_workflow_info(obj)
-
-                # Test approval history
-                history = ApprovalService.get_approval_history(obj)
-
+                workflow_info = obj.get_workflow_info()
+                history = obj.get_approval_history()
                 tested += 1
-
             except Exception as e:
                 errors.append(f'{obj.document_number}: {str(e)}')
 
@@ -730,31 +622,33 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
     test_approval_service.short_description = _('Test ApprovalService')
 
-    def bulk_transition(self, request, queryset):
-        """Bulk transition selected documents"""
-        # This would open a form to select target status
-        selected = request.POST.getlist(admin.ACTION_CHECKBOX_NAME)
-        return redirect(f'/admin/bulk-transition/?ids={",".join(selected)}')
+    def sync_with_nomenclatures(self, request, queryset):
+        """Sync selected documents with nomenclatures system"""
+        synced = 0
 
-    bulk_transition.short_description = _('Bulk transition documents')
-
-    def generate_document_numbers(self, request, queryset):
-        """Generate document numbers for selected objects"""
-        generated = 0
-
-        for obj in queryset.filter(document_number=''):
+        for obj in queryset:
             try:
-                from nomenclatures.services import DocumentService
-                number = DocumentService.generate_number_for(obj)
-                obj.document_number = number
-                obj.save(update_fields=['document_number'])
-                generated += 1
+                # Set document type if missing
+                if not obj.document_type:
+                    try:
+                        from nomenclatures.models import get_document_type_by_key
+                        obj.document_type = get_document_type_by_key('purchase_request')
+                        obj.save(update_fields=['document_type'])
+                    except:
+                        pass
+
+                # Set initial status if needed
+                if not obj.status:
+                    obj.status = 'draft'
+                    obj.save(update_fields=['status'])
+
+                synced += 1
             except Exception as e:
-                self.message_user(request, f'Error generating number for {obj.pk}: {e}', level=messages.ERROR)
+                self.message_user(request, f'Error syncing {obj.document_number}: {e}', level=messages.ERROR)
 
-        self.message_user(request, f'Generated {generated} document numbers')
+        self.message_user(request, f'Synced {synced} documents with nomenclatures')
 
-    generate_document_numbers.short_description = _('Generate document numbers')
+    sync_with_nomenclatures.short_description = _('Sync with nomenclatures')
 
     def validate_workflow_config(self, request, queryset):
         """Validate workflow configuration for selected documents"""
@@ -768,34 +662,19 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                     issues.append(f'{obj.document_number}: No document type')
                     continue
 
-                # Check configured statuses
-                from nomenclatures.models import DocumentTypeStatus
-                configured_statuses = DocumentTypeStatus.objects.filter(
-                    document_type=obj.document_type,
-                    is_active=True
-                ).count()
-
-                if configured_statuses == 0:
-                    issues.append(f'{obj.document_number}: No configured statuses')
-
-                # Check approval rules if required
-                if obj.document_type.requires_approval:
-                    from nomenclatures.models import ApprovalRule
-                    rules_count = ApprovalRule.objects.filter(
-                        document_type=obj.document_type,
-                        is_active=True
-                    ).count()
-
-                    if rules_count == 0:
-                        issues.append(f'{obj.document_number}: No approval rules but requires approval')
-
-                validated += 1
+                # Test workflow methods
+                try:
+                    obj.can_edit(request.user)
+                    obj.get_available_actions(request.user)
+                    validated += 1
+                except Exception as e:
+                    issues.append(f'{obj.document_number}: Workflow error - {str(e)}')
 
             except Exception as e:
                 issues.append(f'{obj.document_number}: Error - {str(e)}')
 
         if issues:
-            self.message_user(request, f'Validated {validated} documents. Issues found: {"; ".join(issues[:5])}',
+            self.message_user(request, f'Validated {validated} documents. Issues: {"; ".join(issues[:5])}',
                               level=messages.WARNING)
         else:
             self.message_user(request, f'Successfully validated {validated} documents - no issues found')
@@ -803,32 +682,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     validate_workflow_config.short_description = _('Validate workflow config')
 
     # =====================
-    # FORM CUSTOMIZATION
+    # FORM CUSTOMIZATION - UPDATED
     # =====================
-
-    def get_form(self, request, obj=None, **kwargs):
-        """Customize form based on workflow state"""
-        form = super().get_form(request, obj, **kwargs)
-
-        # Store current user for use in display methods
-        self.current_user = request.user
-
-        if obj and obj.pk:
-            # Disable editing if not allowed
-            try:
-                if not obj.can_edit(request.user):
-                    # Make most fields readonly
-                    readonly_fields = list(self.readonly_fields)
-                    for field_name in ['business_justification', 'expected_usage', 'urgency_level']:
-                        if field_name not in readonly_fields:
-                            readonly_fields.append(field_name)
-
-                    # Update readonly_fields temporarily
-                    self.readonly_fields = readonly_fields
-            except:
-                pass
-
-        return form
 
     def save_model(self, request, obj, form, change):
         """Enhanced save with DocumentService integration"""
@@ -863,6 +718,9 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         super().save_model(request, obj, form, change)
 
+        # Store current user for workflow methods
+        self.current_user = request.user
+
         # Log the save action
         messages.info(request, f'Document saved. Current status: {obj.status}')
 
@@ -874,36 +732,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         """Optimized queryset with prefetch"""
         return super().get_queryset(request).select_related(
             'supplier', 'document_type', 'requested_by', 'converted_to_order',
-            'location', 'created_by'
+            'location', 'created_by', 'approved_by', 'converted_by'
         ).prefetch_related(
             'lines__product',
             'lines__unit'
         )
-
-    def changelist_view(self, request, extra_context=None):
-        """Enhanced changelist with workflow statistics"""
-        extra_context = extra_context or {}
-
-        try:
-            # Add workflow statistics
-            from django.db.models import Count
-
-            status_stats = PurchaseRequest.objects.values('status').annotate(
-                count=Count('id')
-            ).order_by('status')
-
-            urgency_stats = PurchaseRequest.objects.values('urgency_level').annotate(
-                count=Count('id')
-            ).order_by('urgency_level')
-
-            extra_context.update({
-                'status_statistics': list(status_stats),
-                'urgency_statistics': list(urgency_stats),
-                'total_requests': PurchaseRequest.objects.count(),
-                'pending_approval_count': PurchaseRequest.objects.filter(status='submitted').count(),
-            })
-
-        except Exception as e:
-            messages.warning(request, f'Could not load statistics: {e}')
-
-        return super().changelist_view(request, extra_context)
