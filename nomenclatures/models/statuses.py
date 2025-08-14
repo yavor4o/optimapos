@@ -180,6 +180,31 @@ class DocumentTypeStatus(models.Model):
         help_text=_('Is this the cancellation status for this type?')
     )
 
+    # INVENTORY CONTROL FIELDS (добави в края на класа)
+    creates_inventory_movements = models.BooleanField(
+        _('Creates Inventory Movements'),
+        default=False,
+        help_text=_('Should inventory movements be created when document enters this status?')
+    )
+
+    reverses_inventory_movements = models.BooleanField(
+        _('Reverses Inventory Movements'),
+        default=False,
+        help_text=_('Should existing inventory movements be reversed when document enters this status?')
+    )
+
+    allows_movement_correction = models.BooleanField(
+        _('Allows Movement Correction'),
+        default=False,
+        help_text=_('Can inventory movements be corrected when document is in this status?')
+    )
+
+    auto_correct_movements_on_edit = models.BooleanField(
+        _('Auto Correct Movements on Edit'),
+        default=False,
+        help_text=_('Automatically sync movements when document content is edited in this status?')
+    )
+
     # =====================
     # CUSTOMIZATION
     # =====================

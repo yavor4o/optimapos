@@ -765,6 +765,8 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     # FORM CUSTOMIZATION - UPDATED
     # =====================
 
+    # purchases/admin/request.py - Разшири save_model() метода
+
     def save_model(self, request, obj, form, change):
         """Enhanced save with DocumentService integration"""
         # Set user fields
@@ -800,6 +802,30 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
         # Store current user for workflow methods
         self.current_user = request.user
+
+        # 🆕 НОВА ЛОГИКА - Inventory correction при edit
+        if change:  # Това е edit, не create
+            try:
+                from nomenclatures.services import DocumentService
+                result = DocumentService.handle_document_update(
+                    document=obj,
+                    user=request.user,
+                    reason=f"Admin edit by {request.user.username}"
+                )
+
+                if result.get('needs_manual_correction'):
+                    messages.warning(
+                        request,
+                        "⚠️ Document has inventory movements that need manual correction!"
+                    )
+                elif result.get('auto_corrected'):
+                    messages.success(
+                        request,
+                        f"✅ Automatically corrected {result.get('movements_corrected', 0)} movements"
+                    )
+
+            except Exception as e:
+                messages.error(request, f"Error handling inventory correction: {e}")
 
         # Log the save action
         messages.info(request, f'Document saved. Current status: {obj.status}')

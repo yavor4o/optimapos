@@ -352,24 +352,75 @@ class BaseDocument(models.Model):
     # =====================
 
     @property
-    def is_draft(self):
-        """Check if document is in draft status"""
-        return self.status in ['draft', 'new', 'pending']
+    def is_initial(self):
+        """Check if document is in initial status - CONFIGURATION DRIVEN"""
+        try:
+            from nomenclatures.models import DocumentTypeStatus
+            config = DocumentTypeStatus.objects.filter(
+                document_type=self.document_type,
+                status__code=self.status,
+                is_initial=True,
+                is_active=True
+            ).first()
+            return bool(config)
+        except:
+            # Fallback за compatibility
+            return self.status in ['draft', 'new']
 
     @property
     def is_final(self):
-        """Check if document is in final status"""
-        return self.status in ['completed', 'closed', 'cancelled', 'archived']
+        """Check if document is in final status - CONFIGURATION DRIVEN"""
+        try:
+            from nomenclatures.models import DocumentTypeStatus
+            config = DocumentTypeStatus.objects.filter(
+                document_type=self.document_type,
+                status__code=self.status,
+                is_final=True,
+                is_active=True
+            ).first()
+            return bool(config)
+        except:
+            # Fallback за compatibility
+            return self.status in ['completed', 'closed', 'cancelled', 'archived']
 
     @property
-    def is_active(self):
-        """Check if document is active"""
-        return self.status not in ['cancelled', 'deleted', 'archived']
+    def is_cancellation(self):
+        """Check if document is in cancellation status - CONFIGURATION DRIVEN"""
+        try:
+            from nomenclatures.models import DocumentTypeStatus
+            config = DocumentTypeStatus.objects.filter(
+                document_type=self.document_type,
+                status__code=self.status,
+                is_cancellation=True,
+                is_active=True
+            ).first()
+            return bool(config)
+        except:
+            # Fallback за compatibility
+            return self.status in ['cancelled']
 
     @property
     def can_edit(self):
-        """Basic edit check - DocumentService има пълната логика"""
-        return self.is_draft and not self.is_final
+        """Smart edit check - delegates to DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            can_edit, _ = DocumentService.can_edit_document(self, user=None)
+            return can_edit
+        except:
+            # Fallback за compatibility
+            return not self.is_final
+
+    def get_status_config(self):
+        """Get DocumentTypeStatus configuration for current status"""
+        try:
+            from nomenclatures.models import DocumentTypeStatus
+            return DocumentTypeStatus.objects.filter(
+                document_type=self.document_type,
+                status__code=self.status,
+                is_active=True
+            ).first()
+        except:
+            return None
 
     def has_lines(self):
         """Check if document has any lines"""

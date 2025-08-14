@@ -11,6 +11,8 @@ Document Service - COMPLETE VERSION
 
 from typing import Dict, List, Optional, Any, Type, Union, Tuple, TYPE_CHECKING
 
+from nomenclatures.models import DocumentTypeStatus
+
 if TYPE_CHECKING:
     from django.db import models as django_models
 from dataclasses import dataclass, field
@@ -379,52 +381,43 @@ class DocumentService:
     # EDITING PERMISSIONS - ЗА КОРЕКЦИИ
     # =====================
 
-    @staticmethod
-    def can_edit_document(document, user: User) -> Tuple[bool, str]:
-        """
-        Провери дали документът може да се редактира
+    # nomenclatures/services/document_service.py - Замени метода can_edit_document
 
-        ЛОГИКА:
-        - Draft статуси: винаги може
-        - Completed статуси: според allow_edit_completed + permissions
-        - Final статуси: според allow_edit_completed + admin permissions
+    @staticmethod
+    def can_edit_document(document, user) -> Tuple[bool, str]:
+        """
+        FIXED: Check if document can be edited - използва правилната йерархия на permissions
         """
         try:
-            if not document.document_type:
-                return False, "Document has no type configured"
+            # 1. Провери дали има DocumentStatus
+            from nomenclatures.models import DocumentStatus
+            status_obj = DocumentStatus.objects.filter(code=document.status).first()
 
-            # 1. Провери current status type
-            status_info = DocumentService._get_status_info(document)
+            if not status_obj:
+                return False, f"Unknown status: {document.status}"
 
-            # 2. Draft/Initial статуси - винаги може (освен ако не е final)
-            if status_info.get('is_initial') and not status_info.get('is_final'):
-                return True, "Document is in draft state"
+            # 2. ПЪРВО - провери DocumentStatus базовото правило (global constraint)
+            if not status_obj.allow_edit:
+                return False, f"Status '{status_obj.name}' doesn't allow editing globally"
 
-            # 3. Completed/Final статуси - провери allow_edit_completed
-            if status_info.get('is_final') or 'complet' in document.status.lower():
-                if not document.document_type.allow_edit_completed:
-                    return False, "Completed documents cannot be edited"
+            # 3. ВТОРО - провери DocumentTypeStatus override (type-specific constraint)
+            from nomenclatures.models import DocumentTypeStatus
+            type_status_config = DocumentTypeStatus.objects.filter(
+                document_type=document.document_type,
+                status=status_obj,
+                is_active=True
+            ).first()
 
-                # Проверка permissions за completed editing
-                edit_check = DocumentService._check_completed_edit_permissions(document, user)
-                if not edit_check['allowed']:
-                    return False, edit_check['reason']
+            if type_status_config and not type_status_config.allows_editing:
+                return False, f"Cannot edit {document.document_type.name} in '{status_obj.name}' status"
 
-                return True, "Editing completed document allowed"
+            # 4. ТРЕТО - провери user permissions (Django permissions)
+            if user and hasattr(user, 'has_perm'):
+                edit_permission = f"{document._meta.app_label}.change_{document._meta.model_name}"
+                if not user.has_perm(edit_permission):
+                    return False, f"User doesn't have permission to edit {document._meta.model_name}"
 
-            # 4. In-progress статуси - зависи от workflow
-            if document.document_type.requires_approval:
-                # Approval workflow - провери ApprovalRule permissions
-                from .approval_service import ApprovalService
-                transitions = ApprovalService.get_available_transitions(document, user)
-
-                if not transitions:
-                    return False, "No available actions for current user"
-
-                return True, "Document is in workflow and user has permissions"
-            else:
-                # Simple workflow - винаги може ако не е final
-                return True, "Document is editable"
+            return True, "Editing allowed"
 
         except Exception as e:
             logger.error(f"Error checking edit permissions: {e}")
@@ -897,27 +890,49 @@ class DocumentService:
 
     @staticmethod
     def _handle_inventory_movements(document, from_status: str, to_status: str):
-        """Handle inventory movements based on status transition"""
+        """FIXED: Handle inventory movements based on DocumentTypeStatus configuration"""
         try:
-            # Провери кога да се правят движения
-            movement_timing = getattr(document.document_type, 'inventory_timing', 'on_completion')
+            # Намери конфигурацията за новия статус
+            to_status_config = DocumentTypeStatus.objects.filter(
+                document_type=document.document_type,
+                status__code=to_status,
+                is_active=True
+            ).first()
 
-            should_create_movements = False
+            if not to_status_config:
+                logger.warning(f"No status configuration found for {document.document_type.name} + {to_status}")
+                return
 
-            if movement_timing == 'on_completion' and 'complet' in to_status.lower():
-                should_create_movements = True
-            elif movement_timing == 'on_approval' and 'approv' in to_status.lower():
-                should_create_movements = True
-            elif movement_timing == 'on_status_change':
-                should_create_movements = True
+            # Провери дали document type изобщо засяга inventory
+            if not document.document_type.affects_inventory:
+                return
 
-            if should_create_movements:
+            # Провери дали автоматично създава движения
+            if not document.document_type.auto_create_movements:
+                return
+
+            # 1. ОТМЕНИ движения ако новия статус изисква
+            if to_status_config.reverses_inventory_movements:
+                try:
+                    from inventory.services.movement_service import MovementService
+                    reversed_count = MovementService.reverse_document_movements(document,
+                                                                                f"Status changed to {to_status}")
+                    logger.info(f"Reversed {reversed_count} movements for {document.document_number}")
+                except ImportError:
+                    logger.warning("MovementService not available")
+                except Exception as e:
+                    logger.error(f"Error reversing movements: {e}")
+
+            # 2. СЪЗДАЙ движения ако новия статус изисква
+            if to_status_config.creates_inventory_movements:
                 try:
                     from inventory.services.movement_service import MovementService
                     movements = MovementService.create_from_document(document)
-                    logger.info(f"Created inventory movements for {document.document_number}")
+                    logger.info(f"Created {len(movements)} movements for {document.document_number}")
                 except ImportError:
-                    logger.warning("InventoryService not available")
+                    logger.warning("MovementService not available")
+                except Exception as e:
+                    logger.error(f"Error creating movements: {e}")
 
         except Exception as e:
             logger.error(f"Error handling inventory movements: {e}")
@@ -1135,6 +1150,71 @@ class DocumentService:
 
         return f"{prefix}{timestamp}"
 
+    @staticmethod
+    def handle_document_update(document, user, reason: str = '') -> dict:
+        """
+        NEW: Handle document updates with inventory movement correction
+        """
+        try:
+            current_config = DocumentService._get_document_type_status_config(document)
+
+            # Провери дали документът има движения
+            has_movements = DocumentService._document_has_movements(document)
+
+            if has_movements and current_config.allows_movement_correction:
+
+                if current_config.auto_correct_movements_on_edit:
+                    # АВТОМАТИЧНА корекция
+                    from inventory.services.movement_service import MovementService
+                    correction_result = MovementService.sync_movements_with_document(
+                        document=document,
+                        user=user,
+                        reason=reason or "Document edited"
+                    )
+
+                    return {
+                        'success': True,
+                        'auto_corrected': True,
+                        'movements_corrected': correction_result.get('total_corrections', 0)
+                    }
+                else:
+                    # РЪЧНА корекция - върни warning
+                    return {
+                        'success': True,
+                        'auto_corrected': False,
+                        'needs_manual_correction': True,
+                        'message': 'Document has movements that need manual correction'
+                    }
+
+            # Няма движения или не се изисква корекция
+            return {'success': True, 'auto_corrected': False}
+
+        except Exception as e:
+            logger.error(f"Error handling document update: {e}")
+            return {'success': False, 'error': str(e)}
+
+    @staticmethod
+    def _document_has_movements(document) -> bool:
+        """NEW: Check if document has any inventory movements"""
+        try:
+            from inventory.models import InventoryMovement
+            return InventoryMovement.objects.filter(
+                source_document_type=document._meta.model_name.upper(),
+                source_document_number=document.document_number
+            ).exists()
+        except ImportError:
+            return False
+
+    @staticmethod
+    def _get_document_type_status_config(document):
+        """NEW: Get DocumentTypeStatus config for current document status"""
+        from nomenclatures.models import DocumentTypeStatus
+        return DocumentTypeStatus.objects.filter(
+            document_type=document.document_type,
+            status__code=document.status,
+            is_active=True
+        ).first()
+
 
 # =====================
 # CONVENIENCE FUNCTIONS
@@ -1154,3 +1234,5 @@ def can_edit_document(document, user: User) -> bool:
 def get_document_actions(document, user: User) -> List[Dict]:
     """Get available actions for document"""
     return DocumentService.get_available_actions(document, user)
+
+

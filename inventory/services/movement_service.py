@@ -1043,3 +1043,67 @@ class MovementService:
                 continue
 
         return movements
+
+    @staticmethod
+    def reverse_document_movements(document, reason: str = '') -> int:
+        """
+        Reverse all inventory movements for a document
+        Returns count of reversed movements
+        """
+        try:
+            # Намери всички movements за документа
+            movements = InventoryMovement.objects.filter(
+                source_document_type=document._meta.model_name.upper(),
+                source_document_number=document.document_number
+            )
+
+            reversed_count = 0
+            for movement in movements:
+                try:
+                    MovementService.reverse_movement(
+                        original_movement=movement,
+                        reason=reason or f"Document {document.document_number} status change",
+                        created_by=getattr(document, 'updated_by', None)
+                    )
+                    reversed_count += 1
+                except Exception as e:
+                    logger.error(f"Error reversing movement {movement.id}: {e}")
+                    continue
+
+            return reversed_count
+
+        except Exception as e:
+            logger.error(f"Error reversing document movements: {e}")
+            return 0
+
+    @staticmethod
+    def sync_movements_with_document(document, user=None, reason: str = '') -> dict:
+        """
+        Synchronize movements with current document state
+        First reverses existing movements, then creates new ones
+        """
+        try:
+            # 1. Reverse всички стари движения
+            reversed_count = MovementService.reverse_document_movements(
+                document,
+                reason=f"Sync correction: {reason}"
+            )
+
+            # 2. Създай нови движения според текущото състояние
+            new_movements = MovementService.create_from_document(document)
+
+            return {
+                'success': True,
+                'reversed_movements': reversed_count,
+                'created_movements': len(new_movements),
+                'total_corrections': reversed_count + len(new_movements)
+            }
+
+        except Exception as e:
+            logger.error(f"Error syncing movements with document: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'reversed_movements': 0,
+                'created_movements': 0
+            }
