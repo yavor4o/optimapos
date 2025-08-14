@@ -77,6 +77,8 @@ class DocumentStatus(models.Model):
         help_text=_('Bootstrap badge class')
     )
 
+
+
     # =====================
     # SYSTEM FLAGS
     # =====================
@@ -205,6 +207,18 @@ class DocumentTypeStatus(models.Model):
         help_text=_('Automatically sync movements when document content is edited in this status?')
     )
 
+    allows_editing = models.BooleanField(
+        _('Allows Editing'),
+        default=True,
+        help_text=_('Can documents be edited in this status? (overrides DocumentStatus.allow_edit)')
+    )
+
+    allows_deletion = models.BooleanField(
+        _('Allows Deletion'),
+        default=False,
+        help_text=_('Can documents be deleted in this status? (overrides DocumentStatus.allow_delete)')
+    )
+
     # =====================
     # CUSTOMIZATION
     # =====================
@@ -281,3 +295,43 @@ class DocumentTypeStatus(models.Model):
     def get_display_name(self):
         """Get the display name (custom or default)"""
         return self.custom_name or self.status.name
+
+    def can_create_movements(self) -> bool:
+        """Check if this status can create inventory movements"""
+        return (
+                self.creates_inventory_movements and
+                self.document_type.affects_inventory
+
+        )
+
+    def can_reverse_movements(self) -> bool:
+        """Check if this status can reverse inventory movements"""
+        return (
+                self.reverses_inventory_movements and
+                self.document_type.affects_inventory
+        )
+
+    def can_correct_movements(self) -> bool:
+        """Check if movements can be corrected in this status"""
+        return (
+                self.allows_movement_correction and
+                self.document_type.affects_inventory
+        )
+
+    def should_auto_correct(self) -> bool:
+        """Check if movements should be auto-corrected on edit"""
+        return (
+                self.auto_correct_movements_on_edit and
+                self.can_correct_movements()
+        )
+
+    def get_movement_behavior(self) -> dict:
+        """Get complete movement behavior summary for this status"""
+        return {
+            'creates_movements': self.can_create_movements(),
+            'reverses_movements': self.can_reverse_movements(),
+            'allows_correction': self.can_correct_movements(),
+            'auto_correct': self.should_auto_correct(),
+            'inventory_direction': self.document_type.inventory_direction,
+            'affects_inventory': self.document_type.affects_inventory,
+        }

@@ -907,9 +907,7 @@ class DocumentService:
             if not document.document_type.affects_inventory:
                 return
 
-            # Провери дали автоматично създава движения
-            if not document.document_type.auto_create_movements:
-                return
+
 
             # 1. ОТМЕНИ движения ако новия статус изисква
             if to_status_config.reverses_inventory_movements:

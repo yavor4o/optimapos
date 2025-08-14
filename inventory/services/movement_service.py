@@ -985,6 +985,10 @@ class MovementService:
                 movements = MovementService._create_from_purchase_order(document)
             elif model_name == 'stocktransfer':
                 movements = MovementService._create_from_stock_transfer(document)
+
+            elif model_name == 'purchaserequest':  # ← ДОБАВИ ТОВА
+                movements = MovementService._create_from_purchase_request(document)
+
             elif model_name == 'stockadjustment':
                 movements = MovementService._create_from_stock_adjustment(document)
             else:
@@ -1107,3 +1111,37 @@ class MovementService:
                 'reversed_movements': 0,
                 'created_movements': 0
             }
+
+    # inventory/services/movement_service.py - Поправи _create_from_purchase_request
+
+    @staticmethod
+    def _create_from_purchase_request(request) -> List[InventoryMovement]:
+        """Create movements from approved purchase request"""
+        movements = []
+
+        for line in request.lines.all():
+            if not line.requested_quantity or line.requested_quantity == 0:
+                continue
+
+            try:
+                # Използвай правилното price поле
+                cost_price = line.unit_price or line.entered_price or Decimal('0.00')
+
+                # PurchaseRequest обикновено е IN движение (планирано получаване)
+                movement = MovementService.create_incoming_movement(
+                    location=request.location,
+                    product=line.product,
+                    quantity=line.requested_quantity,
+                    cost_price=cost_price,
+                    source_document_type='PURCHASE_REQUEST',
+                    source_document_number=request.document_number,
+                    source_document_line_id=line.line_number,
+                    reason=f"Purchase request approved (line {line.line_number})"
+                )
+                movements.append(movement)
+
+            except Exception as e:
+                logger.error(f"Error processing request line {line.line_number}: {e}")
+                continue
+
+        return movements

@@ -348,23 +348,26 @@ class InventoryItemAdmin(admin.ModelAdmin):
     current_qty_display.short_description = _('Current Qty')
 
     def avg_cost_display(self, obj):
-        """Average cost with purchase comparison"""
-        avg_cost = obj.avg_cost
-        last_purchase = obj.last_purchase_cost
+        """Average cost with purchase comparison - FIXED"""
+        avg_cost = obj.avg_cost or Decimal('0')
+        last_purchase = obj.last_purchase_cost or Decimal('0')
 
         if last_purchase and avg_cost != last_purchase:
             difference = last_purchase - avg_cost
             arrow = '📈' if difference > 0 else '📉'
 
             return format_html(
-                '<strong>{:.4f}</strong><br>'
-                '<small>{} Last: {:.4f}</small>',
-                avg_cost, arrow, last_purchase
+                '<strong>{}</strong><br>'
+                '<small>{} Last: {}</small>',
+                f'{avg_cost:.4f}',  # ← ПОПРАВИ: format преди format_html
+                arrow,
+                f'{last_purchase:.4f}'  # ← ПОПРАВИ: format преди format_html
             )
         else:
-            return format_html('<strong>{:.4f}</strong>', avg_cost)
-
-    avg_cost_display.short_description = _('Avg Cost')
+            return format_html(
+                '<strong>{}</strong>',
+                f'{avg_cost:.4f}'  # ← ПОПРАВИ: format преди format_html
+            )
 
     def profit_potential_display(self, obj):
         """Profit potential based on last sale price"""
