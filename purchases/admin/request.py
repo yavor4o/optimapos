@@ -1,4 +1,5 @@
 # purchases/admin/request.py - SYNCHRONIZED WITH REAL MODEL
+from decimal import Decimal
 
 from django.contrib import admin
 from django.utils.html import format_html
@@ -16,6 +17,8 @@ from purchases.models.requests import PurchaseRequestLine, PurchaseRequest
 # INLINE ADMIN FOR REQUEST LINES
 # =================================================================
 
+# purchases/admin/request.py - ДОБАВИ ПОЛЕТАТА В fields
+
 class PurchaseRequestLineInline(admin.TabularInline):
     """Enhanced inline for request lines matching real model fields"""
     model = PurchaseRequestLine
@@ -23,24 +26,82 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
-        'entered_price', 'line_total_display',
-        'priority',
+        'entered_price', 'discount_percent', 'vat_rate',  # ← ДОБАВИ ТЕЗИ ПОЛЕТА
+        'line_total_display', 'priority',
     ]
 
     readonly_fields = ['line_number', 'line_total_display']
 
     def line_total_display(self, obj):
-        """Display total for THIS LINE"""
-        if obj and obj.pk and obj.entered_price:
-            total = obj.requested_quantity * obj.entered_price
-            # 🔥 TEST: Върни простичък string вместо format_html
-            return f"{float(total):.2f} лв"
-        return '-'
+        """💰 FIXED - WORKS FOR BOTH SAVED AND UNSAVED OBJECTS"""
+        if not obj or not obj.requested_quantity:
+            return '-'
+
+        # WORK WITH BOTH SAVED AND UNSAVED OBJECTS
+        qty = float(obj.requested_quantity)
+        price = float(obj.entered_price) if obj.entered_price else 0
+        discount_percent = float(obj.discount_percent) if hasattr(obj,
+                                                                  'discount_percent') and obj.discount_percent else 0
+        vat_rate = float(obj.vat_rate) if hasattr(obj, 'vat_rate') and obj.vat_rate else 20
+
+        if price <= 0:
+            return format_html(
+                '<span style="color: #666;">{:.1f} × ??? = ???</span>',
+                qty
+            )
+
+        # CALCULATIONS
+        base_amount = qty * price
+
+        # Apply discount
+        if discount_percent > 0:
+            discount_amount = base_amount * (discount_percent / 100)
+            net_amount = base_amount - discount_amount
+        else:
+            discount_amount = 0
+            net_amount = base_amount
+
+        # Apply VAT
+        vat_amount = net_amount * (vat_rate / 100)
+        gross_amount = net_amount + vat_amount
+
+        # FORMAT OUTPUT
+        if discount_percent > 0:
+            # WITH DISCOUNT
+            return format_html(
+                '<div style="text-align: right; line-height: 1.2; font-size: 11px;">'
+                '<div style="color: #666;">{:.1f} × {:.2f} = {:.2f}</div>'
+                '<div style="color: #e74c3c;">Discount -{:.0f}%: -{:.2f}</div>'
+                '<div style="color: #27ae60; font-weight: bold;">Net: {:.2f} лв</div>'
+                '<div style="color: #3498db;">VAT {:.0f}%: +{:.2f}</div>'
+                '<div style="color: #2c3e50; font-weight: bold; border-top: 1px solid #ddd; padding-top: 1px;">'
+                'Total: {:.2f} лв</div>'
+                '</div>',
+                qty, price, base_amount,
+                discount_percent, discount_amount,
+                net_amount,
+                vat_rate, vat_amount,
+                gross_amount
+            )
+        else:
+            # WITHOUT DISCOUNT
+            return format_html(
+                '<div style="text-align: right; line-height: 1.2; font-size: 11px;">'
+                '<div style="color: #666;">{:.1f} × {:.2f}</div>'
+                '<div style="color: #27ae60; font-weight: bold;">Net: {:.2f} лв</div>'
+                '<div style="color: #3498db;">VAT {:.0f}%: +{:.2f}</div>'
+                '<div style="color: #2c3e50; font-weight: bold; border-top: 1px solid #ddd; padding-top: 1px;">'
+                'Total: {:.2f} лв</div>'
+                '</div>',
+                qty, price,
+                net_amount,
+                vat_rate, vat_amount,
+                gross_amount
+            )
 
     line_total_display.short_description = _('Line Total')
 
     def get_extra(self, request, obj=None, **kwargs):
-        """No extra lines for existing objects"""
         return 0 if obj else 1
 
 
@@ -256,29 +317,26 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     urgency_badge.admin_order_field = 'urgency_level'
 
     def estimated_total_display(self, obj):
-        print("🔥 STEP 1: Method called")
+        """Fixed estimated total calculation"""
+        if not obj or not obj.pk:
+            return '—'
 
         try:
-            print("🔥 STEP 2: Trying to get total")
-            total = obj.get_estimated_total()
-            print(f"🔥 STEP 3: Got total = {total}")
-            print(f"🔥 STEP 4: Total type = {type(total)}")
-            print(f"🔥 STEP 5: Total > 0? {total > 0}")
-            print(f"🔥 STEP 6: bool(total)? {bool(total)}")
+            # Calculate from lines instead of calling non-existent method
+            total = Decimal('0.00')
 
-            if total:
-                print("🔥 STEP 7: Total is truthy, formatting...")
-                result = f"{float(total):.2f} лв"
-                print(f"🔥 STEP 8: Formatted result = {result}")
-                return result
+            for line in obj.lines.all():
+                if line.requested_quantity and line.entered_price:
+                    line_total = line.requested_quantity * line.entered_price
+                    total += line_total
+
+            if total > 0:
+                return format_html('<strong>{:.2f} лв</strong>', float(total))
             else:
-                print("🔥 STEP 7: Total is falsy, returning —")
                 return '—'
 
         except Exception as e:
-            print(f"🔥 ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error in estimated_total_display: {e}")
             return '—'
 
     estimated_total_display.short_description = _('Est. Total')
@@ -844,12 +902,3 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             'lines__unit'
         )
 
-    class Media:
-        js = (
-            'purchases/js/purchase_request_line.js',  # ← ДОБАВИ ТОВА
-        )
-        css = {
-            'all': (
-                # Можеш да добавиш CSS файл ако искаш
-            )
-        }
