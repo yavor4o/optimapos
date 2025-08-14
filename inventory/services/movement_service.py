@@ -724,45 +724,55 @@ class MovementService:
         }
 
     @staticmethod
-    def reverse_movement(original_movement: InventoryMovement, reason: str = '', created_by=None) -> InventoryMovement:
+    def reverse_movement(original_movement, reason: str = '', created_by=None):
         """
-        Create a reverse movement to correct errors
-        ✅ ENHANCED: Proper profit reversal for sales
+        Create a reverse movement for the given original movement
+        ✅ FIXED: Use document number instead of movement ID
         """
-        if original_movement.movement_type == InventoryMovement.TRANSFER:
-            raise ValidationError("Cannot reverse transfer movements - reverse both parts separately")
+        try:
+            # ✅ ИЗПОЛЗВАЙ НОМЕРА НА ДОКУМЕНТА вместо ID на движението
+            reversal_doc_number = f'REV-{original_movement.source_document_number}'
 
-        # Determine reverse parameters
-        if original_movement.movement_type == InventoryMovement.IN:
-            # Reverse incoming = create outgoing
-            reverse_movements = MovementService.create_outgoing_movement(
-                location=original_movement.location,
-                product=original_movement.product,
-                quantity=original_movement.quantity,
+            # ✅ ПРОВЕРИ ДАЛИ ВЕЧЕ СЪЩЕСТВУВА reverse ЗА ТОЗИ ДОКУМЕНТ + ПРОДУКТ + LOCATION
+            existing_reverse = InventoryMovement.objects.filter(
                 source_document_type='REVERSAL',
-                source_document_number=f'REV-{original_movement.id}',
-                manual_cost_price=original_movement.cost_price,
-                manual_batch_number=original_movement.batch_number,
-                reason=f"Reverse of IN movement #{original_movement.id}: {reason}",
-                created_by=created_by,
-                allow_negative_stock=True
-            )
-            return reverse_movements[0]  # Return first movement
-
-        else:
-            # Reverse outgoing = create incoming
-            return MovementService.create_incoming_movement(
-                location=original_movement.location,
+                source_document_number=reversal_doc_number,
                 product=original_movement.product,
-                quantity=original_movement.quantity,
+                location=original_movement.location,
+                source_document_line_id=original_movement.source_document_line_id  # ← За различни линии
+            ).first()
+
+            if existing_reverse:
+                logger.info(
+                    f"Reverse movement for {original_movement.source_document_number} line {original_movement.source_document_line_id} already exists: {existing_reverse.id}")
+                return existing_reverse
+
+            # Определи обратния тип движение
+            reverse_movement_type = 'OUT' if original_movement.movement_type == 'IN' else 'IN'
+
+            # Създай reverse движението
+            reverse_movement = InventoryMovement.objects.create(
+                movement_type=reverse_movement_type,
+                product=original_movement.product,
+                location=original_movement.location,
+                quantity=original_movement.quantity,  # Същото количество
                 cost_price=original_movement.cost_price,
                 source_document_type='REVERSAL',
-                source_document_number=f'REV-{original_movement.id}',
-                batch_number=original_movement.batch_number,
-                expiry_date=original_movement.expiry_date,
-                reason=f"Reverse of OUT movement #{original_movement.id}: {reason}",
+                source_document_number=reversal_doc_number,  # ← REV-0000000010
+                source_document_line_id=original_movement.source_document_line_id,
+                reason=reason or f'Reverse of {original_movement.source_document_number} line {original_movement.source_document_line_id}',
+                movement_date=timezone.now(),
                 created_by=created_by
             )
+
+            logger.info(
+                f"Created reverse movement {reverse_movement.id} for document {original_movement.source_document_number}")
+            return reverse_movement
+
+        except Exception as e:
+            logger.error(
+                f"Error creating reverse movement for document {original_movement.source_document_number}: {e}")
+            raise
 
     @staticmethod
     def get_movement_history(
@@ -1053,13 +1063,24 @@ class MovementService:
         """
         Reverse all inventory movements for a document
         Returns count of reversed movements
+        ✅ FIXED: Handle different source_document_type naming conventions
         """
         try:
-            # Намери всички movements за документа
+            # ✅ FIXED: Опитай различни naming conventions
+            possible_types = [
+                document._meta.model_name.upper(),  # PURCHASEREQUEST
+                document.__class__.__name__.upper(),  # PURCHASEREQUEST
+                'PURCHASE_REQUEST',  # Manual mapping
+                document._meta.model_name.upper().replace('REQUEST', '_REQUEST'),  # PURCHASE_REQUEST
+            ]
+
+            # Намери движенията с всички възможни типове
             movements = InventoryMovement.objects.filter(
-                source_document_type=document._meta.model_name.upper(),
+                source_document_type__in=possible_types,
                 source_document_number=document.document_number
             )
+
+            logger.info(f"Found {movements.count()} movements to reverse for {document.document_number}")
 
             reversed_count = 0
             for movement in movements:
@@ -1074,6 +1095,7 @@ class MovementService:
                     logger.error(f"Error reversing movement {movement.id}: {e}")
                     continue
 
+            logger.info(f"Successfully reversed {reversed_count} movements")
             return reversed_count
 
         except Exception as e:
