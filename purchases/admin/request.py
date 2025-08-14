@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
 from django.contrib import messages
@@ -26,80 +27,78 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
     fields = [
         'line_number', 'product', 'requested_quantity', 'unit',
-        'entered_price', 'discount_percent', 'vat_rate',  # ← ДОБАВИ ТЕЗИ ПОЛЕТА
-        'line_total_display', 'priority',
+        'entered_price', 'discount_percent', 'vat_rate',
+        'line_total_display',  # ← ФОРСИРАЙ ГО В fields!
+
     ]
 
-    readonly_fields = ['line_number', 'line_total_display']
+    readonly_fields = ['line_number', 'line_total_display']  # ← И В readonly
+
+    from django.utils.safestring import mark_safe  # ← ДОБАВИ IMPORT
 
     def line_total_display(self, obj):
-        """💰 FIXED - WORKS FOR BOTH SAVED AND UNSAVED OBJECTS"""
-        if not obj or not obj.requested_quantity:
+        """💰 COMPACT VAT BREAKDOWN"""
+        if not obj or not obj.requested_quantity or not obj.entered_price:
             return '-'
 
-        # WORK WITH BOTH SAVED AND UNSAVED OBJECTS
-        qty = float(obj.requested_quantity)
-        price = float(obj.entered_price) if obj.entered_price else 0
-        discount_percent = float(obj.discount_percent) if hasattr(obj,
-                                                                  'discount_percent') and obj.discount_percent else 0
-        vat_rate = float(obj.vat_rate) if hasattr(obj, 'vat_rate') and obj.vat_rate else 20
+        try:
+            qty = float(obj.requested_quantity)
+            price = float(obj.entered_price)
 
-        if price <= 0:
-            return format_html(
-                '<span style="color: #666;">{:.1f} × ??? = ???</span>',
-                qty
-            )
+            # Проверка дали цените включват VAT
+            document = obj.document
+            prices_include_vat = getattr(document, 'prices_entered_with_vat', None)
 
-        # CALCULATIONS
-        base_amount = qty * price
+            if prices_include_vat is None:
+                try:
+                    prices_include_vat = document.get_price_entry_mode()
+                except:
+                    prices_include_vat = False
 
-        # Apply discount
-        if discount_percent > 0:
-            discount_amount = base_amount * (discount_percent / 100)
-            net_amount = base_amount - discount_amount
-        else:
-            discount_amount = 0
-            net_amount = base_amount
+            # VAT rate
+            vat_rate = float(obj.vat_rate) if obj.vat_rate else 0.20
+            if vat_rate > 1:
+                vat_rate = vat_rate / 100
 
-        # Apply VAT
-        vat_amount = net_amount * (vat_rate / 100)
-        gross_amount = net_amount + vat_amount
+            base_total = qty * price
 
-        # FORMAT OUTPUT
-        if discount_percent > 0:
-            # WITH DISCOUNT
-            return format_html(
-                '<div style="text-align: right; line-height: 1.2; font-size: 11px;">'
-                '<div style="color: #666;">{:.1f} × {:.2f} = {:.2f}</div>'
-                '<div style="color: #e74c3c;">Discount -{:.0f}%: -{:.2f}</div>'
-                '<div style="color: #27ae60; font-weight: bold;">Net: {:.2f} лв</div>'
-                '<div style="color: #3498db;">VAT {:.0f}%: +{:.2f}</div>'
-                '<div style="color: #2c3e50; font-weight: bold; border-top: 1px solid #ddd; padding-top: 1px;">'
-                'Total: {:.2f} лв</div>'
-                '</div>',
-                qty, price, base_amount,
-                discount_percent, discount_amount,
-                net_amount,
-                vat_rate, vat_amount,
-                gross_amount
-            )
-        else:
-            # WITHOUT DISCOUNT
-            return format_html(
-                '<div style="text-align: right; line-height: 1.2; font-size: 11px;">'
-                '<div style="color: #666;">{:.1f} × {:.2f}</div>'
-                '<div style="color: #27ae60; font-weight: bold;">Net: {:.2f} лв</div>'
-                '<div style="color: #3498db;">VAT {:.0f}%: +{:.2f}</div>'
-                '<div style="color: #2c3e50; font-weight: bold; border-top: 1px solid #ddd; padding-top: 1px;">'
-                'Total: {:.2f} лв</div>'
-                '</div>',
-                qty, price,
-                net_amount,
-                vat_rate, vat_amount,
-                gross_amount
-            )
+            if prices_include_vat:
+                # Цената включва VAT
+                gross_total = base_total
+                net_total = base_total / (1 + vat_rate)
 
-    line_total_display.short_description = _('Line Total')
+                html = (
+                    f'<div style="text-align: right; font-size: 9px; line-height: 1.0;">'
+                    f'<div style="color: #666;">{qty:.0f}×{price:.2f} (incl)</div>'
+                    f'<div style="color: #2c3e50; font-weight: bold; font-size: 11px;">{gross_total:.2f} лв</div>'
+                    f'<div style="color: #27ae60;">Net: {net_total:.2f}</div>'
+                    f'</div>'
+                )
+            else:
+                # Цената е без VAT
+                net_total = base_total
+                vat_amount = net_total * vat_rate
+                gross_total = net_total + vat_amount
+
+                html = (
+                    f'<div style="text-align: right; font-size: 9px; line-height: 1.0;">'
+                    f'<div style="color: #666;">{qty:.0f}×{price:.2f} (excl)</div>'
+                    f'<div style="color: #2c3e50; font-weight: bold; font-size: 11px;">{gross_total:.2f} лв</div>'
+                    f'<div style="color: #27ae60;">Net: {net_total:.2f}</div>'
+                    f'</div>'
+                )
+
+            return mark_safe(html)
+
+        except Exception as e:
+            try:
+                total = float(obj.requested_quantity) * float(obj.entered_price)
+                return f"{total:.2f} лв"
+            except:
+                return 'Error'
+
+    line_total_display.short_description = 'Line Total'
+    line_total_display.allow_tags = True  # ← ДОБАВИ ТОВА
 
     def get_extra(self, request, obj=None, **kwargs):
         return 0 if obj else 1
@@ -317,26 +316,29 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     urgency_badge.admin_order_field = 'urgency_level'
 
     def estimated_total_display(self, obj):
-        """Fixed estimated total calculation"""
-        if not obj or not obj.pk:
-            return '—'
+        print("🔥 STEP 1: Method called")
 
         try:
-            # Calculate from lines instead of calling non-existent method
-            total = Decimal('0.00')
+            print("🔥 STEP 2: Trying to get total")
+            total = obj.get_estimated_total()
+            print(f"🔥 STEP 3: Got total = {total}")
+            print(f"🔥 STEP 4: Total type = {type(total)}")
+            print(f"🔥 STEP 5: Total > 0? {total > 0}")
+            print(f"🔥 STEP 6: bool(total)? {bool(total)}")
 
-            for line in obj.lines.all():
-                if line.requested_quantity and line.entered_price:
-                    line_total = line.requested_quantity * line.entered_price
-                    total += line_total
-
-            if total > 0:
-                return format_html('<strong>{:.2f} лв</strong>', float(total))
+            if total:
+                print("🔥 STEP 7: Total is truthy, formatting...")
+                result = f"{float(total):.2f} лв"
+                print(f"🔥 STEP 8: Formatted result = {result}")
+                return result
             else:
+                print("🔥 STEP 7: Total is falsy, returning —")
                 return '—'
 
         except Exception as e:
-            print(f"Error in estimated_total_display: {e}")
+            print(f"🔥 ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             return '—'
 
     estimated_total_display.short_description = _('Est. Total')
@@ -857,6 +859,16 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 obj.status = 'draft'
 
         super().save_model(request, obj, form, change)
+
+        # 🆕 АВТОМАТИЧНО ПРЕСМЯТАНЕ НА ТОТАЛИ
+        try:
+            totals = obj.recalculate_totals(save=True)
+            messages.success(
+                request,
+                f'💰 Totals: Net {totals["subtotal"]:.2f}, VAT {totals["vat_total"]:.2f}, Total {totals["total"]:.2f} лв'
+            )
+        except Exception as e:
+            messages.warning(request, f'⚠️ Could not recalculate totals: {e}')
 
         # Store current user for workflow methods
         self.current_user = request.user
