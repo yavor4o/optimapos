@@ -1,5 +1,5 @@
 # purchases/admin/request.py - SYNCHRONIZED WITH REAL MODEL
-
+import self
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
@@ -513,7 +513,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     # =====================
 
     def get_urls(self):
-        """Add custom URLs for workflow testing"""
+        """Add custom URLs for workflow testing - FIXED"""
         urls = super().get_urls()
         custom_urls = [
             path(
@@ -526,30 +526,75 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.test_workflow_view),
                 name='purchases_purchaserequest_test_workflow'
             ),
+            # 🔥 FIX: Add debug URL inside get_urls method
+            path(
+                '<int:object_id>/debug-workflow/',
+                self.admin_site.admin_view(self.debug_workflow_action),
+                name='purchases_purchaserequest_debug_workflow'
+            ),
         ]
         return custom_urls + urls
 
     def workflow_action_view(self, request, object_id):
-        """Handle workflow action execution"""
+        """
+        🔥 FIXED: Handle workflow action execution properly
+        """
         obj = self.get_object(request, object_id)
         if not obj:
+            messages.error(request, "Document not found")
             return redirect('admin:purchases_purchaserequest_changelist')
 
-        action = request.GET.get('action')
-        status = request.GET.get('status')
-        comments = request.POST.get('comments', '')
+        # 🔥 FIX: Handle both GET and POST properly
+        if request.method == 'POST':
+            # POST request from form submission
+            action = request.POST.get('action')
+            status = request.POST.get('status')
+            comments = request.POST.get('comments', '')
+        else:
+            # GET request from URL parameters (buttons)
+            action = request.GET.get('action')
+            status = request.GET.get('status')
+            comments = ''
 
-        if request.method == 'POST' and action and status:
+        # 🔥 FIX: Execute if we have action and status (regardless of method)
+        if action and status:
             try:
+                print(f"🧪 DEBUG: Executing {action} to {status} for {obj.document_number}")
+
+                # Call the model's transition method
                 result = obj.transition_to(status, request.user, comments)
 
-                if hasattr(result, 'ok') and result.ok:
-                    messages.success(request, f'Successfully transitioned to {status}')
+                print(f"🧪 DEBUG: Result type: {type(result)}")
+                print(f"🧪 DEBUG: Result: {result}")
+
+                # 🔥 FIX: Handle different result types
+                if hasattr(result, 'ok'):
+                    # Result object from DocumentService
+                    if result.ok:
+                        messages.success(request, f'✅ Successfully transitioned to {status}')
+                        print(f"🧪 DEBUG: Transition successful!")
+                    else:
+                        messages.error(request, f'❌ Transition failed: {result.msg}')
+                        print(f"🧪 DEBUG: Transition failed: {result.msg}")
+                elif result is True:
+                    # Boolean success
+                    messages.success(request, f'✅ Successfully transitioned to {status}')
                 else:
-                    messages.error(request, f'Transition failed: {getattr(result, "msg", "Unknown error")}')
+                    # Unknown result
+                    messages.warning(request, f'⚠️ Transition completed with unknown result: {result}')
+
+                # 🔥 FIX: Force refresh to see changes
+                obj.refresh_from_db()
+                print(f"🧪 DEBUG: New status after refresh: {obj.status}")
 
             except Exception as e:
-                messages.error(request, f'Error: {str(e)}')
+                print(f"🧪 DEBUG: Exception during transition: {e}")
+                messages.error(request, f'❌ Error: {str(e)}')
+
+        else:
+            # 🔥 FIX: Better error message for debugging
+            messages.error(request, f'❌ Missing parameters: action={action}, status={status}')
+            print(f"🧪 DEBUG: Missing params - action: {action}, status: {status}")
 
         return redirect('admin:purchases_purchaserequest_change', object_id)
 
@@ -568,6 +613,30 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
         }
 
         return TemplateResponse(request, 'admin/purchases/test_workflow.html', context)
+
+    def debug_workflow_action(self, request, object_id):
+        """Debug workflow action - shows what's happening"""
+        obj = self.get_object(request, object_id)
+        if not obj:
+            return redirect('admin:purchases_purchaserequest_changelist')
+
+        debug_info = []
+        debug_info.append(f"Method: {request.method}")
+        debug_info.append(f"GET params: {dict(request.GET)}")
+        debug_info.append(f"POST params: {dict(request.POST)}")
+        debug_info.append(f"Current status: {obj.status}")
+        debug_info.append(f"Document type: {obj.document_type}")
+
+        try:
+            actions = obj.get_available_actions(request.user)
+            debug_info.append(f"Available actions: {len(actions)}")
+            for action in actions:
+                debug_info.append(f"  - {action}")
+        except Exception as e:
+            debug_info.append(f"Error getting actions: {e}")
+
+        messages.info(request, "DEBUG INFO:\n" + "\n".join(debug_info))
+        return redirect('admin:purchases_purchaserequest_change', object_id)
 
     # =====================
     # ADMIN ACTIONS - UPDATED

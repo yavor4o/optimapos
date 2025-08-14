@@ -7,6 +7,8 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+
+from inventory.services import InventoryService
 from .base import BaseDocument, BaseDocumentLine, FinancialMixin, FinancialLineMixin
 
 logger = logging.getLogger(__name__)
@@ -616,9 +618,30 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
                 # Fallback validation
                 pass
 
+    def get_estimated_price(self):
+        """Използва InventoryService за estimated price"""
+        availability = InventoryService.check_availability(
+            self.request.location,
+            self.product,
+            Decimal('0')
+        )
+
+        # Проста логика: last_purchase_cost -> avg_cost -> 0
+        return (
+                availability['last_purchase_cost'] or
+                availability['avg_cost'] or
+                Decimal('0')
+        )
+
     # =====================
     # PROPERTIES - UNCHANGED
     # =====================
+
+    @property
+    def estimated_line_total(self):
+        """Общо за реда = quantity * estimated_price"""
+        return self.requested_quantity * self.get_estimated_price()
+
     @property
     def estimated_line_total(self):
         """Calculate estimated total from entered_price"""

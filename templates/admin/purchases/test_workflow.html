@@ -1,3 +1,5 @@
+<!-- templates/admin/purchases/test_workflow.html - FIXED VERSION -->
+
 {% extends "admin/base_site.html" %}
 {% load i18n admin_urls static %}
 
@@ -41,20 +43,44 @@
 .status-submitted { background: #ffc107; color: black; }
 .status-approved { background: #28a745; color: white; }
 .status-rejected { background: #dc3545; color: white; }
+
+.debug-info {
+    background: #f0f0f0;
+    padding: 10px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 11px;
+    margin: 10px 0;
+}
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="module">
-    <h1>🧪 Interactive Workflow Testing</h1>
+    <h1>🧪 Interactive Workflow Testing - FIXED</h1>
     <h2>{{ object.document_number }} - {{ object.supplier.name }}</h2>
 
+    <!-- Debug Panel -->
+    <div class="test-panel">
+        <h3>🐛 Debug Info</h3>
+        <div class="debug-info">
+            <div><strong>Current Status:</strong> {{ object.status }}</div>
+            <div><strong>Document Type:</strong> {{ object.document_type.name|default:"Not set" }}</div>
+            <div><strong>Available Actions Count:</strong> {{ available_actions|length }}</div>
+            <div><strong>User:</strong> {{ user.username }}</div>
+        </div>
+
+        <!-- Debug Button -->
+        <a href="{% url 'admin:purchases_purchaserequest_debug_workflow' object.id %}"
+           class="action-btn btn-secondary">🐛 Run Debug</a>
+    </div>
+
+    <!-- Current Status Panel -->
     <div class="test-panel">
         <h3>📋 Current Status</h3>
         <p><strong>Status:</strong>
             <span class="status-info status-{{ object.status }}">{{ object.status|upper }}</span>
         </p>
-        <p><strong>Document Type:</strong> {{ object.document_type.name|default:"Not set" }}</p>
         <p><strong>Can Edit:</strong>
             {% if can_edit %}
                 <span style="color: green;">✓ Yes</span>
@@ -66,31 +92,35 @@
         <p><strong>Request Type:</strong> {{ object.get_request_type_display }}</p>
     </div>
 
+    <!-- Available Actions Panel -->
     {% if available_actions %}
     <div class="test-panel">
-        <h3>🎬 Available Actions - CLICK TO TEST</h3>
+        <h3>🎬 Available Actions - FIXED BUTTONS</h3>
+
+        <!-- 🔥 FIX: Use GET method with URL parameters (simplest) -->
         {% for action in available_actions %}
             {% if action.action == "transition" %}
-                <form method="post" action="{% url 'admin:purchases_purchaserequest_workflow' object.id %}" style="display: inline;">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="{{ action.action }}">
-                    <input type="hidden" name="status" value="{{ action.status }}">
-                    <button type="submit" class="action-btn btn-{{ action.button_style|default:'primary' }}"
-                            onclick="return confirm('Execute transition: {{ action.label }}?')">
-                        🚀 {{ action.label }}
-                    </button>
-                </form>
+                <a href="{% url 'admin:purchases_purchaserequest_workflow' object.id %}?action={{ action.action }}&status={{ action.status }}"
+                   class="action-btn btn-{{ action.button_style|default:'primary' }}"
+                   onclick="return confirm('Execute transition: {{ action.label }}?')">
+                    🚀 {{ action.label }}
+                </a>
             {% endif %}
         {% endfor %}
 
         <hr style="margin: 15px 0;">
 
-        <h4>Manual Transition Test:</h4>
-        <form method="post" action="{% url 'admin:purchases_purchaserequest_workflow' object.id %}" style="margin-top: 10px;">
+        <!-- 🔥 FIX: Manual form with POST (for testing both approaches) -->
+        <h4>Manual POST Form:</h4>
+        <form method="post" action="{% url 'admin:purchases_purchaserequest_workflow' object.id %}">
             {% csrf_token %}
-            <input type="hidden" name="action" value="transition">
 
-            <label for="manual-status">Select Status:</label>
+            <label for="manual-action">Action:</label>
+            <select name="action" id="manual-action" style="padding: 4px; margin: 0 10px;">
+                <option value="transition">transition</option>
+            </select>
+
+            <label for="manual-status">Status:</label>
             <select name="status" id="manual-status" style="padding: 4px; margin: 0 10px;">
                 <option value="">Choose status...</option>
                 <option value="draft">Draft</option>
@@ -98,17 +128,21 @@
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
                 <option value="cancelled">Cancelled</option>
-                <option value="converted">Converted</option>
             </select>
 
-            <input type="text" name="comments" placeholder="Optional comments..." style="padding: 4px; margin: 0 10px; width: 200px;">
+            <input type="text" name="comments" placeholder="Optional comments..."
+                   style="padding: 4px; margin: 0 10px; width: 200px;">
 
-            <button type="submit" class="action-btn btn-danger" onclick="return confirm('Execute manual transition?')">
-                ⚡ Manual Transition
+            <button type="submit" class="action-btn btn-danger"
+                    onclick="return confirm('Execute POST transition?')">
+                ⚡ POST Transition
             </button>
         </form>
 
-        <div style="margin-top: 15px;">
+        <!-- 🔥 Debug Actions Display -->
+        <hr style="margin: 15px 0;">
+        <h4>Debug: Available Actions Data</h4>
+        <div class="debug-info">
             {% for action in available_actions %}
                 <div style="margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 3px; background: white;">
                     <strong>{{ action.label }}</strong><br>
@@ -122,26 +156,35 @@
     <div class="test-panel">
         <h3>❌ No Actions Available</h3>
         <p>No workflow actions are available for the current user and document state.</p>
+
+        <!-- Still add debug button -->
+        <a href="{% url 'admin:purchases_purchaserequest_debug_workflow' object.id %}"
+           class="action-btn btn-secondary">🐛 Debug Why No Actions</a>
     </div>
     {% endif %}
 
+    <!-- Workflow Info Panel -->
     {% if workflow_info %}
     <div class="test-panel">
         <h3>⚙️ Nomenclatures Workflow Information</h3>
-        <p><strong>Current Status:</strong> {{ workflow_info.current_status }}</p>
-        <p><strong>Available Transitions:</strong> {{ workflow_info.available_transitions|length }}</p>
-        <p><strong>Configured Statuses:</strong> {{ workflow_info.configured_statuses|length }}</p>
+        <div class="debug-info">
+            <div><strong>Current Status:</strong> {{ workflow_info.current_status }}</div>
+            <div><strong>Available Transitions:</strong> {{ workflow_info.available_transitions|length }}</div>
+            <div><strong>Configured Statuses:</strong> {{ workflow_info.configured_statuses|length }}</div>
+        </div>
 
         {% if workflow_info.configured_statuses %}
         <h4>Configured Workflow Statuses:</h4>
         <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
             {% for status in workflow_info.configured_statuses %}
-                <div style="border: 1px solid #ddd; padding: 8px; border-radius: 4px; min-width: 120px; text-align: center;">
-                    <div><strong>{{ status.name }}</strong></div>
-                    <div style="color: {{ status.color|default:'#000' }}; font-size: 11px;">{{ status.code }}</div>
-                    {% if status.is_initial %}<span style="background: #17a2b8; color: white; padding: 1px 4px; border-radius: 2px; font-size: 9px;">INITIAL</span>{% endif %}
-                    {% if status.is_final %}<span style="background: #28a745; color: white; padding: 1px 4px; border-radius: 2px; font-size: 9px;">FINAL</span>{% endif %}
-                    {% if status.is_cancellation %}<span style="background: #dc3545; color: white; padding: 1px 4px; border-radius: 2px; font-size: 9px;">CANCEL</span>{% endif %}
+                <div style="border: 1px solid #ddd; padding: 8px; border-radius: 4px;
+                           background: {{ status.color|default:'#f8f9fa' }};
+                           color: {% if status.color == '#ffffff' %}black{% else %}white{% endif %};">
+                    <strong>{{ status.name }}</strong><br>
+                    <small>{{ status.code }}</small>
+                    {% if status.is_initial %}<br><small>📥 INITIAL</small>{% endif %}
+                    {% if status.is_final %}<br><small>🔚 FINAL</small>{% endif %}
+                    {% if status.is_cancellation %}<br><small>❌ CANCEL</small>{% endif %}
                 </div>
             {% endfor %}
         </div>
@@ -149,60 +192,20 @@
     </div>
     {% endif %}
 
+    <!-- Navigation -->
     <div class="test-panel">
-        <h3>📊 Model Information</h3>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-            <div>
-                <p><strong>Approval Required:</strong> {{ object.approval_required|yesno:"Yes,No" }}</p>
-                <p><strong>Requested By:</strong> {{ object.requested_by.get_full_name|default:object.requested_by.username }}</p>
-                <p><strong>Lines Count:</strong> {{ object.lines.count }}</p>
-                <p><strong>Estimated Total:</strong> {{ object.get_estimated_total }} лв</p>
-            </div>
-            <div>
-                {% if object.approved_by %}
-                    <p><strong>Approved By:</strong> {{ object.approved_by.get_full_name }}</p>
-                    <p><strong>Approved At:</strong> {{ object.approved_at|date:"Y-m-d H:i" }}</p>
-                {% endif %}
-                {% if object.rejection_reason %}
-                    <p><strong>Rejection Reason:</strong> {{ object.rejection_reason }}</p>
-                {% endif %}
-                {% if object.converted_to_order %}
-                    <p><strong>Converted to Order:</strong> {{ object.converted_to_order.document_number }}</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <div class="test-panel">
-        <h3>🔄 Quick Actions</h3>
-        <a href="{% url 'admin:purchases_purchaserequest_change' object.id %}" class="action-btn btn-secondary">
-            ← Back to Document
-        </a>
-        <button onclick="location.reload()" class="action-btn btn-primary">
-            🔄 Refresh Status
-        </button>
-        <a href="{% url 'admin:purchases_purchaserequest_changelist' %}" class="action-btn btn-secondary">
-            📋 All Requests
-        </a>
+        <h3>🔙 Navigation</h3>
+        <a href="{% url 'admin:purchases_purchaserequest_change' object.id %}"
+           class="action-btn btn-secondary">↩️ Back to Edit</a>
+        <a href="{% url 'admin:purchases_purchaserequest_changelist' %}"
+           class="action-btn btn-secondary">📋 Back to List</a>
     </div>
 </div>
 
 <script>
-// Add some interactivity
-document.addEventListener('DOMContentLoaded', function() {
-    // Highlight current status
-    const currentStatus = '{{ object.status }}';
-    console.log('Current document status:', currentStatus);
-
-    // Auto-select current status in manual dropdown (for debugging)
-    const manualSelect = document.getElementById('manual-status');
-    if (manualSelect) {
-        manualSelect.addEventListener('change', function() {
-            if (this.value) {
-                console.log('Selected manual transition to:', this.value);
-            }
-        });
-    }
-});
+// Add some JavaScript for debugging
+console.log('🧪 Workflow test page loaded');
+console.log('Available actions:', {{ available_actions|length }});
+console.log('Current status:', '{{ object.status }}');
 </script>
 {% endblock %}

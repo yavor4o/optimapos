@@ -162,18 +162,18 @@ class DocumentService:
     def transition_document(document, to_status: str, user: User,
                             comments: str = '', **kwargs) -> Result:
         """
-        Execute document status transition
+        Execute document status transition - COMPLETE FIXED VERSION
 
         ЛОГИКА:
         1. Ако requires_approval=True → ApprovalService authorization + ApprovalRule
         2. Ако requires_approval=False → DocumentTypeStatus validation САМО
         3. Винаги business validation
-        4. State change + logging
+        4. State change + conditional logging
         """
         try:
             from_status = document.status
 
-            logger.info(f"Transitioning {document.document_number}: {from_status} → {to_status}")
+            logger.info(f"🔄 Transitioning {document.document_number}: {from_status} → {to_status}")
 
             # Lock document за race condition protection
             document = document.__class__.objects.select_for_update().get(pk=document.pk)
@@ -187,47 +187,64 @@ class DocumentService:
 
             # 1. ОСНОВНА ВАЛИДАЦИЯ
             if not document.document_type:
+                logger.error(f"❌ Document {document.document_number} has no document_type")
                 return Result.error('NO_DOCUMENT_TYPE', 'Document has no type configured')
 
             # 2. СТАТУС ВАЛИДАЦИЯ (винаги се прави)
+            logger.debug(f"🔍 Validating status transition for {document.document_number}")
             status_result = DocumentService._validate_status_transition(document, to_status)
             if not status_result.ok:
+                logger.error(f"❌ Status validation failed: {status_result.msg}")
                 return status_result
 
             # 3. APPROVAL vs SIMPLE TRANSITION ЛОГИКА
+            approval_data = {}
+
             if document.document_type.requires_approval:
                 # === APPROVAL WORKFLOW ===
-                from .approval_service import ApprovalService
+                logger.debug(f"🔒 Document requires approval - checking ApprovalService")
+                try:
+                    from .approval_service import ApprovalService
 
-                decision = ApprovalService.authorize_transition(document, user, to_status)
-                if not decision.allowed:
-                    return Result.error(
-                        'AUTHORIZATION_DENIED',
-                        decision.reason,
-                        data={'rule_id': decision.rule_id, 'level': decision.level}
-                    )
+                    decision = ApprovalService.authorize_transition(document, user, to_status)
+                    if not decision.allowed:
+                        logger.warning(f"🚫 Approval denied: {decision.reason}")
+                        return Result.error(
+                            'AUTHORIZATION_DENIED',
+                            decision.reason,
+                            data={'rule_id': decision.rule_id, 'level': decision.level}
+                        )
 
-                # Approval успешен - продължаваме
-                approval_data = {
-                    'rule_id': decision.rule_id,
-                    'level': decision.level
-                }
+                    logger.info(f"✅ Approval authorized by rule {decision.rule_id}")
+                    approval_data = {
+                        'rule_id': decision.rule_id,
+                        'level': decision.level
+                    }
+
+                except ImportError:
+                    logger.error("❌ ApprovalService not available but document requires approval")
+                    return Result.error('APPROVAL_SERVICE_UNAVAILABLE', 'Approval system not available')
+
             else:
                 # === SIMPLE TRANSITION (малки магазини) ===
+                logger.debug(f"🟢 Simple transition - no approval required")
                 simple_result = DocumentService._validate_simple_transition(document, to_status, user)
                 if not simple_result.ok:
+                    logger.error(f"❌ Simple validation failed: {simple_result.msg}")
                     return simple_result
 
-                approval_data = {}
-
             # 4. BUSINESS VALIDATION
+            logger.debug(f"🔧 Validating business rules")
             business_result = DocumentService._validate_business_rules(
                 document, to_status, user, **kwargs
             )
             if not business_result.ok:
+                logger.error(f"❌ Business validation failed: {business_result.msg}")
                 return business_result
 
-            # 5. EXECUTE TRANSITION
+            # 5. 🚀 EXECUTE TRANSITION
+            logger.info(f"🚀 Executing transition: {from_status} → {to_status}")
+
             old_status = document.status
             document.status = to_status
 
@@ -239,19 +256,42 @@ class DocumentService:
             if hasattr(document, 'approved_at') and 'approv' in to_status.lower():
                 document.approved_at = timezone.now()
 
-            document.save()
+            # 🔥 CRITICAL FIX: Save document immediately
+            try:
+                document.save()
+                logger.info(f"💾 Document saved with new status: {to_status}")
+            except Exception as save_error:
+                logger.error(f"❌ Failed to save document: {save_error}")
+                return Result.error('SAVE_FAILED', f'Failed to save document: {save_error}')
 
-            # 6. LOG TRANSITION
-            DocumentService._log_transition(
-                document, approval_data.get('rule_id'), old_status, to_status, user, comments
-            )
+            # 6. 🔥 CONDITIONAL LOGGING (fixed)
+            try:
+                if document.document_type.requires_approval:
+                    # Log to ApprovalLog for approval workflows
+                    logger.debug(f"📝 Logging to ApprovalLog")
+                    DocumentService._log_transition(
+                        document, approval_data.get('rule_id'), old_status, to_status, user, comments
+                    )
+                else:
+                    # Log to Django admin log for simple transitions
+                    logger.debug(f"📝 Logging to Admin log (simple transition)")
+                    DocumentService._log_simple_transition(
+                        document, old_status, to_status, user, comments
+                    )
+            except Exception as log_error:
+                # Logging failure should NOT break the transition
+                logger.warning(f"⚠️ Logging failed but transition succeeded: {log_error}")
 
             # 7. POST-TRANSITION EFFECTS
-            DocumentService._execute_post_transition_actions(
-                document, old_status, to_status, user, **kwargs
-            )
+            try:
+                logger.debug(f"🔄 Executing post-transition actions")
+                DocumentService._execute_post_transition_actions(
+                    document, old_status, to_status, user, **kwargs
+                )
+            except Exception as post_error:
+                logger.warning(f"⚠️ Post-transition actions failed: {post_error}")
 
-            logger.info(f"Successfully transitioned {document.document_number} to {to_status}")
+            logger.info(f"✅ Successfully transitioned {document.document_number} to {to_status}")
 
             return Result.success(
                 data={
@@ -264,7 +304,9 @@ class DocumentService:
             )
 
         except Exception as e:
-            logger.error(f"Error transitioning {document.document_number}: {e}")
+            logger.error(f"💥 Error transitioning {document.document_number}: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return Result.error('TRANSITION_FAILED', str(e))
 
     # =====================
@@ -753,9 +795,22 @@ class DocumentService:
     @staticmethod
     def _log_transition(document, rule_id: Optional[int], from_status: str,
                         to_status: str, user: User, comments: str = ''):
-        """Log approval transition"""
+        """
+        🔥 FIXED: Log approval transition - SKIP for simple transitions
+        """
         try:
+            # 🔥 FIX: Skip logging for documents that don't require approval
+            if not document.document_type.requires_approval:
+                logger.debug(f"Skipping ApprovalLog for simple transition: {from_status} → {to_status}")
+                return
+
+            # 🔥 FIX: Skip logging if no rule_id (shouldn't happen for approval docs, but safety check)
+            if not rule_id:
+                logger.warning(f"No rule_id for approval document {document.document_number}, skipping log")
+                return
+
             from ..models.approvals import ApprovalLog, ApprovalRule
+            from django.contrib.contenttypes.models import ContentType
 
             content_type = ContentType.objects.get_for_model(document.__class__)
 
@@ -769,18 +824,18 @@ class DocumentService:
             else:
                 action = 'submitted'
 
-            # Get rule if provided
-            rule = None
-            if rule_id:
-                try:
-                    rule = ApprovalRule.objects.get(id=rule_id)
-                except ApprovalRule.DoesNotExist:
-                    pass
+            # Get rule
+            try:
+                rule = ApprovalRule.objects.get(id=rule_id)
+            except ApprovalRule.DoesNotExist:
+                logger.error(f"ApprovalRule {rule_id} not found for logging")
+                return
 
+            # Create log entry
             ApprovalLog.objects.create(
                 content_type=content_type,
                 object_id=document.pk,
-                rule=rule,
+                rule=rule,  # Now guaranteed to exist
                 action=action,
                 from_status=from_status,
                 to_status=to_status,
@@ -788,8 +843,39 @@ class DocumentService:
                 comments=comments or ''
             )
 
+            logger.debug(f"✅ Logged approval transition: {from_status} → {to_status}")
+
         except Exception as e:
-            logger.error(f"Error logging transition: {e}")
+            logger.error(f"❌ Error logging approval transition: {e}")
+            # 🔥 IMPORTANT: Don't re-raise - logging failure shouldn't break transition
+
+    # 🔥 ALSO ADD: Alternative logging for simple transitions (optional)
+    @staticmethod
+    def _log_simple_transition(document, from_status: str, to_status: str, user: User, comments: str = ''):
+        """
+        Log simple transition without ApprovalRule (optional alternative logging)
+        Could save to Django admin log or custom SimpleTransitionLog model
+        """
+        try:
+            from django.contrib.admin.models import LogEntry, CHANGE
+            from django.contrib.contenttypes.models import ContentType
+
+            content_type = ContentType.objects.get_for_model(document.__class__)
+
+            LogEntry.objects.log_action(
+                user_id=user.id,
+                content_type_id=content_type.id,
+                object_id=document.pk,
+                object_repr=str(document),
+                action_flag=CHANGE,
+                change_message=f"Status changed from {from_status} to {to_status}" +
+                               (f" - {comments}" if comments else "")
+            )
+
+            logger.debug(f"✅ Logged simple transition to admin log: {from_status} → {to_status}")
+
+        except Exception as e:
+            logger.debug(f"⚠️ Failed to log simple transition: {e}")
 
     @staticmethod
     def _execute_post_transition_actions(document, from_status: str, to_status: str,
