@@ -74,3 +74,5 @@ def last_purchase_price_api(request):
             'success': False,
             'error': str(e)
         })
+
+
