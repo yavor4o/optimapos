@@ -618,6 +618,40 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
                 # Fallback validation
                 pass
 
+    def save(self, *args, **kwargs):
+        """
+        ✅ PurchaseRequestLine specific save with movement sync
+        """
+        print(f"🔥 PurchaseRequestLine.save() called for line {getattr(self, 'line_number', 'NEW')}")
+        print(f"🔥 entered_price: {self.entered_price}")
+        print(f"🔥 requested_quantity: {self.requested_quantity}")
+
+        # Call parent save chain - ще извика FinancialLineMixin и BaseDocumentLine
+        super().save(*args, **kwargs)
+
+        print(f"🔥 After parent save - unit_price: {self.unit_price}")
+
+        # ✅ ДОБАВИ movement sync логика СЛЕД като parent save-овете са готови
+        if hasattr(self, 'document') and self.document:
+            try:
+                print(f"🔥 Checking movement sync via DocumentService...")
+
+                from nomenclatures.services import DocumentService
+
+                # Използвай DocumentService.handle_document_update
+                result = DocumentService.handle_document_update(
+                    document=self.document,
+                    user=getattr(self, '_updating_user', None),
+                    reason=f"Line {self.line_number} updated (qty: {self.requested_quantity}, price: {self.unit_price})"
+                )
+
+                print(f"🔥 DocumentService result: {result}")
+
+            except Exception as e:
+                print(f"🔥 Error in DocumentService.handle_document_update: {e}")
+                # Don't fail the save for movement errors
+                pass
+
     def get_estimated_price(self):
         try:
             from inventory.services import InventoryService
