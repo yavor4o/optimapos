@@ -76,3 +76,103 @@ def last_purchase_price_api(request):
         })
 
 
+from django.shortcuts import render, get_object_or_404
+from django.contrib.admin.views.decorators import staff_member_required
+from .models import PurchaseOrder
+
+
+@staff_member_required
+def test_order_workflow(request, pk):
+    order = get_object_or_404(PurchaseOrder, pk=pk)
+
+    # Get available actions (if DocumentService works)
+    available_actions = []
+    try:
+        from nomenclatures.services import DocumentService
+        available_actions = DocumentService.get_available_actions(order, request.user)
+    except:
+        pass
+
+    context = {
+        'object': order,
+        'available_actions': available_actions,
+        'current_user': request.user,
+    }
+
+    return render(request, 'admin/purchases/test_order_workflow.html', context)
+
+
+from django.shortcuts import render, get_object_or_404
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import JsonResponse
+from django.contrib import messages
+from django.views.decorators.http import require_http_methods
+from .models import PurchaseOrder
+
+
+@staff_member_required
+def test_order_workflow(request, pk):
+    order = get_object_or_404(PurchaseOrder, pk=pk)
+
+    # Get available actions (if DocumentService works)
+    available_actions = []
+    try:
+        from nomenclatures.services import DocumentService
+        available_actions = DocumentService.get_available_actions(order, request.user)
+    except:
+        pass
+
+    context = {
+        'object': order,
+        'available_actions': available_actions,
+        'current_user': request.user,
+    }
+
+    return render(request, 'admin/purchases/test_order_workflow.html', context)
+
+
+@staff_member_required
+@require_http_methods(['POST'])
+def workflow_action(request, pk):
+    """Handle workflow actions"""
+    order = get_object_or_404(PurchaseOrder, pk=pk)
+
+    action = request.POST.get('action')
+    status = request.POST.get('status')
+
+    # Handle different actions
+    if action == 'recalculate':
+        try:
+            # Recalculate order totals
+            if hasattr(order, 'calculate_totals'):
+                order.calculate_totals()
+                order.save()
+                return JsonResponse({'success': True, 'message': 'Totals recalculated'})
+            else:
+                return JsonResponse({'success': False, 'message': 'Calculate method not available'})
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)})
+
+    # НОВO: Real workflow transitions
+    elif status in ['sent', 'confirmed', 'completed', 'cancelled']:
+        try:
+            from nomenclatures.services import DocumentService
+            # ВАЖНО: Подавай request.user!
+            result = DocumentService.transition_document(order, status, request.user, f'Transition via workflow test')
+
+            if result.ok:
+                return JsonResponse({
+                    'success': True,
+                    'message': f'Successfully transitioned to {status}',
+                    'new_status': status
+                })
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'message': f'Transition failed: {result.msg}'
+                })
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)})
+
+    else:
+        return JsonResponse({'success': False, 'message': f'Unknown action: {action}'})

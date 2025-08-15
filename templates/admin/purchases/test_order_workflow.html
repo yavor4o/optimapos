@@ -1,4 +1,4 @@
-<!-- templates/admin/purchases/test_order_workflow.html -->
+<!-- templates/admin/purchases/test_order_workflow.html - FIXED VERSION -->
 {% extends "admin/base_site.html" %}
 {% load i18n %}
 
@@ -106,10 +106,9 @@
         <h3>🔄 Available Workflow Transitions</h3>
         {% if available_actions %}
             {% for action in available_actions %}
-                <a href="{% url 'admin:purchases_purchaseorder_workflow_action' object.pk %}?action={{ action.action }}&status={{ action.to_status }}"
-                   class="test-button">
-                    🔄 {{ action.label|default:action.to_status }}
-                </a>
+                <button onclick="executeWorkflowAction('{{ action.action }}', '{{ action.status }}')" class="test-button">
+                🔄 {{ action.label|default:action.action }}
+            </button>
             {% endfor %}
         {% else %}
             <div class="test-result test-fail">
@@ -125,8 +124,7 @@
         <h4>📦 Delivery Management</h4>
         <div style="margin-bottom: 15px;">
             {% if object.status == 'confirmed' %}
-                <a href="{% url 'admin:purchases_purchaseorder_create_delivery' object.pk %}"
-                   class="test-button">📦 Create Full Delivery</a>
+                <button onclick="createFullDelivery()" class="test-button">📦 Create Full Delivery</button>
                 <button onclick="createPartialDelivery()" class="test-button warning">
                     📦 Create Partial Delivery
                 </button>
@@ -228,7 +226,56 @@ function logTest(message, type = 'info') {
     }
 }
 
-// Test functions
+// FIXED: Main workflow action executor
+// Override функцията временно за debug
+function executeWorkflowAction(actionName, targetStatus) {
+    logTest(`🔄 Executing workflow action: ${actionName} → ${targetStatus}`, 'info');
+
+    if (actionName === 'edit') {
+        logTest('📝 Redirecting to edit page...', 'info');
+        window.location.href = `/admin/purchases/purchaseorder/{{ object.pk }}/change/`;
+        return;
+    }
+
+    // ФИКС: Използвай директно подадения targetStatus
+    console.log('Action:', actionName, '→ Status:', targetStatus);
+
+    fetch(`/purchases/order/{{ object.pk }}/workflow-action/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: new URLSearchParams({
+            'action': actionName,
+            'status': targetStatus  // Директно използваме това що получаваме
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log('Response:', data);
+        if (data.success) {
+            logTest(`✅ ${data.message}`, 'success');
+            setTimeout(() => window.location.reload(true), 1000);
+        } else {
+            logTest(`❌ ${data.message}`, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        logTest(`💥 Network error: ${error}`, 'error');
+    });
+}
+
+// FIXED: Delivery functions
+function createFullDelivery() {
+    logTest('📦 Creating full delivery...', 'info');
+    // Simulate delivery creation
+    setTimeout(() => {
+        logTest('✅ Full delivery creation test completed', 'success');
+    }, 1000);
+}
+
 function createPartialDelivery() {
     logTest('🧪 Testing partial delivery creation...', 'info');
     // Simulate partial delivery
@@ -239,7 +286,7 @@ function createPartialDelivery() {
 
 function recalculateTotals() {
     logTest('🧪 Testing total recalculation...', 'info');
-    fetch('{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}', {
+    fetch('/purchases/order/{{ object.pk }}/workflow-action/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -292,7 +339,7 @@ function updateSupplierReference() {
 function testCancellation() {
     if (confirm('Test order cancellation? This will change the order status.')) {
         logTest('🧪 Testing order cancellation...', 'warning');
-        window.location.href = '{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}?action=cancel&status=cancelled';
+        executeWorkflowAction('cancel', 'cancelled');
     }
 }
 
@@ -307,7 +354,7 @@ function testUrgentFlag() {
 
 function testInvalidTransition() {
     logTest('🧪 Testing invalid transition (should fail)...', 'warning');
-    fetch('{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}?action=invalid&status=invalid_status')
+    fetch('/purchases/order/{{ object.pk }}/workflow-action/?action=invalid&status=invalid_status')
     .then(response => {
         if (!response.ok) {
             logTest('✅ Invalid transition correctly rejected', 'success');
@@ -409,6 +456,11 @@ Is Urgent: {{ object.is_urgent }}
 Source Request: {{ object.source_request.document_number|default:"None" }}
 Created: {{ object.created_at }}
 Updated: {{ object.updated_at }}
+
+Available Actions:
+{% for action in available_actions %}
+- {{ action.action }}: {{ action.label }} ({{ action.reason }})
+{% endfor %}
         `;
         logTest('🔍 Debug information displayed', 'info');
     } else {

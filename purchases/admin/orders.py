@@ -41,59 +41,16 @@ class PurchaseOrderLineInline(admin.TabularInline):
     readonly_fields = ['line_number', 'line_total_display']
 
     def line_total_display(self, obj):
-        """Rich line total с ТОЧНИТЕ полета от миграциите"""
         if not obj or not obj.ordered_quantity:
             return '-'
-
         try:
-            # FIXED: Използваме точно полетата от миграциите
-            ordered_qty = float(obj.ordered_quantity or 0)  # PurchaseOrderLine field
-            entered_price = float(obj.entered_price or 0)   # FinancialLineMixin field
-            unit_price = float(obj.unit_price or 0)         # FinancialLineMixin field
-            discount_percent = float(obj.discount_percent or 0)  # FinancialLineMixin field
-            vat_rate = float(obj.vat_rate or 20)            # FinancialLineMixin field
+            ordered_qty = float(obj.ordered_quantity or 0)
+            entered_price = float(obj.entered_price or 0)
+            unit_price = float(obj.unit_price or 0)
+            discount_percent = float(obj.discount_percent or 0)
 
-            # Използваме computed properties от FinancialLineMixin (ако са налични)
-            net_amount = float(getattr(obj, 'net_amount', 0))
-            gross_amount = float(getattr(obj, 'gross_amount', 0))
-            vat_amount = float(getattr(obj, 'vat_amount', 0))
-
-            # Fallback calculation ако properties не работят
-            if net_amount == 0 and unit_price > 0 and ordered_qty > 0:
-                gross_line = ordered_qty * unit_price
-                discount_amount = gross_line * (discount_percent / 100)
-                net_amount = gross_line - discount_amount
-                vat_amount = net_amount * (vat_rate / 100)
-                gross_amount = net_amount + vat_amount
-
-            # Color coding
-            color = '#27ae60' if net_amount > 0 else '#e74c3c'
-
-            html = (
-                f'<div style="text-align: right; font-size: 10px; line-height: 1.2;">'
-                f'<div style="color: #666;">Ordered: {ordered_qty:.3f}</div>'
-                f'<div style="color: #666;">Entered: {entered_price:.2f} / Unit: {unit_price:.2f} лв</div>'
-                f'<div style="color: #e67e22;">Discount: -{discount_percent:.1f}%</div>'
-                f'<div style="color: {color}; font-weight: bold; font-size: 12px;">Net: {net_amount:.2f} лв</div>'
-                f'<div style="color: #3498db; font-size: 9px;">VAT: {vat_amount:.2f} ({vat_rate:.0f}%)</div>'
-                f'<div style="color: #2c3e50; font-weight: bold;">Total: {gross_amount:.2f} лв</div>'
-                f'</div>'
-            )
-
+            html = f'<div>Qty: {ordered_qty:.3f}<br>Price: {unit_price:.2f} лв</div>'
             return mark_safe(html)
-
-        except Exception as e:
-            return (
-                f'Calc Error: {e}'
-                f'<div style="color: #e67e22;">Disc: -{discount_percent:.1f}%</div>'
-                f'<div style="color: {color}; font-weight: bold; font-size: 12px;">Net: {net_amount:.2f} лв</div>'
-                f'<div style="color: #3498db; font-size: 9px;">VAT: {vat_amount:.2f} ({vat_rate:.0f}%)</div>'
-                f'<div style="color: #2c3e50; font-weight: bold;">Total: {gross_amount:.2f} лв</div>'
-                f'</div>'
-            )
-
-            return mark_safe(html)
-
         except Exception as e:
             return f'Error: {e}'
 
@@ -471,56 +428,26 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     supplier_confirmed_display.admin_order_field = 'supplier_confirmed'
 
     def workflow_actions_display(self, obj):
-        """Live workflow actions с test link - FIXED"""
         try:
             from nomenclatures.services import DocumentService
             actions = DocumentService.get_available_actions(obj, None)
 
-            # Test workflow link
-            test_url = reverse('admin:purchases_purchaseorder_test_workflow', args=[obj.pk])
-            test_link = (
-                f'<a href="{test_url}" style="background: #17a2b8; color: white; padding: 2px 5px; '
-                f'border-radius: 2px; font-size: 9px; text-decoration: none; margin-right: 3px;">'
-                f'🧪 Test</a>'
+            # Добави test link
+            test_url = f'/purchases/order/{obj.pk}/test-workflow/'
+            test_link = format_html(
+                '<a href="{}" style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 2px; font-size: 9px; text-decoration: none; margin-right: 3px;">🧪 Test</a>',
+                test_url
             )
 
-            if not actions:
-                return mark_safe(test_link + '<span style="color: #95a5a6;">No actions</span>')
-
-            # Show up to 2 most important actions
-            action_buttons = [test_link]
-            for action in actions[:2]:
-                button_style = action.get('button_style', 'secondary')
-                colors = {
-                    'primary': '#3498db',
-                    'success': '#27ae60',
-                    'warning': '#f39c12',
-                    'danger': '#e74c3c',
-                    'secondary': '#95a5a6'
-                }
-
-                color = colors.get(button_style, '#95a5a6')
-
-                action_buttons.append(
-                    f'<span style="background: {color}; color: white; padding: 2px 5px; '
-                    f'border-radius: 2px; font-size: 9px; margin-right: 2px;">'
-                    f'{action["label"]}'
-                    f'</span>'
-                )
-
-            return mark_safe(''.join(action_buttons))
-
-        except ImportError:
-            test_url = reverse('admin:purchases_purchaseorder_test_workflow', args=[obj.pk])
-            test_link = (
-                f'<a href="{test_url}" style="background: #17a2b8; color: white; padding: 2px 5px; '
-                f'border-radius: 2px; font-size: 9px; text-decoration: none;">'
-                f'🧪 Test</a>'
-            )
-            return mark_safe(test_link + ' <span style="color: #f39c12;">Service unavailable</span>')
-        except Exception as e:
-            return format_html('<span style="color: #e74c3c;">Error: {}</span>', str(e)[:20])
-
+            if actions:
+                return format_html('{} <span style="color: #27ae60;">{} actions</span>', test_link, len(actions))
+            else:
+                return format_html('{} <span style="color: #95a5a6;">No actions</span>', test_link)
+        except:
+            test_url = f'/purchases/order/{obj.pk}/test-workflow/'
+            return format_html(
+                '<a href="{}" style="background: #17a2b8; color: white; padding: 2px 6px; border-radius: 2px; font-size: 9px; text-decoration: none;">🧪 Test</a>',
+                test_url)
     workflow_actions_display.short_description = 'Available Actions'
 
     # =====================
