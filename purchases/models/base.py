@@ -581,8 +581,12 @@ class BaseDocumentLine(models.Model):
             # Check if Product has unit compatibility method
             if hasattr(self.product, 'is_unit_compatible'):
                 if not self.product.is_unit_compatible(self.unit):
+                    error_message = _('Unit %(unit_code)s is not compatible with product %(product_code)s') % {
+                        'unit_code': self.unit.code,
+                        'product_code': self.product.code
+                    }
                     raise ValidationError({
-                        'unit': _(f'Unit {self.unit.code} is not compatible with product {self.product.code}')
+                        'unit': error_message
                     })
             # Basic fallback: check if unit matches product's base_unit
             elif hasattr(self.product, 'base_unit') and self.product.base_unit:

@@ -284,23 +284,31 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
     # VALIDATION - UPDATED TO USE NOMENCLATURES
     # =====================
     def clean(self):
-        """Request-specific validation - SYNCHRONIZED"""
+        """Request-specific validation"""
         super().clean()
 
-        # REMOVED: Hardcoded status validations
-        # The nomenclatures system will handle status transitions
+        # Approval validation
+        if self.status == 'approved':
+            if not self.approved_by:
+                raise ValidationError({
+                    'approved_by': _('Approved by is required when status is approved')
+                })
+            if not self.approved_at:
+                self.approved_at = timezone.now()
 
-        # Business validation still applies
-        if self.urgency_level == 'critical' and not self.business_justification:
-            raise ValidationError({
-                'business_justification': _('Critical requests must have detailed justification')
-            })
+        # Rejection validation
+        if self.status == 'rejected':
+            if not self.rejection_reason:
+                raise ValidationError({
+                    'rejection_reason': _('Rejection reason is required when status is rejected')
+                })
 
-        # Legacy field sync (for backward compatibility)
-        if self.status == 'converted' and not self.converted_to_order:
-            raise ValidationError({
-                'converted_to_order': _('Converted to order is required when status is converted')
-            })
+        # Conversion validation
+        if self.status == 'converted':
+            if not self.converted_to_order:
+                raise ValidationError({
+                    'converted_to_order': _('Converted to order is required when status is converted')
+                })
 
     # =====================
     # PROPERTIES - UPDATED TO BE DYNAMIC
