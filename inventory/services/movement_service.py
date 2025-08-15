@@ -1106,35 +1106,67 @@ class MovementService:
     def sync_movements_with_document(document, user=None, reason: str = '') -> dict:
         """
         Synchronize movements with current document state
-        First reverses existing movements, then creates new ones
+        ✅ FIXED: More aggressive cleanup
         """
         try:
-            # 1. Reverse всички стари движения
-            reversed_count = MovementService.reverse_document_movements(
-                document,
-                reason=f"Sync correction: {reason}"
+            # 1. ✅ НАМЕРИ И ИЗТРИЙ ВСИЧКИ СВЪРЗАНИ ДВИЖЕНИЯ (INCLUDING REVERSALS)
+            from inventory.models import InventoryMovement
+
+            # Оригинални движения
+            original_movements = InventoryMovement.objects.filter(
+                source_document_type__in=['PURCHASE_REQUEST', 'PURCHASEREQUEST'],
+                source_document_number=document.document_number
             )
 
-            # 2. Създай нови движения според текущото състояние
-            new_movements = MovementService.create_from_document(document)
+            # Reversal движения (може да са с различни source_document_number)
+            reversal_movements = InventoryMovement.objects.filter(
+                source_document_type='REVERSAL'
+            ).filter(
+                source_document_number__contains=document.document_number
+            )
+
+            original_count = original_movements.count()
+            reversal_count = reversal_movements.count()
+
+            # DELETE ALL
+            original_movements.delete()
+            reversal_movements.delete()
+
+            logger.info(f"Deleted {original_count} original + {reversal_count} reversal movements")
+
+            # 2. ✅ СЪЗДАЙ FRESH MOVEMENTS ако статусът изисква
+            new_movements = []
+
+            try:
+                from nomenclatures.models import DocumentTypeStatus
+
+                current_config = DocumentTypeStatus.objects.filter(
+                    document_type=document.document_type,
+                    status__code=document.status,
+                    is_active=True
+                ).first()
+
+                if current_config and current_config.creates_inventory_movements:
+                    new_movements = MovementService.create_from_document(document)
+                    logger.info(f"Created {len(new_movements)} fresh movements")
+
+            except Exception as e:
+                logger.warning(f"Could not check status config: {e}")
 
             return {
                 'success': True,
-                'reversed_movements': reversed_count,
+                'deleted_original': original_count,
+                'deleted_reversal': reversal_count,
                 'created_movements': len(new_movements),
-                'total_corrections': reversed_count + len(new_movements)
+                'total_corrections': original_count + reversal_count + len(new_movements)
             }
 
         except Exception as e:
             logger.error(f"Error syncing movements with document: {e}")
             return {
                 'success': False,
-                'error': str(e),
-                'reversed_movements': 0,
-                'created_movements': 0
+                'error': str(e)
             }
-
-    # inventory/services/movement_service.py - Поправи _create_from_purchase_request
 
     @staticmethod
     def _create_from_purchase_request(request) -> List[InventoryMovement]:

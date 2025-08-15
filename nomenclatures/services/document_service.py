@@ -890,50 +890,76 @@ class DocumentService:
 
     @staticmethod
     def _handle_inventory_movements(document, from_status: str, to_status: str):
-        """FIXED: Handle inventory movements based on DocumentTypeStatus configuration"""
+        """Handle inventory movements based on DocumentTypeStatus configuration"""
         try:
-            # Намери конфигурацията за новия статус
             to_status_config = DocumentTypeStatus.objects.filter(
                 document_type=document.document_type,
                 status__code=to_status,
                 is_active=True
             ).first()
 
-            if not to_status_config:
-                logger.warning(f"No status configuration found for {document.document_type.name} + {to_status}")
+            if not to_status_config or not document.document_type.affects_inventory:
                 return
-
-            # Провери дали document type изобщо засяга inventory
-            if not document.document_type.affects_inventory:
-                return
-
-
 
             # 1. ОТМЕНИ движения ако новия статус изисква
             if to_status_config.reverses_inventory_movements:
                 try:
                     from inventory.services.movement_service import MovementService
-                    reversed_count = MovementService.reverse_document_movements(document,
-                                                                                f"Status changed to {to_status}")
+                    reversed_count = MovementService.reverse_document_movements(
+                        document, f"Status changed to {to_status}"
+                    )
                     logger.info(f"Reversed {reversed_count} movements for {document.document_number}")
-                except ImportError:
-                    logger.warning("MovementService not available")
                 except Exception as e:
                     logger.error(f"Error reversing movements: {e}")
 
-            # 2. СЪЗДАЙ движения ако новия статус изисква
+            # 2. ✅ СЪЗДАЙ движения САМО ако трябва И ги няма
             if to_status_config.creates_inventory_movements:
-                try:
-                    from inventory.services.movement_service import MovementService
-                    movements = MovementService.create_from_document(document)
-                    logger.info(f"Created {len(movements)} movements for {document.document_number}")
-                except ImportError:
-                    logger.warning("MovementService not available")
-                except Exception as e:
-                    logger.error(f"Error creating movements: {e}")
+                # ✅ ПРОВЕРИ ДАЛИ ВЕЧЕ ИМА ПРАВИЛНИ ДВИЖЕНИЯ
+                if not DocumentService._has_correct_movements_for_status(document, to_status):
+                    try:
+                        from inventory.services.movement_service import MovementService
+                        new_movements = MovementService.create_from_document(document)
+                        logger.info(f"Created {len(new_movements)} movements for {document.document_number}")
+                    except Exception as e:
+                        logger.error(f"Error creating movements: {e}")
+                else:
+                    logger.info(f"Document {document.document_number} already has correct movements for {to_status}")
 
         except Exception as e:
             logger.error(f"Error handling inventory movements: {e}")
+
+    @staticmethod
+    def _has_correct_movements_for_status(document, status: str) -> bool:
+        """
+        ✅ NEW: Check if document already has correct movements for given status
+        """
+        try:
+            from inventory.models import InventoryMovement
+
+            # За approved статус - провери дали има IN движения които отговарят на текущите линии
+            if status == 'approved':
+                current_movements = InventoryMovement.objects.filter(
+                    source_document_type__in=['PURCHASE_REQUEST', 'PURCHASEREQUEST'],
+                    source_document_number=document.document_number,
+                    movement_type='IN'
+                )
+
+                expected_total = sum(
+                    line.requested_quantity for line in document.lines.all()
+                    if line.requested_quantity
+                )
+
+                actual_total = sum(mov.quantity for mov in current_movements)
+
+                # Ако totals-ите съвпадат - има правилни движения
+                return abs(expected_total - actual_total) < 0.001
+
+            # За други статуси - assume че няма правилни движения
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking movements for status: {e}")
+            return False
 
     @staticmethod
     def _update_document_calculations(document, status: str):
@@ -1151,18 +1177,25 @@ class DocumentService:
     @staticmethod
     def handle_document_update(document, user, reason: str = '') -> dict:
         """
-        NEW: Handle document updates with inventory movement correction
+        Handle document updates with inventory movement correction
+        ✅ FIXED: Only sync if there are actual changes
         """
         try:
             current_config = DocumentService._get_document_type_status_config(document)
-
-            # Провери дали документът има движения
             has_movements = DocumentService._document_has_movements(document)
 
             if has_movements and current_config.allows_movement_correction:
 
+                # ✅ ДОБАВИ CHANGE DETECTION
+                if not DocumentService._document_needs_sync(document):
+                    return {
+                        'success': True,
+                        'auto_corrected': False,
+                        'message': 'No sync needed - document movements are current'
+                    }
+
                 if current_config.auto_correct_movements_on_edit:
-                    # АВТОМАТИЧНА корекция
+                    # АВТОМАТИЧНА корекция САМО ако има промени
                     from inventory.services.movement_service import MovementService
                     correction_result = MovementService.sync_movements_with_document(
                         document=document,
@@ -1176,7 +1209,6 @@ class DocumentService:
                         'movements_corrected': correction_result.get('total_corrections', 0)
                     }
                 else:
-                    # РЪЧНА корекция - върни warning
                     return {
                         'success': True,
                         'auto_corrected': False,
@@ -1184,7 +1216,6 @@ class DocumentService:
                         'message': 'Document has movements that need manual correction'
                     }
 
-            # Няма движения или не се изисква корекция
             return {'success': True, 'auto_corrected': False}
 
         except Exception as e:
@@ -1192,14 +1223,58 @@ class DocumentService:
             return {'success': False, 'error': str(e)}
 
     @staticmethod
-    def _document_has_movements(document) -> bool:
-        """NEW: Check if document has any inventory movements"""
+    def _document_needs_sync(document) -> bool:
+        """
+        ✅ NEW: Check if document movements need synchronization
+        """
         try:
             from inventory.models import InventoryMovement
+
+            # Намери текущите движения от документа
+            current_movements = InventoryMovement.objects.filter(
+                source_document_type__in=['PURCHASE_REQUEST', 'PURCHASEREQUEST'],
+                source_document_number=document.document_number
+            )
+
+            # Намери какво трябва да е според текущите линии
+            expected_total = sum(
+                line.requested_quantity
+                for line in document.lines.all()
+                if line.requested_quantity
+            )
+
+            # Намери какво е в движенията
+            actual_total = sum(
+                mov.quantity for mov in current_movements
+                if mov.movement_type == 'IN'
+            )
+
+            # Ако са различни - трябва sync
+            return abs(expected_total - actual_total) > 0.001
+
+        except Exception as e:
+            logger.error(f"Error checking document sync needs: {e}")
+            return True  # В случай на грешка, предположи че трябва sync
+
+    @staticmethod
+    def _document_has_movements(document) -> bool:
+        """NEW: Check if document has any inventory movements - FIXED"""
+        try:
+            from inventory.models import InventoryMovement
+
+            # ✅ ИЗПОЛЗВАЙ СЪЩАТА ЛОГИКА КАТО В reverse_document_movements
+            possible_types = [
+                document._meta.model_name.upper(),  # PURCHASEREQUEST
+                document.__class__.__name__.upper(),  # PURCHASEREQUEST
+                'PURCHASE_REQUEST',  # Manual mapping
+                document._meta.model_name.upper().replace('REQUEST', '_REQUEST'),  # PURCHASE_REQUEST
+            ]
+
             return InventoryMovement.objects.filter(
-                source_document_type=document._meta.model_name.upper(),
+                source_document_type__in=possible_types,
                 source_document_number=document.document_number
             ).exists()
+
         except ImportError:
             return False
 
