@@ -557,10 +557,23 @@ class BaseDocumentLine(models.Model):
         """Basic line validation - tolerant to None quantity"""
         super().clean()
 
+        # Quantity validation - tolerant to different quantity field names
+        quantity_value = getattr(self, 'quantity', None)
+        if quantity_value is None:
+            # Try other quantity field names
+            quantity_value = getattr(self, 'ordered_quantity', None)
+            if quantity_value is None:
+                quantity_value = getattr(self, 'requested_quantity', None)
 
-        if self.quantity is not None and self.quantity <= 0:
+        if quantity_value is not None and quantity_value <= 0:
+            field_name = 'quantity'
+            if hasattr(self, 'ordered_quantity'):
+                field_name = 'ordered_quantity'
+            elif hasattr(self, 'requested_quantity'):
+                field_name = 'requested_quantity'
+
             raise ValidationError({
-                'quantity': _('Quantity must be greater than zero')
+                field_name: _('Quantity must be greater than zero')
             })
 
         # Product-unit compatibility validation
@@ -676,13 +689,7 @@ class PaymentMixin(models.Model):
         if self.is_paid and not self.payment_date:
             self.payment_date = timezone.now().date()
 
-        # DocumentType payment validation
-        if hasattr(self, 'document_type') and self.document_type:
-            if self.document_type.requires_payment and not self.is_paid:
-                if self.status in ['completed', 'processed']:
-                    raise ValidationError({
-                        'is_paid': _('Payment is required for this document type')
-                    })
+
 
 
 class DeliveryMixin(models.Model):

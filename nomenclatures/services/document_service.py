@@ -315,6 +315,98 @@ class DocumentService:
     # SMART CONVENIENCE METHODS
     # =====================
 
+    # nomenclatures/services/document_service.py - ЛИПСВАЩИЯ МЕТОД
+
+    @staticmethod
+    def get_ready_for_processing_documents(model_class=None, queryset=None):
+        """
+        Get documents ready for next processing step - КОМПЕТИРАЛ ЛИПСВАЩИЯ МЕТОД
+
+        ЛОГИКА:
+        - Documents които са ОДОБРЕНИ но още НЕ СА започнали следващата стъпка
+        - За PurchaseRequest: approved но не converted
+        - За PurchaseOrder: confirmed но не delivered
+        - За DeliveryReceipt: received но не completed
+
+        ИЗПОЛЗВА:
+        - ApprovalRule.to_status_obj за статуси които са резултат от approval
+        - DocumentTypeStatus с can_be_processed=True (ако има такова поле)
+        - Fallback логика за всеки document type
+        """
+        if queryset is None:
+            if model_class is None:
+                raise ValueError("Either model_class or queryset must be provided")
+            queryset = model_class.objects.all()
+
+        try:
+            from ..models.approvals import ApprovalRule
+            from ..models.statuses import DocumentTypeStatus
+
+            processing_statuses = set()
+
+            # Get document type за този модел
+            doc_type = DocumentService._get_document_type_for_model(queryset.model)
+
+            if doc_type and doc_type.requires_approval:
+                # === APPROVAL WORKFLOW ЛОГИКА ===
+                # Намери статуси които са резултат от successful approval
+                rules = ApprovalRule.objects.filter(
+                    document_type=doc_type,
+                    is_active=True
+                )
+                # Вземи to_status от approval rules (това са одобрените статуси)
+                processing_statuses.update(rules.values_list('to_status_obj__code', flat=True))
+
+            else:
+                # === SIMPLE WORKFLOW ЛОГИКА ===
+                # Използвай DocumentTypeStatus за "processing ready" статуси
+                type_statuses = DocumentTypeStatus.objects.filter(
+                    document_type=doc_type,
+                    is_active=True,
+                    is_final=False,  # Не са финални
+                    # can_be_processed=True  # Ако има такова поле
+                )
+                processing_statuses.update(type_statuses.values_list('status__code', flat=True))
+
+            # === FALLBACK ПО MODEL TYPE ===
+            if not processing_statuses:
+                model_name = queryset.model.__name__.lower()
+
+                if 'request' in model_name:
+                    # PurchaseRequest: approved = готов за conversion в order
+                    processing_statuses = {'approved'}
+
+                elif 'order' in model_name:
+                    # PurchaseOrder: confirmed = готов за delivery creation
+                    processing_statuses = {'confirmed', 'sent'}
+
+                elif 'delivery' in model_name or 'receipt' in model_name:
+                    # DeliveryReceipt: received = готов за completion
+                    processing_statuses = {'received', 'partial'}
+
+                elif 'invoice' in model_name:
+                    # Invoice: approved = готов за payment
+                    processing_statuses = {'approved', 'sent'}
+
+                else:
+                    # Generic fallback
+                    processing_statuses = {'approved', 'confirmed', 'ready'}
+
+            return queryset.filter(status__in=processing_statuses)
+
+        except ImportError:
+            # === COMPLETE FALLBACK БЕЗ NOMENCLATURES ===
+            model_name = queryset.model.__name__.lower()
+
+            if 'request' in model_name:
+                return queryset.filter(status='approved')
+            elif 'order' in model_name:
+                return queryset.filter(status='confirmed')
+            elif 'delivery' in model_name:
+                return queryset.filter(status='received')
+            else:
+                return queryset.filter(status__in=['approved', 'confirmed', 'ready'])
+
     @staticmethod
     def submit_for_approval(document, user: User, comments: str = '') -> Result:
         """Submit document for approval - SMART VERSION"""

@@ -687,26 +687,21 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         """Order line validation - ENHANCED"""
         super().clean()
 
-        # Ordered quantity must be positive
-        if self.ordered_quantity <= 0:
-            raise ValidationError({
-                'ordered_quantity': _('Ordered quantity must be greater than zero')
-            })
-
         # Delivered quantity cannot exceed ordered
-        if self.delivered_quantity > self.ordered_quantity:
-            raise ValidationError({
-                'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
-            })
+        if self.ordered_quantity is not None and self.delivered_quantity is not None:
+            if self.delivered_quantity > self.ordered_quantity:
+                raise ValidationError({
+                    'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
+                })
 
         # Price validation
-        if self.unit_price and self.unit_price < 0:
+        if self.unit_price is not None and self.unit_price < 0:
             raise ValidationError({
                 'unit_price': _('Unit price cannot be negative')
             })
 
-        # Product availability validation using InventoryService
-        if self.product and self.document and self.document.location:
+        # Product availability validation
+        if self.product and self.document and self.document.location and self.ordered_quantity:
             try:
                 from products.services.validation_service import ProductValidationService
 
@@ -721,5 +716,4 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
                         'product': f"Cannot purchase this product: {message}"
                     })
             except ImportError:
-                # Fallback validation
                 pass
