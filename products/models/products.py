@@ -531,6 +531,25 @@ class Product(models.Model):
 
         return units
 
+    def is_unit_compatible(self, unit):
+        """
+        Check if unit is compatible with this product
+        Uses existing packaging system for validation
+        """
+        if not unit:
+            return False
+
+        # Base unit is always compatible
+        if self.base_unit == unit:
+            return True
+
+        # Check if unit exists in product's packaging configurations
+        # Използва съществуващия packagings related manager
+        return self.packagings.filter(
+            unit=unit,
+            is_active=True
+        ).exists()
+
     def get_valid_sale_units(self) -> List:
         """Get valid units for selling"""
         units = [self.base_unit]

@@ -557,23 +557,10 @@ class BaseDocumentLine(models.Model):
         """Basic line validation - tolerant to None quantity"""
         super().clean()
 
-        # Quantity validation - tolerant to different quantity field names
-        quantity_value = getattr(self, 'quantity', None)
-        if quantity_value is None:
-            # Try other quantity field names
-            quantity_value = getattr(self, 'ordered_quantity', None)
-            if quantity_value is None:
-                quantity_value = getattr(self, 'requested_quantity', None)
 
-        if quantity_value is not None and quantity_value <= 0:
-            field_name = 'quantity'
-            if hasattr(self, 'ordered_quantity'):
-                field_name = 'ordered_quantity'
-            elif hasattr(self, 'requested_quantity'):
-                field_name = 'requested_quantity'
-
+        if self.quantity is not None and self.quantity <= 0:
             raise ValidationError({
-                field_name: _('Quantity must be greater than zero')
+                'quantity': _('Quantity must be greater than zero')
             })
 
         # Product-unit compatibility validation
@@ -581,12 +568,8 @@ class BaseDocumentLine(models.Model):
             # Check if Product has unit compatibility method
             if hasattr(self.product, 'is_unit_compatible'):
                 if not self.product.is_unit_compatible(self.unit):
-                    error_message = _('Unit %(unit_code)s is not compatible with product %(product_code)s') % {
-                        'unit_code': self.unit.code,
-                        'product_code': self.product.code
-                    }
                     raise ValidationError({
-                        'unit': error_message
+                        'unit': _(f'Unit {self.unit.code} is not compatible with product {self.product.code}')
                     })
             # Basic fallback: check if unit matches product's base_unit
             elif hasattr(self.product, 'base_unit') and self.product.base_unit:

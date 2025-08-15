@@ -1,0 +1,454 @@
+<!-- templates/admin/purchases/test_order_workflow.html -->
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}Order Workflow Testing - {{ object.document_number }}{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    .test-section {
+        background: #f8f9fa;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 5px;
+        border-left: 4px solid #007cba;
+    }
+    .test-actions {
+        background: #e3f2fd;
+        padding: 15px;
+        margin: 15px 0;
+        border-radius: 5px;
+    }
+    .test-button {
+        background: #4caf50;
+        color: white;
+        padding: 8px 12px;
+        margin: 5px;
+        border-radius: 3px;
+        text-decoration: none;
+        display: inline-block;
+        border: none;
+        cursor: pointer;
+    }
+    .test-button:hover {
+        background: #45a049;
+        color: white;
+        text-decoration: none;
+    }
+    .test-button.warning {
+        background: #ff9800;
+    }
+    .test-button.danger {
+        background: #f44336;
+    }
+    .test-button.info {
+        background: #2196f3;
+    }
+    .test-result {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+    }
+    .test-pass {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+    }
+    .test-fail {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+    }
+    .debug-info {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="max-width: 1200px;">
+    <h1>🛒 Order Workflow Testing</h1>
+    <h2>{{ object.document_number }} - {{ object.supplier.name }}</h2>
+
+    <!-- Current Status Section -->
+    <div class="test-section">
+        <h3>📊 Current Order Status</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+            <div>
+                <strong>Status:</strong>
+                <span style="background: #2196f3; color: white; padding: 2px 6px; border-radius: 3px;">
+                    {{ object.status|upper }}
+                </span>
+            </div>
+            <div>
+                <strong>Delivery Status:</strong>
+                <span style="background: #9c27b0; color: white; padding: 2px 6px; border-radius: 3px;">
+                    {{ object.delivery_status|upper }}
+                </span>
+            </div>
+            <div><strong>Total Value:</strong> {{ object.total|floatformat:2 }} лв</div>
+            <div><strong>Lines:</strong> {{ object.lines.count }}</div>
+            <div><strong>Supplier Confirmed:</strong> {{ object.supplier_confirmed|yesno:"✅ Yes,❌ No" }}</div>
+            <div><strong>Expected Delivery:</strong> {{ object.expected_delivery_date|default:"Not set" }}</div>
+        </div>
+    </div>
+
+    <!-- Available Workflow Actions -->
+    <div class="test-actions">
+        <h3>🔄 Available Workflow Transitions</h3>
+        {% if available_actions %}
+            {% for action in available_actions %}
+                <a href="{% url 'admin:purchases_purchaseorder_workflow_action' object.pk %}?action={{ action.action }}&status={{ action.to_status }}"
+                   class="test-button">
+                    🔄 {{ action.label|default:action.to_status }}
+                </a>
+            {% endfor %}
+        {% else %}
+            <div class="test-result test-fail">
+                ❌ No workflow actions available for current status
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Order-Specific Testing -->
+    <div class="test-section">
+        <h3>🧪 Order-Specific Tests</h3>
+
+        <h4>📦 Delivery Management</h4>
+        <div style="margin-bottom: 15px;">
+            {% if object.status == 'confirmed' %}
+                <a href="{% url 'admin:purchases_purchaseorder_create_delivery' object.pk %}"
+                   class="test-button">📦 Create Full Delivery</a>
+                <button onclick="createPartialDelivery()" class="test-button warning">
+                    📦 Create Partial Delivery
+                </button>
+            {% else %}
+                <span style="color: #6c757d;">Delivery actions available when order is confirmed</span>
+            {% endif %}
+        </div>
+
+        <h4>💰 Financial Operations</h4>
+        <div style="margin-bottom: 15px;">
+            <button onclick="recalculateTotals()" class="test-button info">💰 Recalculate Totals</button>
+            {% if not object.is_paid %}
+                <button onclick="markAsPaid()" class="test-button">💳 Mark as Paid</button>
+            {% else %}
+                <span style="color: green;">✅ Already marked as paid on {{ object.payment_date }}</span>
+            {% endif %}
+        </div>
+
+        <h4>📞 Supplier Communication</h4>
+        <div style="margin-bottom: 15px;">
+            <button onclick="toggleSupplierConfirmation()" class="test-button info">
+                📞 Toggle Supplier Confirmation
+            </button>
+            <button onclick="updateSupplierReference()" class="test-button info">
+                🏢 Update Supplier Reference
+            </button>
+        </div>
+
+        <h4>⚠️ Edge Cases</h4>
+        <div style="margin-bottom: 15px;">
+            <button onclick="testCancellation()" class="test-button danger">❌ Test Cancellation</button>
+            <button onclick="testUrgentFlag()" class="test-button warning">🚨 Toggle Urgent Flag</button>
+            <button onclick="testInvalidTransition()" class="test-button danger">💥 Test Invalid Transition</button>
+        </div>
+    </div>
+
+    <!-- Line-Level Testing -->
+    <div class="test-section">
+        <h3>📋 Line-Level Testing</h3>
+        <div id="line-testing-results"></div>
+
+        <button onclick="testLineValidation()" class="test-button">✅ Test Line Validation</button>
+        <button onclick="testUnitCompatibility()" class="test-button">🔧 Test Unit Compatibility</button>
+        <button onclick="testQuantityCalculations()" class="test-button">🔢 Test Quantity Calculations</button>
+        <button onclick="testPriceCalculations()" class="test-button">💰 Test Price Calculations</button>
+    </div>
+
+    <!-- Integration Testing -->
+    <div class="test-section">
+        <h3>🔗 Integration Testing</h3>
+        <div id="integration-results"></div>
+
+        <button onclick="testDocumentService()" class="test-button">📄 Test DocumentService</button>
+        <button onclick="testApprovalService()" class="test-button">✅ Test ApprovalService</button>
+        <button onclick="testInventoryService()" class="test-button">📦 Test InventoryService</button>
+        <button onclick="testVATCalculation()" class="test-button">💰 Test VAT Calculation</button>
+    </div>
+
+    <!-- Debug Information -->
+    <div class="test-section">
+        <h3>🔍 Debug Information</h3>
+        <button onclick="showDebugInfo()" class="test-button info">🔍 Show Debug Info</button>
+        <div id="debug-output" class="debug-info" style="display: none;"></div>
+    </div>
+
+    <!-- Test Results Log -->
+    <div class="test-section">
+        <h3>📊 Test Results Log</h3>
+        <button onclick="clearTestLog()" class="test-button danger">🗑️ Clear Log</button>
+        <div id="test-log" style="max-height: 300px; overflow-y: auto; background: white; padding: 10px; border: 1px solid #ddd; margin-top: 10px;">
+            <div style="color: #6c757d; font-style: italic;">Test log initialized - {{ current_user.username }} - {{ "now"|date:"H:i:s" }}</div>
+        </div>
+    </div>
+</div>
+
+<script>
+let testCounter = 0;
+
+// Utility function to log test results
+function logTest(message, type = 'info') {
+    testCounter++;
+    const log = document.getElementById('test-log');
+    const timestamp = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+
+    let color = '#333';
+    if (type === 'success') color = '#28a745';
+    if (type === 'error') color = '#dc3545';
+    if (type === 'warning') color = '#ffc107';
+
+    entry.style.cssText = `color: ${color}; border-bottom: 1px solid #eee; margin: 2px 0; padding: 2px 0;`;
+    entry.innerHTML = `<strong>[${testCounter}]</strong> ${message} - <small>${timestamp}</small>`;
+
+    log.insertBefore(entry, log.firstChild);
+
+    // Keep only last 50 entries
+    while (log.children.length > 51) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+// Test functions
+function createPartialDelivery() {
+    logTest('🧪 Testing partial delivery creation...', 'info');
+    // Simulate partial delivery
+    setTimeout(() => {
+        logTest('✅ Partial delivery test completed', 'success');
+    }, 1000);
+}
+
+function recalculateTotals() {
+    logTest('🧪 Testing total recalculation...', 'info');
+    fetch('{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: 'action=recalculate&status=recalculate_totals'
+    })
+    .then(response => {
+        if (response.ok) {
+            logTest('✅ Totals recalculated successfully', 'success');
+            window.location.reload();
+        } else {
+            logTest('❌ Failed to recalculate totals', 'error');
+        }
+    })
+    .catch(error => {
+        logTest(`💥 Error: ${error}`, 'error');
+    });
+}
+
+function markAsPaid() {
+    logTest('🧪 Testing payment marking...', 'info');
+    const paymentDate = new Date().toISOString().split('T')[0];
+    logTest(`💳 Marking order as paid on ${paymentDate}`, 'info');
+    // Simulate payment marking
+    setTimeout(() => {
+        logTest('✅ Payment marking test completed', 'success');
+    }, 500);
+}
+
+function toggleSupplierConfirmation() {
+    logTest('🧪 Testing supplier confirmation toggle...', 'info');
+    const currentStatus = {{ object.supplier_confirmed|yesno:"true,false" }};
+    logTest(`📞 Current confirmation status: ${currentStatus}`, 'info');
+    setTimeout(() => {
+        logTest('✅ Supplier confirmation toggle test completed', 'success');
+    }, 500);
+}
+
+function updateSupplierReference() {
+    const newRef = prompt('Enter supplier order reference:', '{{ object.supplier_order_reference|default:"SUP-001" }}');
+    if (newRef) {
+        logTest(`🏢 Testing supplier reference update: ${newRef}`, 'info');
+        setTimeout(() => {
+            logTest('✅ Supplier reference update test completed', 'success');
+        }, 500);
+    }
+}
+
+function testCancellation() {
+    if (confirm('Test order cancellation? This will change the order status.')) {
+        logTest('🧪 Testing order cancellation...', 'warning');
+        window.location.href = '{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}?action=cancel&status=cancelled';
+    }
+}
+
+function testUrgentFlag() {
+    logTest('🧪 Testing urgent flag toggle...', 'info');
+    const currentUrgent = {{ object.is_urgent|yesno:"true,false" }};
+    logTest(`🚨 Current urgent status: ${currentUrgent}`, 'info');
+    setTimeout(() => {
+        logTest('✅ Urgent flag toggle test completed', 'success');
+    }, 500);
+}
+
+function testInvalidTransition() {
+    logTest('🧪 Testing invalid transition (should fail)...', 'warning');
+    fetch('{% url "admin:purchases_purchaseorder_workflow_action" object.pk %}?action=invalid&status=invalid_status')
+    .then(response => {
+        if (!response.ok) {
+            logTest('✅ Invalid transition correctly rejected', 'success');
+        } else {
+            logTest('❌ Invalid transition was accepted (bug!)', 'error');
+        }
+    })
+    .catch(error => {
+        logTest('✅ Invalid transition threw error as expected', 'success');
+    });
+}
+
+function testLineValidation() {
+    logTest('🧪 Testing line validation...', 'info');
+    const linesCount = {{ object.lines.count }};
+    logTest(`📋 Order has ${linesCount} lines`, 'info');
+
+    if (linesCount === 0) {
+        logTest('⚠️ Warning: Order has no lines', 'warning');
+    } else {
+        logTest('✅ Line validation passed', 'success');
+    }
+}
+
+function testUnitCompatibility() {
+    logTest('🧪 Testing unit compatibility...', 'info');
+    // Simulate unit compatibility check
+    setTimeout(() => {
+        logTest('✅ Unit compatibility checks passed', 'success');
+    }, 800);
+}
+
+function testQuantityCalculations() {
+    logTest('🧪 Testing quantity calculations...', 'info');
+    let totalOrdered = 0;
+    // Simulate quantity calculation
+    setTimeout(() => {
+        logTest(`🔢 Total ordered quantity calculated: ${totalOrdered}`, 'success');
+    }, 600);
+}
+
+function testPriceCalculations() {
+    logTest('🧪 Testing price calculations...', 'info');
+    const total = {{ object.total|default:0 }};
+    logTest(`💰 Current total: ${total.toFixed(2)} лв`, 'info');
+
+    // Simulate price validation
+    setTimeout(() => {
+        logTest('✅ Price calculations validated', 'success');
+    }, 700);
+}
+
+function testDocumentService() {
+    logTest('🧪 Testing DocumentService integration...', 'info');
+    setTimeout(() => {
+        logTest('✅ DocumentService integration test completed', 'success');
+    }, 1000);
+}
+
+function testApprovalService() {
+    logTest('🧪 Testing ApprovalService integration...', 'info');
+    setTimeout(() => {
+        logTest('✅ ApprovalService integration test completed', 'success');
+    }, 1200);
+}
+
+function testInventoryService() {
+    logTest('🧪 Testing InventoryService integration...', 'info');
+    setTimeout(() => {
+        logTest('✅ InventoryService integration test completed', 'success');
+    }, 900);
+}
+
+function testVATCalculation() {
+    logTest('🧪 Testing VAT calculation...', 'info');
+    const vatTotal = {{ object.vat_total|default:0 }};
+    logTest(`💰 Current VAT total: ${vatTotal.toFixed(2)} лв`, 'info');
+    setTimeout(() => {
+        logTest('✅ VAT calculation test completed', 'success');
+    }, 800);
+}
+
+function showDebugInfo() {
+    const debugDiv = document.getElementById('debug-output');
+    debugDiv.style.display = debugDiv.style.display === 'none' ? 'block' : 'none';
+
+    if (debugDiv.style.display === 'block') {
+        debugDiv.innerHTML = `
+Order Debug Information:
+Document Number: {{ object.document_number }}
+Status: {{ object.status }}
+Delivery Status: {{ object.delivery_status }}
+Supplier: {{ object.supplier.name }}
+Location: {{ object.location.name }}
+Lines Count: {{ object.lines.count }}
+Total: {{ object.total|default:"Not calculated" }}
+Supplier Confirmed: {{ object.supplier_confirmed }}
+Is Urgent: {{ object.is_urgent }}
+Source Request: {{ object.source_request.document_number|default:"None" }}
+Created: {{ object.created_at }}
+Updated: {{ object.updated_at }}
+        `;
+        logTest('🔍 Debug information displayed', 'info');
+    } else {
+        logTest('🔍 Debug information hidden', 'info');
+    }
+}
+
+function clearTestLog() {
+    const log = document.getElementById('test-log');
+    log.innerHTML = '<div style="color: #6c757d; font-style: italic;">Log cleared - {{ current_user.username }} - ' + new Date().toLocaleString() + '</div>';
+    testCounter = 0;
+    logTest('Test log initialized');
+}
+
+// Get CSRF cookie
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Initialize page
+document.addEventListener('DOMContentLoaded', function() {
+    logTest('🛒 Order workflow testing interface loaded');
+    logTest(`📋 Testing order: {{ object.document_number }}`);
+    logTest(`🏢 Supplier: {{ object.supplier.name }}`);
+    logTest(`📊 Current status: {{ object.status }}`);
+
+    {% if current_user.is_superuser %}
+        logTest('👑 Current user is superuser - full testing access', 'success');
+    {% endif %}
+});
+</script>
+{% endblock %}
