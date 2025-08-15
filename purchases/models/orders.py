@@ -1,22 +1,67 @@
-# purchases/models/orders.py - FIXED WITH NEW ARCHITECTURE
-import logging
-import warnings
+# purchases/models/orders.py - ФИНАЛНА ВЕРСИЯ
+"""
+Purchase Order Models - ПЪЛНА СИНХРОНИЗАЦИЯ СЪС SERVICES
 
-from django.db import models
+АРХИТЕКТУРА:
+✅ DocumentService - статуси, transitions, validation
+✅ ApprovalService - workflow, permissions
+✅ MovementService - inventory movements
+✅ InventoryService - stock checks
+
+PATTERN: ТОЧНО като PurchaseRequest
+"""
+
+import logging
+from typing import Dict
+from django.db import models, transaction
+from datetime import timedelta
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from decimal import Decimal
-logger = logging.getLogger(__name__)
+
+from inventory.services import InventoryService
 from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, FinancialLineMixin
+
+logger = logging.getLogger(__name__)
 
 
 class PurchaseOrderManager(models.Manager):
-    """Manager for Purchase Orders with specific queries"""
+    """Manager for Purchase Orders - SYNCHRONIZED WITH NOMENCLATURES"""
+
+    def pending_approval(self):
+        """Orders waiting for approval - DYNAMIC от DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_pending_approval_documents(
+                queryset=self.get_queryset()
+            )
+        except ImportError:
+            return self.filter(status='draft')
 
     def confirmed(self):
-        """Confirmed orders ready for delivery"""
-        return self.filter(status='confirmed')
+        """Confirmed orders ready for delivery - DYNAMIC от DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_ready_for_processing_documents(
+                queryset=self.get_queryset()
+            )
+        except ImportError:
+            return self.filter(status='confirmed')
+
+    def active(self):
+        """Active orders (not cancelled/completed) - DYNAMIC от DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_active_documents(
+                queryset=self.get_queryset()
+            )
+        except ImportError:
+            return self.exclude(status__in=['cancelled', 'completed'])
+
+    # =====================
+    # BUSINESS QUERIES
+    # =====================
 
     def sent_to_supplier(self):
         """Orders sent to suppliers but not yet confirmed"""
@@ -28,8 +73,7 @@ class PurchaseOrderManager(models.Manager):
 
     def ready_for_delivery_creation(self):
         """Orders that can be used for delivery creation"""
-        return self.filter(
-            status='confirmed',
+        return self.confirmed().filter(
             supplier_confirmed=True
         ).exclude(
             delivery_status='completed'
@@ -38,10 +82,6 @@ class PurchaseOrderManager(models.Manager):
     def by_supplier(self, supplier):
         """Orders for specific supplier"""
         return self.filter(supplier=supplier)
-
-    def for_delivery_on(self, date):
-        """Orders expected for delivery on specific date"""
-        return self.filter(expected_delivery_date=date, status='confirmed')
 
     def overdue_delivery(self):
         """Orders past expected delivery date"""
@@ -59,120 +99,55 @@ class PurchaseOrderManager(models.Manager):
         """Orders created directly (not from requests)"""
         return self.filter(source_request__isnull=True)
 
+    def this_month(self):
+        """Orders created this month"""
+        today = timezone.now().date()
+        return self.filter(
+            created_at__month=today.month,
+            created_at__year=today.year
+        )
+
 
 class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     """
-    Purchase Order - Поръчка към доставчици
+    Purchase Order - ФИНАЛНА СИНХРОНИЗАЦИЯ
 
-    Логика: Използва FinancialMixin и PaymentMixin защото има финансови данни.
-    НЕ използва DeliveryMixin защото има expected_delivery_date, не delivery_date.
+    SERVICES INTEGRATION:
+    ✅ DocumentService - за всички document operations
+    ✅ ApprovalService - за workflow permissions
+    ✅ MovementService - за auto-receive movements
+    ✅ InventoryService - за stock impact analysis
     """
 
-
-
     # =====================
-    # ПОРЪЧКА-СПЕЦИФИЧНИ ПОЛЕТА
+    # ORDER-SPECIFIC FIELDS
     # =====================
 
-    # Expected delivery (not actual)
     expected_delivery_date = models.DateField(
         _('Expected Delivery Date'),
-        null=True,
-        blank=True,
-        help_text=_('When we expect to receive the goods')
+        help_text=_('When we expect this order to be delivered')
     )
 
-    requested_delivery_date = models.DateField(
-        _('Requested Delivery Date'),
-        null=True,
-        blank=True,
-        help_text=_('When we requested delivery from supplier')
-    )
-
-    # ORDER SPECIFIC
     is_urgent = models.BooleanField(
         _('Urgent Order'),
         default=False,
-        help_text=_('Whether this is an urgent/emergency order')
+        help_text=_('Mark as urgent for priority processing')
     )
 
-    order_method = models.CharField(
-        _('Order Method'),
-        max_length=50,
-        blank=True,
-        help_text=_('How this order was placed (phone, email, system, etc.)')
-    )
-
-    # DELIVERY TERMS
-    delivery_terms = models.CharField(
-        _('Delivery Terms'),
-        max_length=100,
-        blank=True,
-        help_text=_('Delivery terms (FOB, CIF, etc.)')
-    )
-
-    special_conditions = models.TextField(
-        _('Special Conditions'),
-        blank=True,
-        help_text=_('Any special conditions or requirements')
-    )
-
-    # PAYMENT TERMS
-    payment_terms = models.CharField(
-        _('Payment Terms'),
-        max_length=100,
-        blank=True,
-        help_text=_('Payment terms for this order')
-    )
-
-    # SUPPLIER COMMUNICATION
-    supplier_confirmed = models.BooleanField(
-        _('Supplier Confirmed'),
-        default=False,
-        help_text=_('Whether supplier has confirmed this order')
-    )
-
-    supplier_confirmed_date = models.DateField(
-        _('Supplier Confirmed Date'),
-        null=True,
-        blank=True,
-        help_text=_('When supplier confirmed the order')
-    )
-
+    # =====================
+    # SUPPLIER INTERACTION
+    # =====================
     supplier_order_reference = models.CharField(
         _('Supplier Order Reference'),
         max_length=100,
         blank=True,
-        help_text=_("Supplier's reference number for this order")
+        help_text=_('Reference number from supplier system')
     )
 
-    # CONTACT INFO
-    supplier_contact_person = models.CharField(
-        _('Supplier Contact Person'),
-        max_length=100,
-        blank=True,
-        help_text=_('Contact person at supplier for this order')
-    )
-
-    supplier_contact_phone = models.CharField(
-        _('Supplier Contact Phone'),
-        max_length=20,
-        blank=True,
-        help_text=_('Phone number for order-related contact')
-    )
-
-    supplier_contact_email = models.EmailField(
-        _('Supplier Contact Email'),
-        blank=True,
-        help_text=_('Email for order-related contact')
-    )
-
-    # ORDER TRACKING
-    sent_to_supplier_at = models.DateTimeField(
-        _('Sent to Supplier At'),
-        null=True,
-        blank=True,
-        help_text=_('When order was sent to supplier')
+    supplier_confirmed = models.BooleanField(
+        _('Supplier Confirmed'),
+        default=False,
+        help_text=_('Has supplier confirmed this order?')
     )
 
     sent_by = models.ForeignKey(
@@ -185,7 +160,9 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         help_text=_('User who sent the order to supplier')
     )
 
+    # =====================
     # DELIVERY STATUS TRACKING
+    # =====================
     DELIVERY_STATUS_CHOICES = [
         ('pending', _('Pending')),
         ('partial', _('Partially Delivered')),
@@ -201,13 +178,15 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         help_text=_('Current delivery status of this order')
     )
 
+    # =====================
     # SOURCE TRACKING
+    # =====================
     source_request = models.ForeignKey(
         'purchases.PurchaseRequest',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='generated_orders',  # ФИКСИРАНО: различно име
+        related_name='generated_orders',
         verbose_name=_('Source Request'),
         help_text=_('Request this order was created from (if any)')
     )
@@ -236,259 +215,216 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         """Override to return ORD prefix"""
         return "ORD"
 
-    # =====================
-    # ПОРЪЧКА-СПЕЦИФИЧНА ВАЛИДАЦИЯ
-    # =====================
-    def clean(self):
-        """Order-specific validation"""
-        super().clean()
-
-        # Expected delivery date validation - може да е в бъдещето
-        if self.expected_delivery_date:
-            today = timezone.now().date()
-            days_in_past = (today - self.expected_delivery_date).days
-
-            # За съществуващи поръчки позволяваме до 30 дни в миналото
-            if self.pk and days_in_past > 30:
-                raise ValidationError({
-                    'expected_delivery_date': _(
-                        'Expected delivery date cannot be more than 30 days in the past'
-                    )
-                })
-            # За нови поръчки позволяваме до 7 дни назад
-            elif not self.pk and days_in_past > 7:
-                raise ValidationError({
-                    'expected_delivery_date': _(
-                        'Expected delivery date for new orders cannot be more than 7 days in the past'
-                    )
-                })
-
-        # Supplier confirmation validation
-        if self.supplier_confirmed and not self.supplier_confirmed_date:
-            self.supplier_confirmed_date = timezone.now().date()
+    def get_document_type_key(self):
+        """Return document type key for nomenclatures integration"""
+        return 'purchase_order'
 
     # =====================
-    # WORKFLOW METHODS
+    # NOMENCLATURES INTEGRATION - СТРИКТНО DocumentService
     # =====================
 
-    def approve(self, user, notes=''):
-        """
-        LEGACY WRAPPER: Use ApprovalService.execute_transition() instead
-        """
-        warnings.warn(
-            "PurchaseOrder.approve() is deprecated. "
-            "Use ApprovalService.execute_transition(document, 'approved', user, notes)",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
+    def can_edit(self, user=None):
+        """Check if order can be edited - USES DocumentService"""
         try:
-            from nomenclatures.services.approval_service import ApprovalService
-
-            result = ApprovalService.execute_transition(
-                document=self,
-                to_status='approved',
-                user=user,
-                comments=notes or 'Approved via legacy method'
-            )
-
-            if not result['success']:
-                raise ValidationError(result['message'])
-
-            return True
-
+            from nomenclatures.services import DocumentService
+            can_edit, reason = DocumentService.can_edit_document(self, user)
+            return can_edit
         except ImportError:
-            # Fallback if ApprovalService not available
-            if self.status != 'pending_approval':
-                raise ValidationError("Can only approve orders pending approval")
+            # Fallback logic
+            return self.status in ['draft'] and not self.supplier_confirmed
 
-            self.status = 'approved'
-            self.updated_by = user
-            if notes:
-                self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
-            self.save()
-
-            return True
-
-    def confirm(self, user, notes=''):
-        """
-        LEGACY WRAPPER: Confirm order (move to confirmed status)
-        """
-        warnings.warn(
-            "PurchaseOrder.confirm() is deprecated. "
-            "Use ApprovalService.execute_transition(document, 'confirmed', user, notes)",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
+    def get_available_actions(self, user=None):
+        """Get available actions for user - USES DocumentService"""
         try:
-            from nomenclatures.services.approval_service import ApprovalService
-
-            result = ApprovalService.execute_transition(
-                document=self,
-                to_status='confirmed',
-                user=user,
-                comments=notes or 'Confirmed via legacy method'
-            )
-
-            if not result['success']:
-                raise ValidationError(result['message'])
-
-            return True
-
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_available_actions(self, user)
         except ImportError:
-            # Fallback
-            if self.status not in ['draft', 'approved']:
-                raise ValidationError(f"Cannot confirm order with status '{self.status}'")
+            # Fallback actions
+            actions = []
+            if self.status == 'draft':
+                actions.append('send_to_supplier')
+            if self.status == 'sent':
+                actions.append('mark_confirmed')
+            if self.status == 'confirmed':
+                actions.append('create_delivery')
+            return actions
 
-            self.status = 'confirmed'
-            self.updated_by = user
-            if notes:
-                self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
-            self.save()
+    def transition_to(self, new_status, user, comments=''):
+        """Transition to new status - USES DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.transition_document(
+                self, new_status, user, comments
+            )
+        except ImportError:
+            raise ValidationError("Document workflow service not available")
 
-            return True
+    def get_workflow_info(self):
+        """Get complete workflow information - USES ApprovalService"""
+        try:
+            from nomenclatures.services import ApprovalService
+            return ApprovalService.get_workflow_info(self)
+        except ImportError:
+            return None
 
-    def send_to_supplier(self, user, notes=''):
-        """
-        Business method: Mark order as sent to supplier
-        This is NOT deprecated as it's business logic, not approval workflow
-        """
-        if not self.can_be_sent_to_supplier():
-            raise ValidationError(f"Cannot send order with status '{self.status}' to supplier")
+    def get_approval_history(self):
+        """Get approval history - USES ApprovalService"""
+        try:
+            from nomenclatures.services import ApprovalService
+            return ApprovalService.get_approval_history(self)
+        except ImportError:
+            return []
 
-        from django.utils import timezone
+    # =====================
+    # BUSINESS LOGIC METHODS - ИЗПОЛЗВАТ DocumentService
+    # =====================
 
-        self.status = 'sent'
-        self.sent_to_supplier_at = timezone.now()
+    def send_to_supplier(self, user=None):
+        """Send order to supplier"""
+        if self.status != 'draft':
+            raise ValidationError("Can only send draft orders")
+
+        if not self.lines.exists():
+            raise ValidationError("Cannot send order without lines")
+
+        self.transition_to('sent', user, 'Order sent to supplier')
         self.sent_by = user
-        if notes:
-            self.notes = (self.notes + '\n' + notes).strip() if self.notes else notes
-        self.updated_by = user
-        self.save()
-
-        logger.info(f"Order {self.document_number} sent to supplier by {user}")
+        self.save(update_fields=['sent_by'])
         return True
 
-    def can_be_sent_to_supplier(self):
-        """Check if order can be sent to supplier"""
-        return self.status == 'confirmed' and not hasattr(self, 'sent_to_supplier_at')
+    def confirm_order(self, user=None, supplier_reference=''):
+        """Confirm order from supplier"""
+        if self.status != 'sent':
+            raise ValidationError("Can only confirm sent orders")
 
-    def update_delivery_status(self):
-        """Update delivery status based on line delivery progress"""
-        if not hasattr(self, 'lines'):
-            return
+        self.transition_to('confirmed', user, 'Order confirmed by supplier')
+        self.supplier_confirmed = True
+        if supplier_reference:
+            self.supplier_order_reference = supplier_reference
+        self.save(update_fields=['supplier_confirmed', 'supplier_order_reference'])
 
-        lines = self.lines.all()
-        if not lines:
-            return
+        # ✅ AUTO-RECEIVE LOGIC ако е настроено - USES MovementService
+        if getattr(self.document_type, 'auto_receive', False):
+            try:
+                from inventory.services.movement_service import MovementService
+                movements = MovementService.create_from_document(self)
+                logger.info(f"Auto-created {len(movements)} movements for {self.document_number}")
+            except Exception as e:
+                logger.error(f"Error in auto-receive: {e}")
 
-        total_ordered = sum(line.ordered_quantity for line in lines)
-        total_delivered = sum(getattr(line, 'delivered_quantity', 0) for line in lines)
+        return True
+
+    def cancel_order(self, user=None, reason=''):
+        """Cancel order"""
+        if self.status in ['completed', 'cancelled']:
+            raise ValidationError(f"Cannot cancel {self.status} order")
+
+        self.transition_to('cancelled', user, reason)
+        return True
+
+    def create_delivery(self, user=None, **kwargs):
+        """Create delivery receipt from this order"""
+        if self.status != 'confirmed':
+            raise ValidationError("Can only create delivery from confirmed orders")
+
+        if self.delivery_status == 'completed':
+            raise ValidationError("Order already fully delivered")
+
+        # Import here to avoid circular imports
+        from .deliveries import DeliveryReceipt, DeliveryLine
+
+        delivery = DeliveryReceipt.objects.create(
+            supplier=self.supplier,
+            location=self.location,
+            source_order=self,  # Link back to this order
+            document_date=timezone.now().date(),
+            created_by=user,
+            **kwargs
+        )
+
+        # Create delivery lines from order lines
+        for order_line in self.lines.all():
+            if order_line.remaining_quantity > 0:  # Only undelivered items
+                DeliveryLine.objects.create(
+                    document=delivery,
+                    source_order_line=order_line,
+                    product=order_line.product,
+                    unit=order_line.unit,
+                    expected_quantity=order_line.remaining_quantity,
+                    unit_price=order_line.unit_price,
+                    line_number=order_line.line_number
+                )
+
+        # Update delivery status
+        self._update_delivery_status()
+
+        return delivery
+
+    def _update_delivery_status(self):
+        """Update delivery status based on delivered quantities"""
+        total_ordered = sum(line.ordered_quantity for line in self.lines.all())
+        total_delivered = sum(line.delivered_quantity for line in self.lines.all())
 
         if total_delivered == 0:
             self.delivery_status = 'pending'
         elif total_delivered >= total_ordered:
             self.delivery_status = 'completed'
-            self.status = self.RECEIVED
+            # Automatically complete the order
+            if self.status == 'confirmed':
+                self.transition_to('completed', reason='Fully delivered')
         else:
             self.delivery_status = 'partial'
 
-        self.save(update_fields=['delivery_status', 'status'])
+        self.save(update_fields=['delivery_status'])
 
     # =====================
-    # BUSINESS LOGIC CHECKS
+    # INVENTORY INTEGRATION - USES InventoryService
     # =====================
 
+    def check_inventory_impact(self):
+        """Check how this order would impact inventory - USES InventoryService"""
+        impact = {}
 
-    def can_be_cancelled(self):
-        """Override with order-specific logic"""
-        return self.status not in [self.RECEIVED, self.CANCELLED, self.CLOSED]
+        for line in self.lines.all():
+            if line.product not in impact:
+                impact[line.product] = {
+                    'current_stock': Decimal('0'),
+                    'ordered_qty': Decimal('0'),
+                    'impact_analysis': {}
+                }
 
-    def needs_approval(self, amount=None):
-        """
-        CRITICAL NEW METHOD: Check if order needs approval
+            # Get current availability using InventoryService
+            try:
+                availability = InventoryService.check_availability(
+                    self.location, line.product, Decimal('0')
+                )
+                impact[line.product]['current_stock'] = availability['current_qty']
+                impact[line.product]['impact_analysis'] = availability
+            except Exception as e:
+                logger.error(f"Error checking availability: {e}")
 
-        This respects DocumentType configuration and business rules
-        """
-        # Check DocumentType configuration first
-        if not self.document_type or not self.document_type.requires_approval:
-            return False
+            impact[line.product]['ordered_qty'] += line.ordered_quantity
 
-        # Get amount to check
-        if amount is None:
-            # Try multiple ways to get the total amount
-            amount = (
-                    getattr(self, 'grand_total', None) or
-                    getattr(self, 'total_amount', None) or
-                    self.get_estimated_total() or
-                    Decimal('0.00')
-            )
+        return impact
 
-        # Use DocumentType approval limit if configured
-        if self.document_type.approval_limit:
-            return amount > self.document_type.approval_limit
-
-        # BUSINESS RULE: Default approval thresholds
-        # These can be overridden by DocumentType configuration
-        if self.is_urgent:
-            # Urgent orders have lower threshold
-            default_threshold = Decimal('500.00')
-        else:
-            # Regular orders
-            default_threshold = Decimal('1000.00')
-
-        return amount > default_threshold
-
-    def get_estimated_total(self):
-        """
-        Get total amount for approval calculations
-        This method should return the best available estimate of the order total
-        """
-        # If we already have calculated totals, use them
-        if hasattr(self, 'grand_total') and self.grand_total:
-            return self.grand_total
-
-        if hasattr(self, 'total_amount') and self.total_amount:
-            return self.total_amount
-
-        # Calculate from lines if no totals exist yet
-        if self.lines.exists():
-            total = Decimal('0.00')
-            for line in self.lines.all():
-                line_total = (line.ordered_quantity or 0) * (line.unit_price or 0)
-                total += line_total
-            return total
-
-        return Decimal('0.00')
+    def validate_with_inventory(self):
+        """Validate order against inventory constraints"""
+        # За purchase orders обикновено няма inventory constraints
+        # Но може да провериш за reorder points, max stock levels и т.н.
+        return True, "OK"
 
     # =====================
     # PROPERTIES
     # =====================
-    @property
-    def is_from_request(self):
-        return self.source_request is not None
-
-    @property
-    def is_direct_order(self):
-        return self.source_request is None
-
-    @property
-    def days_until_delivery(self):
-        """Days until expected delivery"""
-        if not self.expected_delivery_date:
-            return None
-        delta = self.expected_delivery_date - timezone.now().date()
-        return delta.days
 
     @property
     def is_overdue(self):
-        """Is delivery overdue?"""
+        """Check if order is overdue for delivery"""
         if not self.expected_delivery_date:
             return False
         return (
                 self.expected_delivery_date < timezone.now().date() and
-                self.status == self.CONFIRMED
+                self.status == 'confirmed'
         )
 
     @property
@@ -498,6 +434,24 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     @property
     def is_partially_delivered(self):
         return self.delivery_status == 'partial'
+
+    @property
+    def total_ordered_quantity(self):
+        """Total quantity across all lines"""
+        return sum(line.ordered_quantity for line in self.lines.all())
+
+    @property
+    def total_delivered_quantity(self):
+        """Total delivered quantity across all lines"""
+        return sum(line.delivered_quantity for line in self.lines.all())
+
+    @property
+    def delivery_progress_percentage(self):
+        """Delivery progress as percentage"""
+        total_ordered = self.total_ordered_quantity
+        if total_ordered == 0:
+            return 0
+        return (self.total_delivered_quantity / total_ordered) * 100
 
 
 class PurchaseOrderLineManager(models.Manager):
@@ -525,21 +479,21 @@ class PurchaseOrderLineManager(models.Manager):
         if supplier:
             queryset = queryset.filter(document__supplier=supplier)
 
-        return queryset.select_related(
-            'document__supplier',
-            'product',
-            'unit'
-        )
+        return queryset.select_related('document__supplier', 'product', 'unit')
+
+    def with_remaining_quantity(self):
+        """Lines that still have quantity to deliver"""
+        from django.db.models import F
+        return self.filter(F('ordered_quantity') > F('delivered_quantity'))
 
 
 class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Purchase Order Line - CLEAN VERSION
+    Purchase Order Line - ФИНАЛНА СИНХРОНИЗАЦИЯ
 
-    ✅ ordered_quantity като primary
-    ✅ confirmed_quantity за supplier confirmation
-    ✅ delivered_quantity auto-calculated от deliveries
-    ✅ БЕЗ remaining_quantity поле (property instead)
+    SERVICES INTEGRATION:
+    ✅ DocumentService integration в save()
+    ✅ InventoryService integration за validation
     """
 
     # =====================
@@ -583,35 +537,36 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         help_text=_('Quantity confirmed by supplier (if different from ordered)')
     )
 
-    # AUTO-CALCULATED - НЕ се редактира ръчно!
+    # AUTO-CALCULATED from deliveries
     delivered_quantity = models.DecimalField(
         _('Delivered Quantity'),
         max_digits=10,
         decimal_places=3,
-        default=Decimal('0.000'),
-        editable=False,  # Важно!
-        help_text=_('Total delivered (auto-calculated from delivery receipts)')
+        default=Decimal('0'),
+        help_text=_('Total quantity delivered (auto-calculated)')
     )
 
     # =====================
     # DELIVERY STATUS
     # =====================
     DELIVERY_STATUS_CHOICES = [
-        ('pending', _('Pending Delivery')),
+        ('pending', _('Pending')),
         ('partial', _('Partially Delivered')),
         ('completed', _('Fully Delivered')),
-        ('over_delivered', _('Over Delivered')),
-        ('cancelled', _('Cancelled')),
     ]
 
     delivery_status = models.CharField(
         _('Delivery Status'),
-        max_length=20,  # Поправка: max_length вместо max_digits!
+        max_length=20,
         choices=DELIVERY_STATUS_CHOICES,
         default='pending',
-        editable=False,  # Auto-calculated
-        help_text=_('Auto-calculated delivery status')
+        help_text=_('Delivery status of this line')
     )
+
+    # =====================
+    # MANAGERS
+    # =====================
+    objects = PurchaseOrderLineManager()
 
     class Meta:
         verbose_name = _('Purchase Order Line')
@@ -626,23 +581,110 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         ]
 
     def __str__(self):
-        qty = self.get_quantity_for_display()
-        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {qty}"
+        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.ordered_quantity}"
 
     # =====================
     # IMPLEMENT ABSTRACT METHOD
     # =====================
-
     def get_quantity_for_display(self):
-        """Return effective quantity (confirmed or ordered)"""
-        return self.confirmed_quantity or self.ordered_quantity
+        """Return ordered quantity for display"""
+        return self.ordered_quantity
 
     # =====================
-    # VALIDATION
+    # SYNCHRONIZED SAVE() - USES DocumentService
     # =====================
+    def save(self, *args, **kwargs):
+        """
+        ✅ PurchaseOrderLine save with DocumentService integration
+        СЪЩИЯТ PATTERN като PurchaseRequestLine
+        """
+        logger.debug(f"🔥 PurchaseOrderLine.save() called for line {getattr(self, 'line_number', 'NEW')}")
 
+        # Call parent save chain
+        super().save(*args, **kwargs)
+
+        # ✅ DocumentService integration СЛЕД parent save
+        if hasattr(self, 'document') and self.document:
+            try:
+                from nomenclatures.services import DocumentService
+
+                result = DocumentService.handle_document_update(
+                    document=self.document,
+                    user=getattr(self, '_updating_user', None),
+                    reason=f"Line {self.line_number} updated (qty: {self.ordered_quantity}, price: {self.unit_price})"
+                )
+
+                logger.debug(f"🔥 DocumentService result: {result}")
+
+            except Exception as e:
+                logger.error(f"🔥 Error in DocumentService.handle_document_update: {e}")
+                # Don't fail the save for service errors
+                pass
+
+        # ✅ Update delivery status
+        self._update_delivery_status()
+
+    def _update_delivery_status(self):
+        """Update delivery status based on delivered quantity"""
+        if self.delivered_quantity == 0:
+            self.delivery_status = 'pending'
+        elif self.delivered_quantity >= self.ordered_quantity:
+            self.delivery_status = 'completed'
+        else:
+            self.delivery_status = 'partial'
+
+    # =====================
+    # PROPERTIES
+    # =====================
+    @property
+    def remaining_quantity(self):
+        """Quantity still to be delivered"""
+        return max(Decimal('0'), self.ordered_quantity - self.delivered_quantity)
+
+    @property
+    def delivery_progress_percentage(self):
+        """Delivery progress as percentage"""
+        if self.ordered_quantity == 0:
+            return 0
+        return (self.delivered_quantity / self.ordered_quantity) * 100
+
+    @property
+    def is_fully_delivered(self):
+        """Check if line is fully delivered"""
+        return self.delivered_quantity >= self.ordered_quantity
+
+    @property
+    def can_be_delivered(self):
+        """Check if line can still receive deliveries"""
+        return (
+                self.remaining_quantity > 0 and
+                self.document.status == 'confirmed'
+        )
+
+    # =====================
+    # BUSINESS METHODS
+    # =====================
+    def add_delivery(self, delivered_qty):
+        """Add delivered quantity (called from DeliveryLine)"""
+        if delivered_qty <= 0:
+            return
+
+        self.delivered_quantity += delivered_qty
+        self._update_delivery_status()
+        self.save(update_fields=['delivered_quantity', 'delivery_status'])
+
+        # Update parent order delivery status
+        self.document._update_delivery_status()
+
+    def can_deliver_quantity(self, qty):
+        """Check if specific quantity can be delivered"""
+        return qty <= self.remaining_quantity
+
+    # =====================
+    # VALIDATION - ENHANCED
+    # =====================
     def clean(self):
-        """Order line validation"""
+        """Order line validation - ENHANCED"""
         super().clean()
 
         # Ordered quantity must be positive
@@ -651,133 +693,33 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
                 'ordered_quantity': _('Ordered quantity must be greater than zero')
             })
 
-        # Confirmed quantity validation (if provided)
-        if self.confirmed_quantity is not None and self.confirmed_quantity < 0:
+        # Delivered quantity cannot exceed ordered
+        if self.delivered_quantity > self.ordered_quantity:
             raise ValidationError({
-                'confirmed_quantity': _('Confirmed quantity cannot be negative')
+                'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
             })
 
-        # Financial validation from mixin
-        # FinancialLineMixin ще провери unit_price, discounts, etc.
+        # Price validation
+        if self.unit_price and self.unit_price < 0:
+            raise ValidationError({
+                'unit_price': _('Unit price cannot be negative')
+            })
 
-    # =====================
-    # PROPERTIES
-    # =====================
+        # Product availability validation using InventoryService
+        if self.product and self.document and self.document.location:
+            try:
+                from products.services.validation_service import ProductValidationService
 
-    @property
-    def expected_quantity(self):
-        """Get expected quantity for delivery"""
-        return self.confirmed_quantity or self.ordered_quantity
+                can_purchase, message, details = ProductValidationService.can_purchase_product(
+                    product=self.product,
+                    quantity=self.ordered_quantity,
+                    supplier=self.document.supplier
+                )
 
-    @property
-    def remaining_quantity(self):
-        """Calculate remaining to be delivered"""
-        return max(Decimal('0'), self.expected_quantity - self.delivered_quantity)
-
-    @property
-    def is_fully_delivered(self):
-        """Check if fully delivered"""
-        return self.delivered_quantity >= self.expected_quantity
-
-    @property
-    def is_over_delivered(self):
-        """Check if over delivered"""
-        return self.delivered_quantity > self.expected_quantity
-
-    @property
-    def delivery_percentage(self):
-        """Calculate delivery completion percentage"""
-        if self.expected_quantity == 0:
-            return Decimal('0')
-        return (self.delivered_quantity / self.expected_quantity) * 100
-
-    # =====================
-    # DELIVERY TRACKING METHODS
-    # =====================
-
-    def update_delivery_status(self):
-        """
-        Update delivered quantity and status from related deliveries
-        CALL THIS after any delivery change!
-        """
-        from .deliveries import DeliveryLine
-
-        # Calculate total delivered from all delivery lines
-        total = DeliveryLine.objects.filter(
-            source_order_line=self,
-            document__status__in=['received', 'processed', 'completed']
-        ).aggregate(
-            total=models.Sum('received_quantity')
-        )['total'] or Decimal('0.000')
-
-        self.delivered_quantity = total
-
-        # Update delivery status
-        if self.delivered_quantity == 0:
-            self.delivery_status = 'pending'
-        elif self.delivered_quantity < self.expected_quantity:
-            self.delivery_status = 'partial'
-        elif self.delivered_quantity == self.expected_quantity:
-            self.delivery_status = 'completed'
-        else:  # delivered > expected
-            self.delivery_status = 'over_delivered'
-
-        self.save(update_fields=['delivered_quantity', 'delivery_status'])
-
-        # Update order header delivery status if needed
-        self.document.update_delivery_status()
-
-    def can_create_delivery(self):
-        """Check if delivery can be created for this line"""
-        return (
-                self.remaining_quantity > 0 and
-                self.document.status in ['confirmed', 'partial_delivery'] and
-                self.delivery_status not in ['completed', 'cancelled']
-        )
-
-    def create_delivery_line(self, delivery_receipt, received_qty=None, **kwargs):
-        """
-        Create delivery line for this order line
-
-        Args:
-            delivery_receipt: DeliveryReceipt instance
-            received_qty: Quantity received (default: remaining)
-            **kwargs: Additional fields for delivery line
-        """
-        if not self.can_create_delivery():
-            raise ValidationError(f"Cannot create delivery for line {self.line_number}")
-
-        from .deliveries import DeliveryLine
-
-        if received_qty is None:
-            received_qty = self.remaining_quantity
-
-        delivery_line = DeliveryLine.objects.create(
-            document=delivery_receipt,
-            source_order_line=self,
-            product=self.product,
-            unit=self.unit,
-            received_quantity=received_qty,
-            expected_quantity=self.remaining_quantity,
-            unit_price=self.unit_price,
-            notes=kwargs.get('notes', f"From order {self.document.document_number}"),
-            **kwargs
-        )
-
-        # Update delivery tracking
-        self.update_delivery_status()
-
-        return delivery_line
-
-    # =====================
-    # OVERRIDE SAVE
-    # =====================
-
-    def save(self, *args, **kwargs):
-        """Enhanced save with auto-calculations"""
-
-        # For FinancialLineMixin - set quantity for calculations
-        # Mixin очаква quantity за line_total calculations
-        self.quantity = self.get_quantity_for_display()
-
-        super().save(*args, **kwargs)
+                if not can_purchase:
+                    raise ValidationError({
+                        'product': f"Cannot purchase this product: {message}"
+                    })
+            except ImportError:
+                # Fallback validation
+                pass
