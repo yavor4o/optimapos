@@ -8,7 +8,7 @@ Document Service - COMPLETE VERSION
 3. Поддържа малки магазини без сложни одобрения
 4. Поддържа едитиране на completed документи (allow_edit_completed)
 """
-
+from decimal import Decimal
 from typing import Dict, List, Optional, Any, Type, Union, Tuple, TYPE_CHECKING
 
 from nomenclatures.models import DocumentTypeStatus
@@ -1225,36 +1225,85 @@ class DocumentService:
     @staticmethod
     def _document_needs_sync(document) -> bool:
         """
-        ✅ NEW: Check if document movements need synchronization
+        Сравнява очакваните спрямо реалните движения, разделени на IN и OUT.
+        За inventory_direction='both' това предотвратява зануляване на разлики (+/-).
+        Толеранси: qty=0.0001, value=0.01.
         """
         try:
             from inventory.models import InventoryMovement
+            direction = getattr(getattr(document, 'document_type', None), 'inventory_direction', 'in')
 
-            # Намери текущите движения от документа
-            current_movements = InventoryMovement.objects.filter(
-                source_document_type__in=['PURCHASE_REQUEST', 'PURCHASEREQUEST'],
-                source_document_number=document.document_number
+            # 1) Очаквани IN/OUT qty/value от линиите
+            exp_in_qty = exp_in_val = Decimal('0')
+            exp_out_qty = exp_out_val = Decimal('0')
+
+            lines_qs = getattr(document, 'lines', None)
+            if lines_qs:
+                for line in lines_qs.all():
+                    qty = Decimal(str(getattr(line, 'requested_quantity', getattr(line, 'quantity', 0)) or 0))
+                    if qty == 0:
+                        continue
+                    unit_cost_raw = (
+                            getattr(line, 'unit_price', None)
+                            or getattr(line, 'entered_price', None)
+                            or Decimal('0')
+                    )
+                    unit_cost = Decimal(str(unit_cost_raw or 0))
+
+                    if direction == 'both':
+                        if qty > 0:
+                            exp_in_qty += qty
+                            exp_in_val += qty * unit_cost
+                        else:
+                            q = (-qty)  # абсолют
+                            exp_out_qty += q
+                            exp_out_val += q * unit_cost
+                    elif direction == 'out':
+                        # целият документ е OUT; qty се очаква положително
+                        exp_out_qty += qty
+                        exp_out_val += qty * unit_cost
+                    else:
+                        # по подразбиране IN
+                        exp_in_qty += qty
+                        exp_in_val += qty * unit_cost
+
+            # 2) Реални IN/OUT qty/value от движенията
+            doc_number = getattr(document, 'document_number', None) or getattr(document, 'number', None)
+            if not doc_number:
+                return True
+
+            movs = InventoryMovement.objects.filter(
+                source_document_number=doc_number,
             )
 
-            # Намери какво трябва да е според текущите линии
-            expected_total = sum(
-                line.requested_quantity
-                for line in document.lines.all()
-                if line.requested_quantity
-            )
+            act_in_qty = act_in_val = Decimal('0')
+            act_out_qty = act_out_val = Decimal('0')
 
-            # Намери какво е в движенията
-            actual_total = sum(
-                mov.quantity for mov in current_movements
-                if mov.movement_type == 'IN'
-            )
+            for m in movs:
+                q = Decimal(str(getattr(m, 'quantity', 0) or 0))
+                p = Decimal(str(getattr(m, 'cost_price', 0) or 0))
+                if getattr(m, 'movement_type', None) == 'OUT':
+                    act_out_qty += q
+                    act_out_val += q * p
+                else:
+                    act_in_qty += q
+                    act_in_val += q * p
 
-            # Ако са различни - трябва sync
-            return abs(expected_total - actual_total) > 0.001
+            # 3) Сравнение по отделно за IN и OUT
+            if (exp_in_qty - act_in_qty).copy_abs() > Decimal('0.0001'):
+                return True
+            if (exp_in_val - act_in_val).copy_abs() > Decimal('0.01'):
+                return True
+            if (exp_out_qty - act_out_qty).copy_abs() > Decimal('0.0001'):
+                return True
+            if (exp_out_val - act_out_val).copy_abs() > Decimal('0.01'):
+                return True
+
+            return False
 
         except Exception as e:
-            logger.error(f"Error checking document sync needs: {e}")
-            return True  # В случай на грешка, предположи че трябва sync
+            logger.error(f"_document_needs_sync failed, defaulting to True: {e}")
+            return True
 
     @staticmethod
     def _document_has_movements(document) -> bool:

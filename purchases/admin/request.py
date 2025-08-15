@@ -34,6 +34,7 @@ class PurchaseRequestLineInline(admin.TabularInline):
 
     readonly_fields = ['line_number', 'line_total_display']  # ← И В readonly
 
+    from django.utils.safestring import mark_safe  # ← ДОБАВИ IMPORT
 
     def line_total_display(self, obj):
         """💰 COMPACT VAT BREAKDOWN"""
@@ -824,9 +825,80 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
     # FORM CUSTOMIZATION - UPDATED
     # =====================
 
+    # purchases/admin/request.py - Разшири save_model() метода
 
+    def save_model(self, request, obj, form, change):
+        """Enhanced save with DocumentService integration"""
+        # Set user fields
+        if not change:
+            obj.created_by = request.user
+            obj.requested_by = obj.requested_by or request.user
+        obj.updated_by = request.user
 
+        # Set document type if not set
+        if not obj.document_type:
+            try:
+                from nomenclatures.models import get_document_type_by_key
+                obj.document_type = get_document_type_by_key('purchase_request')
+            except:
+                pass
 
+        # Generate document number if needed
+        if not obj.document_number:
+            try:
+                from nomenclatures.services import DocumentService
+                obj.document_number = DocumentService.generate_number_for(obj)
+            except:
+                obj.document_number = f"REQ-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+
+        # Set initial status if needed
+        if not obj.status and obj.document_type:
+            try:
+                obj.status = obj.document_type.get_initial_status_code()
+            except:
+                obj.status = 'draft'
+
+        super().save_model(request, obj, form, change)
+
+        # 🆕 АВТОМАТИЧНО ПРЕСМЯТАНЕ НА ТОТАЛИ
+        try:
+            totals = obj.recalculate_totals(save=True)
+            messages.success(
+                request,
+                f'💰 Totals: Net {totals["subtotal"]:.2f}, VAT {totals["vat_total"]:.2f}, Total {totals["total"]:.2f} лв'
+            )
+        except Exception as e:
+            messages.warning(request, f'⚠️ Could not recalculate totals: {e}')
+
+        # Store current user for workflow methods
+        self.current_user = request.user
+
+        # 🆕 НОВА ЛОГИКА - Inventory correction при edit
+        if change:  # Това е edit, не create
+            try:
+                from nomenclatures.services import DocumentService
+                result = DocumentService.handle_document_update(
+                    document=obj,
+                    user=request.user,
+                    reason=f"Admin edit by {request.user.username}"
+                )
+
+                if result.get('needs_manual_correction'):
+                    messages.warning(
+                        request,
+                        "⚠️ Document has inventory movements that need manual correction!"
+                    )
+                elif result.get('auto_corrected'):
+                    messages.success(
+                        request,
+                        f"✅ Automatically corrected {result.get('movements_corrected', 0)} movements"
+                    )
+
+            except Exception as e:
+                messages.error(request, f"Error handling inventory correction: {e}")
+
+        # Log the save action
+        messages.info(request, f'Document saved. Current status: {obj.status}')
 
     # =====================
     # LIST VIEW CUSTOMIZATION

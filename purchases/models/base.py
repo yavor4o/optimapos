@@ -911,10 +911,6 @@ class FinancialLineMixin(models.Model):
         # Default
         return Decimal('1')
 
-    # purchases/models/base.py - FinancialLineMixin
-
-    # purchases/models/base.py - FinancialLineMixin
-
     def process_entered_price(self):
         """
         ✅ FIXED: Обработва въведената цена със unified VATCalculationService
@@ -923,70 +919,46 @@ class FinancialLineMixin(models.Model):
 
         # Намери entered_price
         entered_price = getattr(self, 'entered_price', None)
-        if entered_price is None:
+        if entered_price is None:  # ✅ Само ако няма стойност
             return
 
-        # ✅ FIXED: Намери quantity - но НЕ излизай при 0!
+        # Намери quantity
         if hasattr(self, 'requested_quantity'):
-            quantity = self.requested_quantity or Decimal('1')  # Default ако е None
+            quantity = self.requested_quantity
         elif hasattr(self, 'ordered_quantity'):
-            quantity = self.ordered_quantity or Decimal('1')
+            quantity = self.ordered_quantity
         elif hasattr(self, 'received_quantity'):
-            quantity = self.received_quantity or Decimal('1')
+            quantity = self.received_quantity
         else:
             quantity = Decimal('1')
 
-
+        if not quantity:
+            return
 
         try:
             calc_result = VATCalculationService.calculate_line_totals(
                 line=self,
                 entered_price=entered_price,
-                quantity=quantity,  # Винаги подавай количество >= 1
+                quantity=quantity,
                 document=getattr(self, 'document', None)
             )
 
-            # Apply results - unit_price е важен дори при 0 quantity!
+            # Apply results
             if hasattr(self, 'unit_price'):
                 self.unit_price = calc_result['unit_price']
             if hasattr(self, 'vat_rate'):
                 self.vat_rate = calc_result['vat_rate']
             if hasattr(self, 'vat_amount'):
-                # ✅ За 0 quantity, vat_amount трябва да е 0
-                if self.get_effective_quantity() == 0:
-                    self.vat_amount = Decimal('0.00')
-                else:
-                    self.vat_amount = calc_result['vat_amount']
+                self.vat_amount = calc_result['vat_amount']
             if hasattr(self, 'net_amount'):
-                # ✅ За 0 quantity, net_amount трябва да е 0
-                if self.get_effective_quantity() == 0:
-                    self.net_amount = Decimal('0.00')
-                else:
-                    self.net_amount = calc_result['net_amount']
+                self.net_amount = calc_result['net_amount']
             if hasattr(self, 'gross_amount'):
-                # ✅ За 0 quantity, gross_amount трябва да е 0
-                if self.get_effective_quantity() == 0:
-                    self.gross_amount = Decimal('0.00')
-                else:
-                    self.gross_amount = calc_result['gross_amount']
+                self.gross_amount = calc_result['gross_amount']
 
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"VAT calculation failed: {e}")
-
-    def get_effective_quantity(self) -> Decimal:
-        """
-        ✅ NEW: Връща реалното количество за документа
-        """
-        if hasattr(self, 'requested_quantity'):
-            return self.requested_quantity or Decimal('0')
-        elif hasattr(self, 'ordered_quantity'):
-            return self.ordered_quantity or Decimal('0')
-        elif hasattr(self, 'received_quantity'):
-            return self.received_quantity or Decimal('0')
-        else:
-            return Decimal('0')
 
     def save(self, *args, **kwargs):
         """
