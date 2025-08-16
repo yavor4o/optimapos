@@ -22,10 +22,10 @@ from optimapos import settings
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', include('purchases.urls')),  # ROOT URL - temp redirect to purchases
     path('purchases/', include('purchases.urls')),
-    path('nomenclatures/', include('nomenclatures.urls')),
+    path('nomenclatures/', include('nomenclatures.urls')),  # NEW LINE
 ]
-
 
 if settings.DEBUG:  # Само в режим на разработка
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

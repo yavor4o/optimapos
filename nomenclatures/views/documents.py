@@ -1,43 +1,28 @@
-# nomenclatures/views/documents.py
+# nomenclatures/views/documents.py - MINIMAL VERSION
 """
-Document Type Views - PLACEHOLDER IMPLEMENTATION
-
-TODO: Implement full CBV classes when document models are finalized
+Document Type Views - MINIMAL PLACEHOLDER
 """
 
-from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
-from django.urls import reverse_lazy
+from django.views.generic import TemplateView
 from django.utils.translation import gettext_lazy as _
 
-from nomenclatures.views.products import NomenclatureListMixin, NomenclatureViewMixin
+
+class PlaceholderView(TemplateView):
+    """Generic placeholder view"""
+    template_name = 'frontend/nomenclatures/product/product_groups_list.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update({
+            'page_title': _("Coming Soon"),
+            'placeholder_message': _("This feature is under development."),
+        })
+        return context
 
 
-class TemporaryMixin:
-    """Temporary mixin to prevent import errors"""
-    model = None
-    template_name = 'frontend/nomenclatures/placeholder.html'
-
-# =================================================================
-# DOCUMENT TYPE VIEWS (PLACEHOLDER)
-# =================================================================
-
-class DocumentTypeListView(TemporaryMixin, NomenclatureListMixin, ListView):
-    """Document Type listing view - PLACEHOLDER"""
-    def get_page_title(self):
-        return _("Document Types")
-
-class DocumentTypeDetailView(TemporaryMixin, NomenclatureViewMixin, DetailView):
-    """Document Type detail view - PLACEHOLDER"""
-    pass
-
-class DocumentTypeCreateView(TemporaryMixin, NomenclatureViewMixin, CreateView):
-    """Document Type create view - PLACEHOLDER"""
-    pass
-
-class DocumentTypeUpdateView(TemporaryMixin, NomenclatureViewMixin, UpdateView):
-    """Document Type update view - PLACEHOLDER"""
-    pass
-
-class DocumentTypeDeleteView(TemporaryMixin, NomenclatureViewMixin, DeleteView):
-    """Document Type delete view - PLACEHOLDER"""
-    success_url = reverse_lazy('nomenclatures:document_types')
+# All Document Views as Placeholders
+DocumentTypeListView = type('DocumentTypeListView', (PlaceholderView,), {})
+DocumentTypeDetailView = type('DocumentTypeDetailView', (PlaceholderView,), {})
+DocumentTypeCreateView = type('DocumentTypeCreateView', (PlaceholderView,), {})
+DocumentTypeUpdateView = type('DocumentTypeUpdateView', (PlaceholderView,), {})
+DocumentTypeDeleteView = type('DocumentTypeDeleteView', (PlaceholderView,), {})
