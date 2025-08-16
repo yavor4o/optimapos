@@ -23,6 +23,7 @@ from optimapos import settings
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('purchases/', include('purchases.urls')),
+    path('nomenclatures/', include('nomenclatures.urls')),
 ]
 
 

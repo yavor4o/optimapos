@@ -1,0 +1,62 @@
+{% extends 'frontend/base.html' %}
+{% load i18n %}
+
+{% block title %}{{ page_title }} - {{ block.super }}{% endblock %}
+
+{% block content %}
+<!-- Container -->
+<div class="kt-container-fixed" id="contentContainer">
+    
+    <!-- Page Header -->
+    <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+        <div class="flex flex-col justify-center gap-2">
+            <h1 class="text-xl font-medium leading-none text-mono">
+                {{ page_title|default:_("Coming Soon") }}
+            </h1>
+            <div class="flex items-center gap-2 text-sm font-normal text-secondary-foreground">
+                {{ page_description|default:_("This feature is under development") }}
+            </div>
+        </div>
+    </div>
+
+    <!-- Placeholder Content -->
+    <div class="kt-card">
+        <div class="kt-card-body text-center py-20">
+            <div class="flex flex-col items-center gap-4">
+                <div class="flex items-center justify-center size-20 rounded-full bg-primary/10 mb-4">
+                    <i class="ki-filled ki-code text-primary text-4xl"></i>
+                </div>
+                
+                <h3 class="text-lg font-semibold text-foreground">
+                    {% trans "Under Development" %}
+                </h3>
+                
+                <p class="text-muted-foreground max-w-md">
+                    {{ placeholder_message|default:_("This functionality is currently being developed and will be available soon.") }}
+                </p>
+                
+                {% if features %}
+                <div class="mt-6">
+                    <h4 class="text-sm font-medium text-foreground mb-3">{% trans "Planned Features:" %}</h4>
+                    <ul class="text-sm text-muted-foreground space-y-2">
+                        {% for feature in features %}
+                        <li class="flex items-center gap-2">
+                            <i class="ki-filled ki-check-circle text-success text-xs"></i>
+                            {{ feature }}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+                
+                <div class="mt-8">
+                    <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-primary">
+                        <i class="ki-filled ki-left"></i>
+                        {% trans "Back to Product Groups" %}
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

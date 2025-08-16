@@ -1,0 +1,306 @@
+{% extends 'frontend/base.html' %}
+{% load i18n %}
+{% load static %}
+
+{% block title %}{{ page_title }} - {{ block.super }}{% endblock %}
+
+{% block content %}
+<!-- Container -->
+<div class="kt-container-fixed" id="contentContainer">
+    
+    <!-- Page Header -->
+    <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+        <div class="flex flex-col justify-center gap-2">
+            <h1 class="text-xl font-medium leading-none text-mono">
+                {{ page_title }}
+            </h1>
+            <div class="flex items-center gap-2 text-sm font-normal text-secondary-foreground">
+                {{ page_description }}
+            </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2.5">
+            {% if can_create %}
+            <a class="kt-btn kt-btn-primary" href="{{ create_url }}">
+                <i class="ki-filled ki-plus"></i>
+                {% trans "Add Product Group" %}
+            </a>
+            {% endif %}
+            
+            <!-- View Mode Toggle -->
+            <div class="kt-btn-group" data-kt-buttons="true">
+                <label class="kt-btn kt-btn-sm kt-btn-outline {% if view_mode == 'flat' %}active{% endif %}" data-kt-button="true">
+                    <input type="radio" name="view_mode" value="flat" {% if view_mode == 'flat' %}checked{% endif %}>
+                    <i class="ki-filled ki-row-horizontal"></i>
+                    {% trans "List" %}
+                </label>
+                <label class="kt-btn kt-btn-sm kt-btn-outline {% if view_mode == 'tree' %}active{% endif %}" data-kt-button="true">
+                    <input type="radio" name="view_mode" value="tree" {% if view_mode == 'tree' %}checked{% endif %}>
+                    <i class="ki-filled ki-abstract-14"></i>
+                    {% trans "Tree" %}
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="grid lg:grid-cols-4 gap-5 lg:gap-7.5 mb-6">
+        <div class="kt-card">
+            <div class="kt-card-body flex items-center gap-3 p-5">
+                <div class="flex items-center justify-center size-12 rounded-lg bg-primary/10">
+                    <i class="ki-filled ki-abstract-14 text-primary text-lg"></i>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span class="text-2xl font-semibold text-foreground">{{ total_count }}</span>
+                    <span class="text-sm text-muted-foreground">{% trans "Total Groups" %}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="kt-card">
+            <div class="kt-card-body flex items-center gap-3 p-5">
+                <div class="flex items-center justify-center size-12 rounded-lg bg-success/10">
+                    <i class="ki-filled ki-check-circle text-success text-lg"></i>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span class="text-2xl font-semibold text-foreground">{{ active_count }}</span>
+                    <span class="text-sm text-muted-foreground">{% trans "Active" %}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="kt-card">
+            <div class="kt-card-body flex items-center gap-3 p-5">
+                <div class="flex items-center justify-center size-12 rounded-lg bg-warning/10">
+                    <i class="ki-filled ki-cross-circle text-warning text-lg"></i>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span class="text-2xl font-semibold text-foreground">{{ inactive_count }}</span>
+                    <span class="text-sm text-muted-foreground">{% trans "Inactive" %}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="kt-card">
+            <div class="kt-card-body flex items-center gap-3 p-5">
+                <div class="flex items-center justify-center size-12 rounded-lg bg-info/10">
+                    <i class="ki-filled ki-abstract-25 text-info text-lg"></i>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <span class="text-2xl font-semibold text-foreground">{{ object_list|length }}</span>
+                    <span class="text-sm text-muted-foreground">{% trans "On This Page" %}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Card -->
+    <div class="kt-card">
+        <div class="kt-card-header">
+            <h3 class="kt-card-title">
+                {% trans "Product Groups" %}
+            </h3>
+            
+            <!-- Search and Filters -->
+            <div class="kt-card-toolbar">
+                <div class="flex items-center gap-2">
+                    <!-- Search -->
+                    <div class="relative">
+                        <i class="ki-filled ki-magnifier absolute start-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm"></i>
+                        <input type="text" 
+                               id="search-input"
+                               class="kt-input kt-input-sm ps-10" 
+                               placeholder="{% trans 'Search groups...' %}"
+                               value="{{ search_query }}">
+                    </div>
+                    
+                    <!-- Status Filter -->
+                    <select id="status-filter" class="kt-select kt-select-sm" data-kt-select="true">
+                        <option value="">{% trans "All Statuses" %}</option>
+                        <option value="active" {% if status_filter == 'active' %}selected{% endif %}>{% trans "Active Only" %}</option>
+                        <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>{% trans "Inactive Only" %}</option>
+                    </select>
+                    
+                    <!-- Export Button -->
+                    <button class="kt-btn kt-btn-sm kt-btn-outline" id="export-btn">
+                        <i class="ki-filled ki-export"></i>
+                        {% trans "Export" %}
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="kt-card-body">
+            {% if view_mode == 'tree' %}
+                <!-- Tree View -->
+                <div id="product-groups-tree" class="tree-container">
+                    <!-- Tree will be rendered here by JavaScript -->
+                </div>
+            {% else %}
+                <!-- Table View -->
+                <div class="table-responsive">
+                    <table class="kt-table kt-table-border kt-table-rounded kt-table-row-border" 
+                           id="product-groups-table" 
+                           data-kt-table="true"
+                           data-kt-table-search="true"
+                           data-kt-table-paging="true">
+                        <thead>
+                            <tr class="text-start text-muted-foreground fw-bold fs-7 text-uppercase gs-0">
+                                <th class="min-w-125px">{% trans "Code" %}</th>
+                                <th class="min-w-200px">{% trans "Name" %}</th>
+                                <th class="min-w-150px">{% trans "Parent Group" %}</th>
+                                <th class="min-w-100px">{% trans "Status" %}</th>
+                                <th class="min-w-70px">{% trans "Sort" %}</th>
+                                <th class="text-end min-w-100px">{% trans "Actions" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-muted-foreground fw-semibold">
+                            {% for group in object_list %}
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <span class="text-foreground fw-bold">{{ group.code }}</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column">
+                                        <a href="{% url 'nomenclatures:product_groups_detail' group.pk %}" 
+                                           class="text-foreground text-hover-primary fw-bold">
+                                            {{ group.name }}
+                                        </a>
+                                        {% if group.description %}
+                                        <span class="text-muted-foreground fs-7">{{ group.description|truncatewords:8 }}</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if group.parent %}
+                                        <a href="{% url 'nomenclatures:product_groups_detail' group.parent.pk %}" 
+                                           class="text-muted-foreground text-hover-primary">
+                                            {{ group.parent.name }}
+                                        </a>
+                                    {% else %}
+                                        <span class="text-muted-foreground">{% trans "Root Group" %}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if group.is_active %}
+                                        <span class="kt-badge kt-badge-success kt-badge-sm">
+                                            <i class="ki-filled ki-check-circle"></i>
+                                            {% trans "Active" %}
+                                        </span>
+                                    {% else %}
+                                        <span class="kt-badge kt-badge-warning kt-badge-sm">
+                                            <i class="ki-filled ki-cross-circle"></i>
+                                            {% trans "Inactive" %}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="text-muted-foreground">{{ group.sort_order }}</span>
+                                </td>
+                                <td class="text-end">
+                                    <div class="kt-btn-group" role="group">
+                                        <a href="{% url 'nomenclatures:product_groups_detail' group.pk %}" 
+                                           class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                           data-kt-menu-trigger="hover"
+                                           data-kt-menu-placement="top">
+                                            <i class="ki-filled ki-eye"></i>
+                                        </a>
+                                        
+                                        {% if can_edit %}
+                                        <a href="{% url 'nomenclatures:product_groups_edit' group.pk %}" 
+                                           class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                           data-kt-menu-trigger="hover"
+                                           data-kt-menu-placement="top">
+                                            <i class="ki-filled ki-notepad-edit"></i>
+                                        </a>
+                                        {% endif %}
+                                        
+                                        {% if group.can_delete.0 %}
+                                        <a href="{% url 'nomenclatures:product_groups_delete' group.pk %}" 
+                                           class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost text-danger"
+                                           data-kt-menu-trigger="hover"
+                                           data-kt-menu-placement="top">
+                                            <i class="ki-filled ki-trash"></i>
+                                        </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="text-center py-8">
+                                    <div class="d-flex flex-column align-items-center">
+                                        <i class="ki-filled ki-abstract-14 text-muted-foreground text-5xl mb-3"></i>
+                                        <h4 class="text-muted-foreground mb-2">{% trans "No Product Groups Found" %}</h4>
+                                        <p class="text-muted-foreground">
+                                            {% if search_query %}
+                                                {% trans "No groups match your search criteria." %}
+                                            {% else %}
+                                                {% trans "Get started by creating your first product group." %}
+                                            {% endif %}
+                                        </p>
+                                        {% if can_create and not search_query %}
+                                        <a href="{{ create_url }}" class="kt-btn kt-btn-primary mt-3">
+                                            <i class="ki-filled ki-plus"></i>
+                                            {% trans "Create First Group" %}
+                                        </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </div>
+        
+        <!-- Pagination -->
+        {% if is_paginated %}
+        <div class="kt-card-footer">
+            <div class="kt-pagination" data-kt-pagination="true">
+                <ul class="pagination">
+                    {% if page_obj.has_previous %}
+                    <li class="page-item previous">
+                        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                           class="page-link">
+                            <i class="previous"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                    
+                    {% for num in page_obj.paginator.page_range %}
+                        {% if page_obj.number == num %}
+                        <li class="page-item active">
+                            <span class="page-link">{{ num }}</span>
+                        </li>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                        <li class="page-item">
+                            <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                               class="page-link">{{ num }}</a>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if page_obj.has_next %}
+                    <li class="page-item next">
+                        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                           class="page-link">
+                            <i class="next"></i>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- JavaScript -->
+<script src="{% static 'nomenclatures/js/product_groups_list.js' %}"></script>
+
+{% endblock %}
