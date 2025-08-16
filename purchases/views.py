@@ -187,7 +187,7 @@ from typing import Dict, Any
 class IndexView(TemplateView):
     """Main dashboard view for demo12 with hardcoded data."""
 
-    template_name = 'demo1/index.html'
+    template_name = 'frontend/index.html'
 
     def get_context_data(self, **kwargs) -> Dict[str, Any]:
         context = super().get_context_data(**kwargs)
