@@ -1,6 +1,7 @@
 # nomenclatures/urls.py
 from django.urls import path, include
 from . import views
+from .views.products import ProductGroupDetailModalView
 
 app_name = 'nomenclatures'
 
@@ -9,7 +10,7 @@ urlpatterns = [
     path('product-groups/', include([
         path('', views.ProductGroupListView.as_view(), name='product_groups'),
         path('create/', views.ProductGroupCreateView.as_view(), name='product_groups_create'),
-        path('<int:pk>/', views.ProductGroupDetailView.as_view(), name='product_groups_detail'),
+        path('product-groups/<int:pk>/modal/', ProductGroupDetailModalView.as_view(), name='product_groups_detail_modal'),
         path('<int:pk>/edit/', views.ProductGroupUpdateView.as_view(), name='product_groups_edit'),
         path('<int:pk>/delete/', views.ProductGroupDeleteView.as_view(), name='product_groups_delete'),
     ])),

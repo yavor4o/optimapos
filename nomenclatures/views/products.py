@@ -1,13 +1,12 @@
-# nomenclatures/views/products.py - Updated with AJAX Modal Support
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.http import JsonResponse
 from django.template.loader import render_to_string
-
 from ..forms.product import ProductGroupForm
 from ..models import ProductGroup
+
 
 
 class NomenclatureViewMixin(LoginRequiredMixin):
@@ -41,15 +40,27 @@ class ProductGroupListView(NomenclatureListMixin, ListView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        # Handle view mode
+        view_mode = self.request.GET.get('view', 'flat')
+        if view_mode not in ['flat', 'tree']:
+            view_mode = 'flat'
+
         context.update({
             'total_count': ProductGroup.objects.count(),
             'active_count': ProductGroup.objects.filter(is_active=True).count(),
             'inactive_count': ProductGroup.objects.filter(is_active=False).count(),
             'can_create': True,
             'create_url': reverse_lazy('nomenclatures:product_groups_create'),
-            'view_mode': 'flat',
+            'view_mode': view_mode,
         })
         return context
+
+    def get_queryset(self):
+        view_mode = self.request.GET.get('view', 'flat')
+        if view_mode == 'tree':
+            return ProductGroup.objects.all().select_related('parent')
+        return super().get_queryset()
 
 
 class ProductGroupCreateView(NomenclatureViewMixin, CreateView):
@@ -67,6 +78,8 @@ class ProductGroupUpdateView(NomenclatureViewMixin, UpdateView):
     form_class = ProductGroupForm
     template_name = 'frontend/nomenclatures/product/product_groups_form.html'
     success_url = reverse_lazy('nomenclatures:product_groups')
+    # Ако URL ползва <int:id>, разкоментирай следното:
+    # pk_url_kwarg = 'id'
 
     def get_page_title(self):
         return _("Edit Product Group")
@@ -78,52 +91,35 @@ class ProductGroupUpdateView(NomenclatureViewMixin, UpdateView):
         return form
 
 
-class ProductGroupDetailView(NomenclatureViewMixin, DetailView):
-    """
-    AJAX-Ready Detail View for Product Groups
-    - Returns JSON with HTML for AJAX requests (modal)
-    - Returns normal page for direct access (fallback)
-    """
-    model = ProductGroup
-    template_name = 'frontend/nomenclatures/product/product_groups_detail.html'
 
-    def get_page_title(self):
-        return _("Product Group Details")
+
+
+class ProductGroupDetailModalView(NomenclatureViewMixin, DetailView):
+    model = ProductGroup
 
     def get(self, request, *args, **kwargs):
         self.object = self.get_object()
 
-        # Check if this is an AJAX request for modal
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return self.ajax_response()
+        # Подготви контекста за модала
+        context = {
+            'group': self.object,
+            'children_count': self.object.get_children().count() if hasattr(self.object, 'get_children') else 0,
+            'descendants_count': self.object.get_descendant_count() if hasattr(self.object,
+                                                                               'get_descendant_count') else 0,
+        }
 
-        # Normal page request (fallback)
-        return super().get(request, *args, **kwargs)
+        # Рендери HTML-а за модала
+        html = render_to_string(
+            'frontend/nomenclatures/product/partials/product_group_detail_modal.html',
+            context,
+            request=request
+        )
 
-    def ajax_response(self):
-        """Return JSON response with modal HTML for AJAX requests"""
-        try:
-            context = self.get_context_data(object=self.object)
-
-            # Render the modal template
-            modal_html = render_to_string(
-                'frontend/nomenclatures/product/product_groups_detail_modal.html',
-                context,
-                request=self.request
-            )
-
-            return JsonResponse({
-                'success': True,
-                'html': modal_html,
-                'title': f'{self.object.name} - {_("Product Group Details")}'
-            })
-
-        except Exception as e:
-            return JsonResponse({
-                'success': False,
-                'error': str(e),
-                'message': _('Error loading product group details')
-            }, status=500)
+        return JsonResponse({
+            'success': True,
+            'html': html,
+            'title': f'{self.object.code} - {self.object.name}'
+        })
 
 
 class ProductGroupDeleteView(NomenclatureViewMixin, DeleteView):
@@ -133,3 +129,4 @@ class ProductGroupDeleteView(NomenclatureViewMixin, DeleteView):
 
     def get_page_title(self):
         return _("Delete Product Group")
+
