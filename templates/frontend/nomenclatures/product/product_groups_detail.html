@@ -4,25 +4,188 @@
 {% block title %}{{ object.name }} - {{ block.super }}{% endblock %}
 
 {% block content %}
-<div class="kt-container-fixed">
+<!-- Modal Backdrop -->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" id="product-group-modal">
 
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="text-xl font-bold">{{ object.name }}</h1>
-    <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-secondary">
-      ← {% trans "Back to List" %}
-    </a>
-  </div>
+  <!-- Modal Dialog -->
+  <div class="kt-modal kt-modal-center max-w-2xl w-full mx-4">
+    <div class="kt-modal-content">
 
-  <div class="kt-card">
-    <div class="kt-card-body">
-      <p><strong>{% trans "Code" %}:</strong> {{ object.code }}</p>
-      <p><strong>{% trans "Parent" %}:</strong>
-         {% if object.parent %}{{ object.parent.name }}{% else %}—{% endif %}
-      </p>
-      <p><strong>{% trans "Sort Order" %}:</strong> {{ object.sort_order }}</p>
-      <p><strong>{% trans "Active" %}:</strong> {{ object.is_active|yesno:"Yes,No" }}</p>
+      <!-- Modal Header -->
+      <div class="kt-modal-header">
+        <div class="kt-modal-title">
+          <div class="flex items-center gap-3">
+            <div class="flex items-center justify-center size-10 bg-primary-light rounded-full">
+              <i class="ki-filled ki-folder text-primary text-lg"></i>
+            </div>
+            <div>
+              <h3 class="text-lg font-semibold text-gray-900">{{ object.name }}</h3>
+              <p class="text-sm text-gray-600">{% trans "Product Group Details" %}</p>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="kt-modal-close" onclick="closeModal()">
+          <i class="ki-filled ki-cross"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="kt-modal-body">
+        <div class="space-y-6">
+
+          <!-- Basic Information -->
+          <div class="kt-card">
+            <div class="kt-card-header">
+              <div class="kt-card-heading">
+                <h4 class="kt-card-title">{% trans "Basic Information" %}</h4>
+              </div>
+            </div>
+            <div class="kt-card-content p-5">
+              <div class="grid md:grid-cols-2 gap-6">
+                <div>
+                  <label class="text-sm font-medium text-gray-700">{% trans "Group Code" %}</label>
+                  <div class="flex items-center gap-2 mt-1">
+                    <i class="ki-filled ki-code text-gray-500 text-sm"></i>
+                    <span class="text-sm font-mono bg-gray-100 px-2 py-1 rounded">{{ object.code }}</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-sm font-medium text-gray-700">{% trans "Sort Order" %}</label>
+                  <div class="flex items-center gap-2 mt-1">
+                    <i class="ki-filled ki-sort-asc text-gray-500 text-sm"></i>
+                    <span class="text-sm">{{ object.sort_order }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-6">
+                <label class="text-sm font-medium text-gray-700">{% trans "Parent Group" %}</label>
+                <div class="flex items-center gap-2 mt-1">
+                  <i class="ki-filled ki-category text-gray-500 text-sm"></i>
+                  {% if object.parent %}
+                    <span class="text-sm">{{ object.parent.name }}</span>
+                  {% else %}
+                    <span class="text-sm text-gray-500">{% trans "Root Level Group" %}</span>
+                  {% endif %}
+                </div>
+              </div>
+
+              <div class="mt-6">
+                <label class="text-sm font-medium text-gray-700">{% trans "Status" %}</label>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="kt-badge kt-badge-outline {% if object.is_active %}kt-badge-primary{% else %}kt-badge-secondary{% endif %}">
+                    {% if object.is_active %}
+                      <i class="ki-filled ki-check text-xs mr-1"></i>
+                      {% trans "Active" %}
+                    {% else %}
+                      <i class="ki-filled ki-cross text-xs mr-1"></i>
+                      {% trans "Inactive" %}
+                    {% endif %}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hierarchy -->
+          {% if object.get_ancestors or object.children.exists %}
+            <div class="kt-card">
+              <div class="kt-card-header">
+                <div class="kt-card-heading">
+                  <h4 class="kt-card-title">{% trans "Hierarchy" %}</h4>
+                </div>
+              </div>
+              <div class="kt-card-content p-5">
+
+                {% if object.get_ancestors %}
+                  <div class="mb-4">
+                    <label class="text-sm font-medium text-gray-700 mb-2 block">{% trans "Current Path" %}</label>
+                    <div class="space-y-1">
+                      {% for ancestor in object.get_ancestors %}
+                        <div class="flex items-center gap-2 text-sm text-gray-600">
+                          <i class="ki-filled ki-right text-xs text-gray-400"></i>
+                          <span>{{ ancestor.name }}</span>
+                        </div>
+                      {% endfor %}
+                      <div class="flex items-center gap-2 text-sm font-medium text-gray-900">
+                        <i class="ki-filled ki-star text-xs text-primary"></i>
+                        <span>{{ object.name }}</span>
+                      </div>
+                    </div>
+                  </div>
+                {% endif %}
+
+                {% if object.children.exists %}
+                  <div>
+                    <label class="text-sm font-medium text-gray-700 mb-2 block">{% trans "Child Groups" %} ({{ object.children.count }})</label>
+                    <div class="space-y-1">
+                      {% for child in object.children.all %}
+                        <div class="flex items-center justify-between gap-2 py-2 border-b border-border border-dashed last:border-none">
+                          <div class="flex items-center gap-3">
+                            <i class="ki-filled ki-folder text-xs text-primary"></i>
+                            <span class="text-sm">{{ child.name }}</span>
+                          </div>
+                          <span class="kt-badge kt-badge-outline {% if child.is_active %}kt-badge-primary{% else %}kt-badge-secondary{% endif %} kt-badge-sm">
+                            {% if child.is_active %}{% trans "Active" %}{% else %}{% trans "Inactive" %}{% endif %}
+                          </span>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            </div>
+          {% endif %}
+
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="kt-modal-footer">
+        <div class="flex justify-between w-full">
+          <button type="button" class="kt-btn kt-btn-light" onclick="closeModal()">
+            {% trans "Close" %}
+          </button>
+          <div class="flex gap-2">
+            <a href="{% url 'nomenclatures:product_groups_edit' object.pk %}" class="kt-btn kt-btn-primary">
+              <i class="ki-filled ki-pencil"></i>
+              {% trans "Edit Group" %}
+            </a>
+            <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-outline">
+              {% trans "Back to List" %}
+            </a>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
-
 </div>
+
+<script>
+// Close modal function
+function closeModal() {
+  // Go back to product groups list
+  window.location.href = "{% url 'nomenclatures:product_groups' %}";
+}
+
+// Close modal on ESC key
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    closeModal();
+  }
+});
+
+// Close modal on backdrop click
+document.getElementById('product-group-modal').addEventListener('click', function(e) {
+  if (e.target === this) {
+    closeModal();
+  }
+});
+
+// Auto-focus for accessibility
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelector('.kt-modal-close').focus();
+});
+</script>
 {% endblock %}

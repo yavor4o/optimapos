@@ -4,155 +4,291 @@
 {% block title %}{{ page_title }} - {{ block.super }}{% endblock %}
 
 {% block content %}
-<div class="kt-container">
+<div class="kt-container-fixed">
 
   <!-- Page Header -->
-  <div class="flex items-center justify-between mb-7">
-    <h1 class="kt-heading kt-heading-lg">
-      {% if object %}
-        {% trans "Edit Product Group" %}: {{ object.name }}
-      {% else %}
-        {% trans "Create Product Group" %}
-      {% endif %}
-    </h1>
-    <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-light">
-      <i class="ki-filled ki-left"></i>
-      {% trans "Back to List" %}
-    </a>
+  <div class="flex flex-wrap items-center justify-between gap-5 pb-7.5">
+    <div class="flex flex-col gap-1">
+      <h1 class="text-2xl font-bold text-gray-900">
+        {% if object %}
+          {% trans "Edit Product Group" %}
+        {% else %}
+          {% trans "Create Product Group" %}
+        {% endif %}
+      </h1>
+      <div class="flex items-center gap-2 text-sm text-gray-600">
+        <a href="{% url 'nomenclatures:product_groups' %}" class="text-blue-600 hover:text-blue-800">{% trans "Product Groups" %}</a>
+        <span class="text-gray-400">/</span>
+        <span>{% if object %}{{ object.name }}{% else %}{% trans "New Group" %}{% endif %}</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2.5">
+      <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-outline">
+        <i class="ki-filled ki-left"></i>
+        {% trans "Back to List" %}
+      </a>
+    </div>
   </div>
 
-  <!-- Form Card -->
-  <div class="kt-card">
-    <div class="kt-card-body">
-      <form method="post" novalidate>
-        {% csrf_token %}
-
-        {% if form.non_field_errors %}
-          <div class="kt-alert kt-alert-danger mb-6">
-            <i class="ki-filled ki-information-2"></i>
-            {{ form.non_field_errors }}
+  <div class="grid lg:grid-cols-3 gap-6">
+    <!-- Main Form -->
+    <div class="lg:col-span-2">
+      <div class="kt-card">
+        <div class="kt-card-header">
+          <div class="kt-card-heading">
+            <h3 class="kt-card-title">{% trans "Group Information" %}</h3>
           </div>
-        {% endif %}
-
-        <!-- Code -->
-        <div class="kt-form-item mb-5">
-          <label for="{{ form.code.id_for_label }}" class="kt-form-label">
-            {{ form.code.label }} <span class="text-danger">*</span>
-          </label>
-          <input type="text"
-                 name="{{ form.code.html_name }}"
-                 id="{{ form.code.id_for_label }}"
-                 class="kt-input"
-                 maxlength="20"
-                 required
-                 value="{% if form.is_bound %}{{ form.code.value|default_if_none:'' }}{% else %}{{ form.instance.code|default_if_none:'' }}{% endif %}">
-          {% for err in form.code.errors %}
-            <div class="text-danger text-sm mt-1">{{ err }}</div>
-          {% endfor %}
         </div>
+        <div class="kt-card-content p-6">
+          <form method="post" novalidate class="kt-form space-y-5">
+            {% csrf_token %}
 
-        <!-- Name -->
-        <div class="kt-form-item mb-5">
-          <label for="{{ form.name.id_for_label }}" class="kt-form-label">
-            {{ form.name.label }} <span class="text-danger">*</span>
-          </label>
-          <input type="text"
-                 name="{{ form.name.html_name }}"
-                 id="{{ form.name.id_for_label }}"
-                 class="kt-input"
-                 maxlength="100"
-                 required
-                 value="{% if form.is_bound %}{{ form.name.value|default_if_none:'' }}{% else %}{{ form.instance.name|default_if_none:'' }}{% endif %}">
-          {% for err in form.name.errors %}
-            <div class="text-danger text-sm mt-1">{{ err }}</div>
-          {% endfor %}
-        </div>
+            {% if form.non_field_errors %}
+              <div class="kt-alert kt-alert-danger mb-5">
+                <div class="flex items-center">
+                  <i class="ki-filled ki-information-2 text-lg mr-3"></i>
+                  <div>
+                    <h4 class="text-sm font-medium">{% trans "Validation Error" %}</h4>
+                    <div class="text-sm mt-1">{{ form.non_field_errors }}</div>
+                  </div>
+                </div>
+              </div>
+            {% endif %}
 
-        <!-- Parent -->
-        <div class="kt-form-item mb-5">
-          <label for="{{ form.parent.id_for_label }}" class="kt-form-label">
-            {{ form.parent.label }}
-          </label>
-          <select name="{{ form.parent.html_name }}" id="{{ form.parent.id_for_label }}" class="kt-select">
-            <option value="">{% trans "-- Root Level Group --" %}</option>
-            {% for choice in form.fields.parent.queryset %}
-              <option value="{{ choice.pk }}"
-                {% if form.is_bound %}
-                  {% if form.parent.value|stringformat:"s" == choice.pk|stringformat:"s" %}selected{% endif %}
+            <div class="grid md:grid-cols-2 gap-6">
+              <!-- Code -->
+              <div class="kt-form-item">
+                <label class="kt-form-label" for="{{ form.code.id_for_label }}">
+                  {{ form.code.label }} <span class="text-red-500">*</span>
+                </label>
+                <div class="kt-form-control">
+                  <div class="kt-input">
+                    <i class="ki-filled ki-code text-gray-500"></i>
+                    <input type="text"
+                           name="{{ form.code.html_name }}"
+                           id="{{ form.code.id_for_label }}"
+                           class="kt-input"
+                           placeholder="{% trans 'Enter group code' %}"
+                           maxlength="20"
+                           value="{% if form.is_bound %}{{ form.code.value|default_if_none:'' }}{% else %}{{ form.instance.code|default_if_none:'' }}{% endif %}"
+                           {% if form.code.errors %}aria-invalid="true"{% endif %}>
+                  </div>
+                </div>
+                {% if form.code.errors %}
+                  <div class="kt-form-message">{% for err in form.code.errors %}{{ err }}{% endfor %}</div>
                 {% else %}
-                  {% if form.instance.parent and form.instance.parent.pk == choice.pk %}selected{% endif %}
-                {% endif %}>
-                {{ choice.name }}
-              </option>
-            {% endfor %}
-          </select>
-          {% for err in form.parent.errors %}
-            <div class="text-danger text-sm mt-1">{{ err }}</div>
-          {% endfor %}
-          <span class="kt-form-help">{% trans "Leave empty for root level group" %}</span>
+                  <div class="kt-form-description">{% trans "Unique identifier (e.g., DRINKS, FOOD)" %}</div>
+                {% endif %}
+              </div>
+
+              <!-- Name -->
+              <div class="kt-form-item">
+                <label class="kt-form-label" for="{{ form.name.id_for_label }}">
+                  {{ form.name.label }} <span class="text-red-500">*</span>
+                </label>
+                <div class="kt-form-control">
+                  <div class="kt-input">
+                    <i class="ki-filled ki-folder text-gray-500"></i>
+                    <input type="text"
+                           name="{{ form.name.html_name }}"
+                           id="{{ form.name.id_for_label }}"
+                           class="kt-input"
+                           placeholder="{% trans 'Enter group name' %}"
+                           maxlength="100"
+                           value="{% if form.is_bound %}{{ form.name.value|default_if_none:'' }}{% else %}{{ form.instance.name|default_if_none:'' }}{% endif %}"
+                           {% if form.name.errors %}aria-invalid="true"{% endif %}>
+                  </div>
+                </div>
+                {% if form.name.errors %}
+                  <div class="kt-form-message">{% for err in form.name.errors %}{{ err }}{% endfor %}</div>
+                {% else %}
+                  <div class="kt-form-description">{% trans "Display name for the group" %}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <!-- Parent -->
+            <div class="kt-form-item">
+              <label class="kt-form-label" for="{{ form.parent.id_for_label }}">
+                {{ form.parent.label }}
+              </label>
+              <div class="kt-form-control">
+                <div class="kt-input-group">
+                  <span class="kt-input-addon kt-input-addon-icon">
+                    <i class="ki-filled ki-category text-gray-500"></i>
+                  </span>
+                  <select name="{{ form.parent.html_name }}"
+                          id="{{ form.parent.id_for_label }}"
+                          class="kt-input"
+                          {% if form.parent.errors %}aria-invalid="true"{% endif %}>
+                    <option value="">{% trans "-- Root Level Group --" %}</option>
+                    {% for choice in form.fields.parent.queryset %}
+                      <option value="{{ choice.pk }}"
+                        {% if form.is_bound %}
+                          {% if form.parent.value|stringformat:"s" == choice.pk|stringformat:"s" %}selected{% endif %}
+                        {% else %}
+                          {% if form.instance.parent and form.instance.parent.pk == choice.pk %}selected{% endif %}
+                        {% endif %}>
+                        {{ choice.name }}
+                      </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              {% if form.parent.errors %}
+                <div class="kt-form-message">{% for err in form.parent.errors %}{{ err }}{% endfor %}</div>
+              {% else %}
+                <div class="kt-form-description">{% trans "Leave empty for root level group" %}</div>
+              {% endif %}
+            </div>
+
+            <!-- Sort Order and Status in one row -->
+            <div class="flex flex-col md:flex-row">
+              <!-- Sort order -->
+              <div class="kt-form-item" style="width: 45%; margin-right: 10%;">
+                <label class="kt-form-label" for="{{ form.sort_order.id_for_label }}">
+                  {{ form.sort_order.label }}
+                </label>
+                <div class="kt-form-control">
+                  <div class="kt-input">
+                    <i class="ki-filled ki-sort-asc text-gray-500"></i>
+                    <input type="number"
+                           name="{{ form.sort_order.html_name }}"
+                           id="{{ form.sort_order.id_for_label }}"
+                           class="kt-input"
+                           placeholder="0"
+                           min="0" max="999"
+                           value="{% if form.is_bound %}{{ form.sort_order.value|default_if_none:'0' }}{% else %}{{ form.instance.sort_order|default_if_none:'0' }}{% endif %}"
+                           {% if form.sort_order.errors %}aria-invalid="true"{% endif %}>
+                  </div>
+                </div>
+                {% if form.sort_order.errors %}
+                  <div class="kt-form-message">{% for err in form.sort_order.errors %}{{ err }}{% endfor %}</div>
+                {% else %}
+                  <div class="kt-form-description">{% trans "Lower numbers appear first" %}</div>
+                {% endif %}
+              </div>
+
+              <!-- Is active -->
+              <div class="kt-form-item" style="width: 45%;">
+                <label class="kt-form-label">{% trans "Status" %}</label>
+                <div class="kt-form-control">
+                  <div class="flex items-center gap-2">
+                    <input type="checkbox"
+                           name="{{ form.is_active.html_name }}"
+                           id="{{ form.is_active.id_for_label }}"
+                           class="kt-checkbox"
+                           value="1"
+                           {% if form.is_bound %}
+                             {% if form.is_active.value %}checked{% endif %}
+                           {% else %}
+                             {% if form.instance.is_active %}checked{% endif %}
+                           {% endif %}>
+                    <label class="kt-label" for="{{ form.is_active.id_for_label }}">
+                      {{ form.is_active.label }}
+                    </label>
+                  </div>
+                </div>
+                {% if form.is_active.errors %}
+                  <div class="kt-form-message">{% for err in form.is_active.errors %}{{ err }}{% endfor %}</div>
+                {% else %}
+                  <div class="kt-form-description">{% trans "Inactive groups are hidden from selection" %}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="kt-form-actions">
+              <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-outline">
+                {% trans "Cancel" %}
+              </a>
+              <button type="submit" class="kt-btn kt-btn-primary">
+                <i class="ki-filled ki-check"></i>
+                {% if object %}{% trans "Update Group" %}{% else %}{% trans "Create Group" %}{% endif %}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="lg:col-span-1 space-y-6">
+      {% if object %}
+        <!-- Current Hierarchy Card -->
+        <div class="kt-card">
+          <div class="kt-card-header">
+            <div class="kt-card-heading">
+              <h3 class="kt-card-title">{% trans "Current Hierarchy" %}</h3>
+            </div>
+          </div>
+          <div class="kt-card-content p-5">
+            <div class="space-y-2">
+              {% for ancestor in object.get_ancestors %}
+                <div class="flex items-center gap-2 text-sm text-gray-600">
+                  <i class="ki-filled ki-right text-xs text-gray-400"></i>
+                  <span>{{ ancestor.name }}</span>
+                </div>
+              {% endfor %}
+              <div class="flex items-center gap-2 text-sm font-medium text-gray-900">
+                <i class="ki-filled ki-star text-xs text-blue-500"></i>
+                <span>{{ object.name }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- Sort order -->
-        <div class="kt-form-item mb-5">
-          <label for="{{ form.sort_order.id_for_label }}" class="kt-form-label">
-            {{ form.sort_order.label }}
-          </label>
-          <input type="number"
-                 name="{{ form.sort_order.html_name }}"
-                 id="{{ form.sort_order.id_for_label }}"
-                 class="kt-input"
-                 min="0" max="999"
-                 value="{% if form.is_bound %}{{ form.sort_order.value|default_if_none:'0' }}{% else %}{{ form.instance.sort_order|default_if_none:'0' }}{% endif %}">
-          {% for err in form.sort_order.errors %}
-            <div class="text-danger text-sm mt-1">{{ err }}</div>
-          {% endfor %}
-        </div>
-
-        <!-- Is active -->
-        <div class="kt-form-item mb-6">
-          <label class="kt-checkbox">
-            <input type="checkbox"
-                   name="{{ form.is_active.html_name }}"
-                   id="{{ form.is_active.id_for_label }}"
-                   value="1"
-                   {% if form.is_bound %}
-                     {% if form.is_active.value %}checked{% endif %}
-                   {% else %}
-                     {% if form.instance.is_active %}checked{% endif %}
-                   {% endif %}>
-            {{ form.is_active.label }}
-          </label>
-          {% for err in form.is_active.errors %}
-            <div class="text-danger text-sm mt-1">{{ err }}</div>
-          {% endfor %}
-        </div>
-
-        <!-- Hierarchy -->
-        {% if object %}
-          <div class="kt-card bg-light mb-6">
-            <div class="kt-card-body">
-              <h5 class="kt-heading kt-heading-sm mb-2">{% trans "Current Hierarchy" %}</h5>
-              <div class="text-muted">
-                {% for ancestor in object.get_ancestors %}
-                  {{ ancestor.name }} <i class="ki-filled ki-right text-xs mx-1"></i>
+        <!-- Children Groups -->
+        {% if object.children.exists %}
+          <div class="kt-card">
+            <div class="kt-card-header">
+              <div class="kt-card-heading">
+                <h3 class="kt-card-title">{% trans "Child Groups" %}</h3>
+              </div>
+            </div>
+            <div class="kt-card-content p-5">
+              <div class="space-y-3">
+                {% for child in object.children.all %}
+                  <div class="flex items-center justify-between gap-2 py-2 border-b border-border border-dashed last:border-none">
+                    <div class="flex items-center gap-3">
+                      <i class="ki-filled ki-folder text-xs text-blue-500"></i>
+                      <span class="text-sm text-gray-700">{{ child.name }}</span>
+                    </div>
+                    <span class="kt-badge kt-badge-outline {% if child.is_active %}kt-badge-primary{% else %}kt-badge-secondary{% endif %}">
+                      {% if child.is_active %}{% trans "Active" %}{% else %}{% trans "Inactive" %}{% endif %}
+                    </span>
+                  </div>
                 {% endfor %}
-                <strong>{{ object.name }}</strong>
               </div>
             </div>
           </div>
         {% endif %}
-
-        <!-- Actions -->
-        <div class="flex items-center gap-3 pt-6 border-t">
-          <button type="submit" class="kt-btn kt-btn-primary">
-            <i class="ki-filled ki-check"></i>
-            {% if object %}{% trans "Update Group" %}{% else %}{% trans "Create Group" %}{% endif %}
-          </button>
-          <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-light">
-            {% trans "Cancel" %}
-          </a>
+      {% else %}
+        <!-- Help Card for New Groups -->
+        <div class="kt-card">
+          <div class="kt-card-header">
+            <div class="kt-card-heading">
+              <h3 class="kt-card-title">{% trans "Tips" %}</h3>
+            </div>
+          </div>
+          <div class="kt-card-content p-5">
+            <div class="kt-alert kt-alert-info">
+              <div class="flex items-start gap-3">
+                <i class="ki-filled ki-information-5 text-xl text-blue-500"></i>
+                <div>
+                  <h4 class="text-sm font-medium mb-2">{% trans "Product Group Guidelines" %}</h4>
+                  <ul class="text-sm space-y-1">
+                    <li>• {% trans "Use short, clear codes (DRINKS, FOOD)" %}</li>
+                    <li>• {% trans "Names should be descriptive" %}</li>
+                    <li>• {% trans "Sort order controls display sequence" %}</li>
+                    <li>• {% trans "Create hierarchy for better organization" %}</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </form>
+      {% endif %}
     </div>
   </div>
 </div>

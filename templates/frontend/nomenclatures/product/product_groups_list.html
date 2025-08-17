@@ -8,23 +8,7 @@
 {% block content %}
 <div class="kt-container-fixed">
 
-    <!-- DEBUG INFO -->
-    <div class="kt-card mb-5 bg-info/10">
-        <div class="kt-card-body p-4">
-            <h4 class="text-info">🔧 DEBUG - Product Groups</h4>
-            <p><strong>Total Groups:</strong> {{ total_count }}</p>
-            <p><strong>Groups on page:</strong> {{ object_list|length }}</p>
-            <p><strong>View mode:</strong> {{ view_mode }}</p>
-            <div class="mt-2">
-                <strong>Sample groups:</strong>
-                {% for group in object_list|slice:":3" %}
-                    <div>- {{ group.code }} ({{ group.name }}) - Level: {{ group.level }}</div>
-                {% empty %}
-                    <div class="text-warning">No groups found!</div>
-                {% endfor %}
-            </div>
-        </div>
-    </div>
+
 
     <!-- Page Header -->
     <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
@@ -175,11 +159,6 @@
     </div>
 </div>
 
-<style>
-.tree-node.level-0 { margin-left: 0rem; }
-.tree-node.level-1 { margin-left: 1.5rem; }
-.tree-node.level-2 { margin-left: 3rem; }
-.tree-node.level-3 { margin-left: 4.5rem; }
-.tree-node.level-4 { margin-left: 6rem; }
-</style>
+
+
 {% endblock %}
