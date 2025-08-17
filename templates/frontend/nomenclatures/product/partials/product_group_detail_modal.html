@@ -1,0 +1,74 @@
+<!-- templates/frontend/nomenclatures/product/partials/product_group_detail_modal.html -->
+{% load i18n %}
+
+<div class="space-y-4">
+    <!-- Header with basic info -->
+    <div class="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+        <div class="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+            <i class="ki-filled ki-abstract-14 text-primary"></i>
+        </div>
+        <div class="flex-1">
+            <div class="font-semibold text-gray-900">{{ group.name }}</div>
+            <div class="text-sm text-gray-600 flex items-center gap-2">
+                <span class="font-mono bg-gray-200 px-2 py-0.5 rounded text-xs">{{ group.code }}</span>
+                <span>•</span>
+                <span>Level {{ group.level|default:0 }}</span>
+                {% if group.is_active %}
+                    <span class="text-green-600">• Active</span>
+                {% else %}
+                    <span class="text-orange-600">• Inactive</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats row -->
+    <div class="grid grid-cols-3 gap-3">
+        <div class="text-center p-3 bg-blue-50 rounded-lg">
+            <div class="text-lg font-bold text-blue-600">{{ group.level|default:0 }}</div>
+            <div class="text-xs text-blue-700">Level</div>
+        </div>
+        <div class="text-center p-3 bg-green-50 rounded-lg">
+            <div class="text-lg font-bold text-green-600">{{ children_count|default:0 }}</div>
+            <div class="text-xs text-green-700">Children</div>
+        </div>
+        <div class="text-center p-3 bg-purple-50 rounded-lg">
+            <div class="text-lg font-bold text-purple-600">{{ descendants_count|default:0 }}</div>
+            <div class="text-xs text-purple-700">Total</div>
+        </div>
+    </div>
+
+    <!-- Parent info (if exists) -->
+    {% if group.parent %}
+    <div class="p-3 border border-gray-200 rounded-lg">
+        <div class="text-xs text-gray-500 mb-1">Parent Group</div>
+        <div class="flex items-center gap-2">
+            <i class="ki-filled ki-arrow-up text-gray-400 text-sm"></i>
+            <span class="font-medium">{{ group.parent.name }}</span>
+            <span class="text-sm text-gray-500">({{ group.parent.code }})</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Description (if exists) -->
+    {% if group.description %}
+    <div class="p-3 bg-gray-50 rounded-lg">
+        <div class="text-xs text-gray-500 mb-1">Description</div>
+        <div class="text-sm text-gray-700">{{ group.description }}</div>
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex gap-2 pt-2">
+        <a href="{% url 'nomenclatures:product_groups_edit' group.pk %}"
+           class="btn btn-primary flex-1">
+            <i class="ki-filled ki-notepad-edit"></i>
+            Edit
+        </a>
+        <a href="{% url 'nomenclatures:product_groups_create' %}?parent={{ group.pk }}"
+           class="btn btn-light flex-1">
+            <i class="ki-filled ki-plus"></i>
+            Add Child
+        </a>
+    </div>
+</div>

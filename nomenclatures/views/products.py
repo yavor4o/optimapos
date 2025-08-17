@@ -99,27 +99,30 @@ class ProductGroupDetailModalView(NomenclatureViewMixin, DetailView):
 
     def get(self, request, *args, **kwargs):
         self.object = self.get_object()
-
-        # Подготви контекста за модала
-        context = {
-            'group': self.object,
-            'children_count': self.object.get_children().count() if hasattr(self.object, 'get_children') else 0,
-            'descendants_count': self.object.get_descendant_count() if hasattr(self.object,
-                                                                               'get_descendant_count') else 0,
+        data = {
+            "success": True,
+            "title": f"{self.object.code} - {self.object.name}",
+            "group": {
+                "id": self.object.pk,
+                "code": self.object.code,
+                "name": self.object.name,
+                "level": getattr(self.object, "level", 0) or 0,
+                "is_active": bool(self.object.is_active),
+                "parent": {
+                    "id": self.object.parent.pk,
+                    "name": self.object.parent.name,
+                } if self.object.parent_id else None,
+            },
+            "children_count": (
+                self.object.get_children().count()
+                if hasattr(self.object, "get_children") else 0
+            ),
+            "descendants_count": (
+                self.object.get_descendant_count()
+                if hasattr(self.object, "get_descendant_count") else 0
+            ),
         }
-
-        # Рендери HTML-а за модала
-        html = render_to_string(
-            'frontend/nomenclatures/product/partials/product_group_detail_modal.html',
-            context,
-            request=request
-        )
-
-        return JsonResponse({
-            'success': True,
-            'html': html,
-            'title': f'{self.object.code} - {self.object.name}'
-        })
+        return JsonResponse(data)
 
 
 class ProductGroupDeleteView(NomenclatureViewMixin, DeleteView):
