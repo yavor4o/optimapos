@@ -51,118 +51,116 @@
         </div>
 
         <div class="kt-card-body">
-            {% if view_mode == 'tree' %}
-                <!-- Tree View -->
-                <div class="space-y-2">
-                    {% recursetree object_list %}
-                        <div class="tree-node level-{{ node.level }}">
-                            <div class="flex items-center gap-3 p-3 hover:bg-accent/50 rounded-lg">
-                                <div class="flex items-center gap-2">
-                                    <i class="ki-filled ki-abstract-14 text-muted-foreground"></i>
-                                    <span class="font-bold text-primary">{{ node.code }}</span>
-                                    <span class="text-muted-foreground">-</span>
-                                    <span>{{ node.name }}</span>
-                                    <span class="text-xs text-muted-foreground">(Level {{ node.level }})</span>
-                                </div>
-
-                                <div class="ms-auto flex items-center gap-2">
-                                    {% if node.is_active %}
-                                    <span class="kt-badge kt-badge-success kt-badge-sm">{% trans "Active" %}</span>
-                                    {% else %}
-                                    <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
-                                    {% endif %}
-
-                                    <div class="kt-btn-group">
-                                        <button type="button"
-                                            class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
-                                            onclick="openDetailModal({{ node.pk }})"
-                                            title="{% trans 'View Details' %}">
-                                        <i class="ki-filled ki-eye"></i>
-                                        </button>
-                                        <a href="{% url 'nomenclatures:product_groups_edit' node.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
-                                            <i class="ki-filled ki-notepad-edit"></i>
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {% if not node.is_leaf_node %}
-                            <div class="ms-6">
-                                {{ children }}
-                            </div>
-                            {% endif %}
+    {% if view_mode == 'tree' %}
+        <!-- Tree View -->
+        <div class="space-y-2">
+            {% recursetree object_list %}
+                <div class="tree-node level-{{ node.level }}">
+                    <div class="flex items-center gap-3 p-3 hover:bg-accent/50 rounded-lg">
+                        <div class="flex items-center gap-2">
+                            <i class="ki-filled ki-abstract-14 text-muted-foreground"></i>
+                            <span class="font-bold text-primary">{{ node.code }}</span>
+                            <span class="text-muted-foreground">-</span>
+                            <span>{{ node.name }}</span>
+                            <span class="text-xs text-muted-foreground">(Level {{ node.level }})</span>
                         </div>
-                    {% endrecursetree %}
+
+                        <div class="ms-auto flex items-center gap-2">
+                            {% if node.is_active %}
+                            <span class="kt-badge kt-badge-success kt-badge-sm">{% trans "Active" %}</span>
+                            {% else %}
+                            <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
+                            {% endif %}
+
+                            <div class="kt-btn-group">
+                                <button type="button"
+                                        class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                        onclick="event.preventDefault(); openDetailModal({{ node.pk }}); return false;"
+                                        title="{% trans 'View Details' %}">
+                                    <i class="ki-filled ki-eye"></i>
+                                </button>
+                                <a href="{% url 'nomenclatures:product_groups_edit' node.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
+                                    <i class="ki-filled ki-notepad-edit"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if not node.is_leaf_node %}
+                    <div class="ms-6">
+                        {{ children }}
+                    </div>
+                    {% endif %}
                 </div>
-            {% else %}
-                <!-- Table View -->
-                <div class="table-responsive">
-                    <table class="kt-table kt-table-border kt-table-rounded">
-                        <thead>
-                            <tr>
-                                <th>{% trans "Code" %}</th>
-                                <th>{% trans "Name" %}</th>
-                                <th>{% trans "Parent Group" %}</th>
-                                <th>{% trans "Level" %}</th>
-                                <th>{% trans "Status" %}</th>
-                                <th>{% trans "Actions" %}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for group in object_list %}
-                            <tr>
-                                <td><strong>{{ group.code }}</strong></td>
-                                <td>{{ group.name }}</td>
-                                <td>
-                                    {% if group.parent %}
-                                        {{ group.parent.name }}
-                                    {% else %}
-                                        <span class="text-muted-foreground">{% trans "Root Group" %}</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ group.level }}</td>
-                                <td>
-                                    {% if group.is_active %}
-                                        <span class="kt-badge kt-badge-success kt-badge-sm">{% trans "Active" %}</span>
-                                    {% else %}
-                                        <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <div class="kt-btn-group">
-                                        <button type="button"
-                                            class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
-                                            onclick="openDetailModal({{ group.pk }})"
-                                            title="{% trans 'View Details' %}">
-                                        <i class="ki-filled ki-eye"></i>
-                                    </button>
-                                        <a href="{% url 'nomenclatures:product_groups_edit' group.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
-                                            <i class="ki-filled ki-notepad-edit"></i>
-                                        </a>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% empty %}
-                            <tr>
-                                <td colspan="6" class="text-center py-8">
-                                    <div class="flex flex-col items-center">
-                                        <i class="ki-filled ki-abstract-14 text-muted-foreground text-4xl mb-3"></i>
-                                        <h4 class="text-muted-foreground mb-2">{% trans "No Product Groups Found" %}</h4>
-                                        <p class="text-muted-foreground">{% trans "Get started by creating your first product group." %}</p>
-                                        <a href="{% url 'nomenclatures:product_groups_create' %}" class="kt-btn kt-btn-primary mt-3">
-                                            <i class="ki-filled ki-plus"></i>
-                                            {% trans "Create First Group" %}
-                                        </a>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            {% endif %}
+            {% endrecursetree %}
         </div>
-    </div>
+    {% else %}
+        <!-- Table View -->
+        <div class="table-responsive">
+            <table class="kt-table kt-table-border kt-table-rounded">
+                <thead>
+                    <tr>
+                        <th>{% trans "Code" %}</th>
+                        <th>{% trans "Name" %}</th>
+                        <th>{% trans "Parent Group" %}</th>
+                        <th>{% trans "Level" %}</th>
+                        <th>{% trans "Status" %}</th>
+                        <th>{% trans "Actions" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for group in object_list %}
+                    <tr>
+                        <td><strong>{{ group.code }}</strong></td>
+                        <td>{{ group.name }}</td>
+                        <td>
+                            {% if group.parent %}
+                                {{ group.parent.name }}
+                            {% else %}
+                                <span class="text-muted-foreground">{% trans "Root Group" %}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ group.level }}</td>
+                        <td>
+                            {% if group.is_active %}
+                                <span class="kt-badge kt-badge-success kt-badge-sm">{% trans "Active" %}</span>
+                            {% else %}
+                                <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="kt-btn-group">
+                                <button type="button"
+                                        class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                        onclick="event.preventDefault(); openDetailModal({{ group.pk }}); return false;"
+                                        title="{% trans 'View Details' %}">
+                                    <i class="ki-filled ki-eye"></i>
+                                </button>
+                                <a href="{% url 'nomenclatures:product_groups_edit' group.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
+                                    <i class="ki-filled ki-notepad-edit"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-8">
+                            <div class="flex flex-col items-center">
+                                <i class="ki-filled ki-abstract-14 text-muted-foreground text-4xl mb-3"></i>
+                                <h4 class="text-muted-foreground mb-2">{% trans "No Product Groups Found" %}</h4>
+                                <p class="text-muted-foreground">{% trans "Get started by creating your first product group." %}</p>
+                                <a href="{% url 'nomenclatures:product_groups_create' %}" class="kt-btn kt-btn-primary mt-3">
+                                    <i class="ki-filled ki-plus"></i>
+                                    {% trans "Create First Group" %}
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
 </div>
 
 <!-- Modal Container -->
