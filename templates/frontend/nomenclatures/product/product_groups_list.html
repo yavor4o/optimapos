@@ -73,9 +73,12 @@
                                     {% endif %}
 
                                     <div class="kt-btn-group">
-                                        <a href="{% url 'nomenclatures:product_groups_detail' node.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
-                                            <i class="ki-filled ki-eye"></i>
-                                        </a>
+                                        <button type="button"
+                                            class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                            onclick="openDetailModal({{ node.pk }})"
+                                            title="{% trans 'View Details' %}">
+                                        <i class="ki-filled ki-eye"></i>
+                                        </button>
                                         <a href="{% url 'nomenclatures:product_groups_edit' node.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
                                             <i class="ki-filled ki-notepad-edit"></i>
                                         </a>
@@ -127,9 +130,12 @@
                                 </td>
                                 <td>
                                     <div class="kt-btn-group">
-                                        <a href="{% url 'nomenclatures:product_groups_detail' group.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
-                                            <i class="ki-filled ki-eye"></i>
-                                        </a>
+                                        <button type="button"
+                                            class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost"
+                                            onclick="openDetailModal({{ group.pk }})"
+                                            title="{% trans 'View Details' %}">
+                                        <i class="ki-filled ki-eye"></i>
+                                    </button>
                                         <a href="{% url 'nomenclatures:product_groups_edit' group.pk %}" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost">
                                             <i class="ki-filled ki-notepad-edit"></i>
                                         </a>
@@ -159,6 +165,210 @@
     </div>
 </div>
 
+<!-- Modal Container -->
+<div id="detail-modal-container"></div>
 
+<script>
+// Product Group Modal JavaScript Functions
+// Add this to your list template or base template
+
+/**
+ * Open product group detail modal via AJAX
+ * @param {number} groupId - The product group ID
+ */
+function openDetailModal(groupId) {
+    // Show loading indicator
+    showModalLoading();
+
+    // Make AJAX request to get modal HTML
+    fetch(`/nomenclatures/product-groups/${groupId}/`, {
+        method: 'GET',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin'  // Include CSRF cookies
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        hideModalLoading();
+
+        if (data.success) {
+            // Insert modal HTML into container
+            const container = document.getElementById('detail-modal-container');
+            container.innerHTML = data.html;
+
+            // Set page title if provided
+            if (data.title) {
+                document.title = data.title;
+            }
+
+            // Add modal event listeners
+            setupModalEventListeners();
+
+            // Focus on close button for accessibility
+            const closeBtn = container.querySelector('.kt-modal-close');
+            if (closeBtn) {
+                closeBtn.focus();
+            }
+
+        } else {
+            // Show error message
+            showErrorMessage(data.message || 'Error loading product group details');
+        }
+    })
+    .catch(error => {
+        hideModalLoading();
+        console.error('Error loading modal:', error);
+        showErrorMessage('Failed to load product group details. Please try again.');
+    });
+}
+
+/**
+ * Close the detail modal
+ */
+function closeDetailModal() {
+    const container = document.getElementById('detail-modal-container');
+    if (container) {
+        // Add fade out animation
+        const modal = container.querySelector('#product-group-modal');
+        if (modal) {
+            modal.style.opacity = '0';
+            modal.style.transform = 'scale(0.95)';
+
+            // Remove after animation
+            setTimeout(() => {
+                container.innerHTML = '';
+                // Restore original page title if needed
+                document.title = document.title.replace(/ - Product Group Details$/, '');
+            }, 200);
+        } else {
+            container.innerHTML = '';
+        }
+    }
+}
+
+/**
+ * Setup event listeners for modal
+ */
+function setupModalEventListeners() {
+    const modal = document.getElementById('product-group-modal');
+    if (!modal) return;
+
+    // Close on ESC key
+    document.addEventListener('keydown', function escHandler(e) {
+        if (e.key === 'Escape') {
+            closeDetailModal();
+            document.removeEventListener('keydown', escHandler);
+        }
+    });
+
+    // Close on backdrop click
+    modal.addEventListener('click', function(e) {
+        if (e.target === modal) {
+            closeDetailModal();
+        }
+    });
+
+    // Prevent modal dialog clicks from closing modal
+    const modalContent = modal.querySelector('.kt-modal-content');
+    if (modalContent) {
+        modalContent.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+    }
+}
+
+/**
+ * Show loading state in modal container
+ */
+function showModalLoading() {
+    const container = document.getElementById('detail-modal-container');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div class="kt-modal kt-modal-center max-w-md w-full mx-4">
+                <div class="kt-modal-content">
+                    <div class="kt-modal-body text-center py-8">
+                        <div class="flex flex-col items-center gap-4">
+                            <div class="kt-spinner kt-spinner-primary"></div>
+                            <span class="text-sm text-gray-600">Loading product group details...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Hide modal loading state
+ */
+function hideModalLoading() {
+    // Loading will be replaced by actual modal content
+    // This function exists for consistency
+}
+
+/**
+ * Show error message
+ * @param {string} message - Error message to display
+ */
+function showErrorMessage(message) {
+    const container = document.getElementById('detail-modal-container');
+    if (!container) {
+        alert(message); // Fallback
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div class="kt-modal kt-modal-center max-w-md w-full mx-4">
+                <div class="kt-modal-content">
+                    <div class="kt-modal-header">
+                        <div class="kt-modal-title">
+                            <h3 class="text-lg font-semibold text-red-600">Error</h3>
+                        </div>
+                        <button type="button" class="kt-modal-close" onclick="closeDetailModal()">
+                            <i class="ki-filled ki-cross"></i>
+                        </button>
+                    </div>
+                    <div class="kt-modal-body">
+                        <div class="flex items-center gap-3 p-4 bg-red-50 rounded-lg">
+                            <i class="ki-filled ki-information-2 text-red-500 text-xl"></i>
+                            <div>
+                                <p class="text-sm text-red-700">${message}</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kt-modal-footer">
+                        <button type="button" class="kt-btn kt-btn-primary" onclick="closeDetailModal()">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Setup event listeners for error modal
+    setupModalEventListeners();
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Ensure modal container exists
+    if (!document.getElementById('detail-modal-container')) {
+        const container = document.createElement('div');
+        container.id = 'detail-modal-container';
+        document.body.appendChild(container);
+    }
+});
+</script>
 
 {% endblock %}
