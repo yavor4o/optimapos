@@ -7,7 +7,8 @@ from .products import (
     ProductGroupDetailModalView,   # ← Само това
     ProductGroupCreateView,
     ProductGroupUpdateView,
-    ProductGroupDeleteView
+    ProductGroupDeleteView,
+    ProductGroupMoveView
 )
 from .workflow import WorkflowSettingsView
 

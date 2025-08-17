@@ -1,3 +1,9 @@
+import json
+
+from django.db.models import Count
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.views.decorators.http import require_POST
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, TemplateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
@@ -30,8 +36,6 @@ class NomenclatureListMixin(NomenclatureViewMixin):
     ordering = ['sort_order', 'name']
 
 
-
-
 class ProductGroupListView(NomenclatureListMixin, ListView):
     model = ProductGroup
     template_name = 'frontend/nomenclatures/product/product_groups_list.html'
@@ -44,7 +48,10 @@ class ProductGroupListView(NomenclatureListMixin, ListView):
         context = super().get_context_data(**kwargs)
 
         # Handle view mode
-        view_mode = self.request.GET.get('view', 'flat')
+        view_mode = self.request.GET.get('view')
+        if not view_mode:
+            view_mode = self.request.COOKIES.get('product_groups_view', 'flat')
+
         if view_mode not in ['flat', 'tree']:
             view_mode = 'flat'
 
@@ -59,15 +66,74 @@ class ProductGroupListView(NomenclatureListMixin, ListView):
         return context
 
     def get_queryset(self):
-        view_mode = self.request.GET.get('view', 'flat')
+        # ВИНАГИ използваме MPTT подредбата за да имаме правилните нива
+        # Това ще ни даде правилен level независимо от view mode
+        queryset = ProductGroup.objects.annotate(
+            products_count=Count('product')
+        ).select_related('parent').order_by('tree_id', 'lft')
 
-        if view_mode == 'tree':
-            # MPTT tree view - CRITICAL: Use tree_id and lft ordering for depth-first order
-            return ProductGroup.objects.all().select_related('parent').order_by('tree_id', 'lft')
-        else:
-            # Flat list view - regular ordering
-            return ProductGroup.objects.all().order_by('sort_order', 'name')
+        return queryset
 
+
+# Добави тези импорти в началото на nomenclatures/views/products.py
+import json
+from django.views import View
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+
+
+# Добави този клас след другите views в nomenclatures/views/products.py
+
+@method_decorator(csrf_exempt, name='dispatch')  # За тестване, после ще добавим CSRF
+class ProductGroupMoveView(View):
+    """Handle drag and drop reordering of product groups"""
+
+    def post(self, request, pk):
+        try:
+            # Get the group being moved
+            group = ProductGroup.objects.get(pk=pk)
+
+            # Parse request data
+            data = json.loads(request.body)
+            new_parent_id = data.get('parent_id')
+            position = data.get('position', 0)
+
+            # Update parent if changed
+            if new_parent_id:
+                try:
+                    new_parent = ProductGroup.objects.get(pk=new_parent_id)
+                    group.parent = new_parent
+                except ProductGroup.DoesNotExist:
+                    return JsonResponse({
+                        'success': False,
+                        'error': 'Parent group not found'
+                    })
+            else:
+                group.parent = None
+
+            # Update sort order
+            group.sort_order = position
+            group.save()
+
+            # Rebuild the MPTT tree structure
+            ProductGroup.objects.rebuild()
+
+            return JsonResponse({
+                'success': True,
+                'message': 'Group moved successfully'
+            })
+
+        except ProductGroup.DoesNotExist:
+            return JsonResponse({
+                'success': False,
+                'error': 'Group not found'
+            })
+        except Exception as e:
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            })
 
 class ProductGroupCreateView(NomenclatureViewMixin, CreateView):
     model = ProductGroup
