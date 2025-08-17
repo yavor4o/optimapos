@@ -1,6 +1,6 @@
 import json
 
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.http import require_POST
@@ -10,9 +10,8 @@ from django.urls import reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.http import JsonResponse
 from django.template.loader import render_to_string
-from ..forms.product import ProductGroupForm
-from ..models import ProductGroup
-
+from ..forms.product import ProductGroupForm, BrandForm
+from ..models import ProductGroup, Brand
 
 
 class NomenclatureViewMixin(LoginRequiredMixin):
@@ -163,9 +162,6 @@ class ProductGroupUpdateView(NomenclatureViewMixin, UpdateView):
         return form
 
 
-
-
-
 class ProductGroupDetailModalView(NomenclatureViewMixin, DetailView):
     model = ProductGroup
 
@@ -205,3 +201,113 @@ class ProductGroupDeleteView(NomenclatureViewMixin, DeleteView):
     def get_page_title(self):
         return _("Delete Product Group")
 
+
+class BrandListView(NomenclatureListMixin, ListView):
+    model = Brand
+    template_name = 'frontend/nomenclatures/product/brands_list.html'
+    context_object_name = 'brands'
+    paginate_by = 25
+    ordering = ['name']
+
+    def get_page_title(self):
+        return _("Brands")
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        # Анотираме с брой продукти
+        queryset = queryset.annotate(
+            products_count=Count('product', distinct=True)
+        )
+
+        # Филтрираме по статус ако е подаден
+        status = self.request.GET.get('status')
+        if status == 'active':
+            queryset = queryset.filter(is_active=True)
+        elif status == 'inactive':
+            queryset = queryset.filter(is_active=False)
+
+        # Търсене
+        search = self.request.GET.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(code__icontains=search)
+            )
+
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update({
+            'total_count': Brand.objects.count(),
+            'active_count': Brand.objects.filter(is_active=True).count(),
+            'inactive_count': Brand.objects.filter(is_active=False).count(),
+            'can_create': True,
+            'create_url': reverse_lazy('nomenclatures:brands_create'),
+            'search_query': self.request.GET.get('search', ''),
+            'status_filter': self.request.GET.get('status', ''),
+        })
+        return context
+
+
+class BrandCreateView(NomenclatureViewMixin, CreateView):
+    model = Brand
+    form_class = BrandForm
+    template_name = 'frontend/nomenclatures/product/brands_form.html'
+    success_url = reverse_lazy('nomenclatures:brands')
+
+    def get_page_title(self):
+        return _("Create Brand")
+
+
+class BrandUpdateView(NomenclatureViewMixin, UpdateView):
+    model = Brand
+    form_class = BrandForm
+    template_name = 'frontend/nomenclatures/product/brands_form.html'
+    success_url = reverse_lazy('nomenclatures:brands')
+
+    def get_page_title(self):
+        return _("Edit Brand")
+
+
+class BrandDetailView(NomenclatureViewMixin, DetailView):
+    model = Brand
+
+    def get(self, request, *args, **kwargs):
+        """AJAX detail view за modal"""
+        self.object = self.get_object()
+
+        # Анотираме с брой продукти
+        products_count = self.object.product_set.count() if hasattr(self.object, 'product_set') else 0
+
+        data = {
+            'success': True,
+            'brand': {
+                'id': self.object.pk,
+                'code': self.object.code,
+                'name': self.object.name,
+                'website': self.object.website or '',
+                'is_active': self.object.is_active,
+                'logo_url': self.object.logo.url if self.object.logo else None,
+                'products_count': products_count,
+                'created_at': self.object.created_at.strftime('%d.%m.%Y %H:%M'),
+                'updated_at': self.object.updated_at.strftime('%d.%m.%Y %H:%M'),
+            }
+        }
+        return JsonResponse(data)
+
+
+class BrandDeleteView(NomenclatureViewMixin, DeleteView):
+    model = Brand
+    template_name = 'frontend/nomenclatures/brand/brands_confirm_delete.html'
+    success_url = reverse_lazy('nomenclatures:brands')
+
+    def get_page_title(self):
+        return _("Delete Brand")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Проверяваме дали има свързани продукти
+        context['has_products'] = self.object.product_set.exists() if hasattr(self.object, 'product_set') else False
+        context['products_count'] = self.object.product_set.count() if hasattr(self.object, 'product_set') else 0
+        return context

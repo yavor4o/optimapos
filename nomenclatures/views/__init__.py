@@ -1,26 +1,30 @@
-# 1. В nomenclatures/views/__init__.py - премахни ProductGroupDetailView
+# nomenclatures/views/__init__.py
 
 from .financial import *
 from .documents import *
+
 from .products import (
     ProductGroupListView,
-    ProductGroupDetailModalView,   # ← Само това
+    ProductGroupDetailModalView,
     ProductGroupCreateView,
     ProductGroupUpdateView,
     ProductGroupDeleteView,
     ProductGroupMoveView
 )
+
+# Импортираме реалните Brand views
+from .products import (
+    BrandListView,
+    BrandCreateView,
+    BrandUpdateView,
+    BrandDeleteView,
+    BrandDetailView,
+)
+
 from .workflow import WorkflowSettingsView
 
-# Placeholder imports to avoid import errors
-BrandListView = ProductGroupListView
-BrandCreateView = ProductGroupCreateView
-BrandUpdateView = ProductGroupUpdateView
-BrandDeleteView = ProductGroupDeleteView
-
+# Placeholder imports за Product Types (още не са създадени)
 ProductTypeListView = ProductGroupListView
 ProductTypeCreateView = ProductGroupCreateView
 ProductTypeUpdateView = ProductGroupUpdateView
 ProductTypeDeleteView = ProductGroupDeleteView
-
-# НЕ импортирай ProductGroupDetailView - няма такова нещо!

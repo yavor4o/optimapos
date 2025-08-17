@@ -1,0 +1,131 @@
+{% extends 'frontend/base.html' %}
+{% load i18n %}
+
+{% block title %}{{ page_title }} - {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="kt-container-fixed">
+    
+    <!-- Breadcrumb -->
+    <div class="flex flex-wrap items-center gap-2 pb-5">
+        <a href="{% url 'nomenclatures:brands' %}" class="text-muted-foreground hover:text-primary">
+            {% trans "Brands" %}
+        </a>
+        <i class="ki-filled ki-right text-muted-foreground text-xs"></i>
+        <span class="text-foreground">{{ page_title }}</span>
+    </div>
+
+    <!-- Form Card -->
+    <div class="kt-card">
+        <div class="kt-card-header">
+            <h3 class="kt-card-title">{{ page_title }}</h3>
+        </div>
+        
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            
+            <div class="kt-card-body">
+                <!-- Error Messages -->
+                {% if form.non_field_errors %}
+                <div class="kt-alert kt-alert-danger mb-5">
+                    {{ form.non_field_errors }}
+                </div>
+                {% endif %}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <!-- Code Field -->
+                    <div>
+                        <label class="kt-label {% if form.code.field.required %}required{% endif %}">
+                            {{ form.code.label }}
+                        </label>
+                        {{ form.code }}
+                        {% if form.code.help_text %}
+                            <div class="kt-hint">{{ form.code.help_text }}</div>
+                        {% endif %}
+                        {% if form.code.errors %}
+                            <div class="kt-error">{{ form.code.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Name Field -->
+                    <div>
+                        <label class="kt-label {% if form.name.field.required %}required{% endif %}">
+                            {{ form.name.label }}
+                        </label>
+                        {{ form.name }}
+                        {% if form.name.help_text %}
+                            <div class="kt-hint">{{ form.name.help_text }}</div>
+                        {% endif %}
+                        {% if form.name.errors %}
+                            <div class="kt-error">{{ form.name.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Website Field -->
+                    <div>
+                        <label class="kt-label">
+                            {{ form.website.label }}
+                        </label>
+                        {{ form.website }}
+                        {% if form.website.help_text %}
+                            <div class="kt-hint">{{ form.website.help_text }}</div>
+                        {% endif %}
+                        {% if form.website.errors %}
+                            <div class="kt-error">{{ form.website.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Logo Field -->
+                    <div>
+                        <label class="kt-label">
+                            {{ form.logo.label }}
+                        </label>
+                        
+                        {% if object and object.logo %}
+                        <div class="mb-3">
+                            <img src="{{ object.logo.url }}" 
+                                 alt="{{ object.name }}"
+                                 class="h-20 w-20 object-contain rounded border">
+                            <div class="text-sm text-muted-foreground mt-1">
+                                {% trans "Current logo" %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        
+                        {{ form.logo }}
+                        {% if form.logo.help_text %}
+                            <div class="kt-hint">{{ form.logo.help_text }}</div>
+                        {% endif %}
+                        {% if form.logo.errors %}
+                            <div class="kt-error">{{ form.logo.errors }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Active Status -->
+                    <div class="col-span-2">
+                        <label class="kt-checkbox-label">
+                            {{ form.is_active }}
+                            <span>{{ form.is_active.label }}</span>
+                        </label>
+                        {% if form.is_active.errors %}
+                            <div class="kt-error">{{ form.is_active.errors }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="kt-card-footer">
+                <div class="flex justify-end gap-2">
+                    <a href="{% url 'nomenclatures:brands' %}" class="kt-btn kt-btn-light">
+                        {% trans "Cancel" %}
+                    </a>
+                    <button type="submit" class="kt-btn kt-btn-primary">
+                        <i class="ki-filled ki-check"></i>
+                        {% trans "Save" %}
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

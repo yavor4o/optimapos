@@ -1,0 +1,349 @@
+{% extends 'frontend/base.html' %}
+{% load i18n %}
+{% load static %}
+
+{% block title %}{{ page_title }} - {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="kt-container-fixed">
+
+    <!-- Page Header -->
+    <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+        <div class="flex flex-col justify-center gap-2">
+            <h1 class="text-xl font-medium leading-none text-mono">
+                {% trans "Brands" %}
+            </h1>
+            <div class="flex items-center gap-2 text-sm font-normal text-secondary-foreground">
+                {% trans "Manage product brands and manufacturers" %}
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2.5">
+            <a class="kt-btn kt-btn-primary" href="{% url 'nomenclatures:brands_create' %}">
+                <i class="ki-filled ki-plus"></i>
+                {% trans "Add Brand" %}
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters Card -->
+    <div class="kt-card mb-5">
+        <div class="kt-card-body">
+            <form method="get" class="flex flex-wrap gap-3">
+                <!-- Search -->
+                <div class="flex-1 min-w-[200px]">
+                    <input type="text" 
+                           name="search" 
+                           value="{{ search_query }}"
+                           placeholder="{% trans 'Search by name or code...' %}"
+                           class="kt-input">
+                </div>
+
+                <!-- Status Filter -->
+                <select name="status" class="kt-select min-w-[150px]">
+                    <option value="">{% trans "All Status" %}</option>
+                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>
+                        {% trans "Active" %}
+                    </option>
+                    <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>
+                        {% trans "Inactive" %}
+                    </option>
+                </select>
+
+                <!-- Buttons -->
+                <button type="submit" class="kt-btn kt-btn-primary">
+                    <i class="ki-filled ki-magnifier"></i>
+                    {% trans "Search" %}
+                </button>
+                
+                {% if search_query or status_filter %}
+                <a href="{% url 'nomenclatures:brands' %}" class="kt-btn kt-btn-light">
+                    <i class="ki-filled ki-cross-circle"></i>
+                    {% trans "Clear" %}
+                </a>
+                {% endif %}
+            </form>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-7.5">
+        <div class="kt-card">
+            <div class="kt-card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-2xl font-semibold text-foreground">{{ total_count }}</div>
+                        <div class="text-sm text-muted-foreground">{% trans "Total Brands" %}</div>
+                    </div>
+                    <div class="kt-badge kt-badge-light kt-badge-lg">
+                        <i class="ki-filled ki-tag text-primary"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="kt-card">
+            <div class="kt-card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-2xl font-semibold text-success">{{ active_count }}</div>
+                        <div class="text-sm text-muted-foreground">{% trans "Active" %}</div>
+                    </div>
+                    <div class="kt-badge kt-badge-success kt-badge-lg">
+                        <i class="ki-filled ki-check-circle"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="kt-card">
+            <div class="kt-card-body">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-2xl font-semibold text-warning">{{ inactive_count }}</div>
+                        <div class="text-sm text-muted-foreground">{% trans "Inactive" %}</div>
+                    </div>
+                    <div class="kt-badge kt-badge-warning kt-badge-lg">
+                        <i class="ki-filled ki-information-circle"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Card -->
+    <div class="kt-card">
+        <div class="kt-card-header">
+            <h3 class="kt-card-title">
+                {% trans "Brand List" %}
+            </h3>
+        </div>
+
+        <div class="kt-card-body">
+            <div class="table-responsive">
+                <table class="kt-table kt-table-border kt-table-rounded">
+                    <thead>
+                        <tr>
+                            <th style="width: 60px;">{% trans "Logo" %}</th>
+                            <th>{% trans "Code" %}</th>
+                            <th>{% trans "Name" %}</th>
+                            <th>{% trans "Website" %}</th>
+                            <th>{% trans "Products" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Created" %}</th>
+                            <th style="width: 100px; text-align: right;">{% trans "Actions" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for brand in brands %}
+                        <tr>
+                            <td>
+                                {% if brand.logo %}
+                                    <img src="{{ brand.logo.url }}" 
+                                         alt="{{ brand.name }}"
+                                         class="w-10 h-10 rounded object-cover">
+                                {% else %}
+                                    <div class="w-10 h-10 rounded bg-secondary/10 flex items-center justify-center">
+                                        <i class="ki-filled ki-picture text-muted-foreground"></i>
+                                    </div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="font-mono font-semibold text-primary">{{ brand.code }}</span>
+                            </td>
+                            <td>{{ brand.name }}</td>
+                            <td>
+                                {% if brand.website %}
+                                    <a href="{{ brand.website }}" target="_blank" class="text-primary hover:underline">
+                                        <i class="ki-filled ki-global"></i>
+                                        {% trans "Website" %}
+                                    </a>
+                                {% else %}
+                                    <span class="text-muted-foreground">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="kt-badge kt-badge-outline kt-badge-sm">
+                                    {{ brand.products_count|default:"0" }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if brand.is_active %}
+                                    <span class="kt-badge kt-badge-success kt-badge-sm">{% trans "Active" %}</span>
+                                {% else %}
+                                    <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="text-sm text-muted-foreground">
+                                    {{ brand.created_at|date:"d.m.Y" }}
+                                </span>
+                            </td>
+                            <td style="text-align: right;">
+                                <div class="flex justify-end gap-1">
+                                    <button type="button"
+                                            class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
+                                            onclick="showBrandDetail({{ brand.pk }})"
+                                            title="{% trans 'View Details' %}">
+                                        <i class="ki-filled ki-eye"></i>
+                                    </button>
+                                    <a href="{% url 'nomenclatures:brands_edit' brand.pk %}"
+                                       class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
+                                       title="{% trans 'Edit Brand' %}">
+                                        <i class="ki-filled ki-notepad-edit"></i>
+                                    </a>
+                                    <button type="button"
+                                            class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
+                                            onclick="confirmDelete('{% url 'nomenclatures:brands_delete' brand.pk %}')"
+                                            title="{% trans 'Delete Brand' %}">
+                                        <i class="ki-filled ki-trash text-danger"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center py-8">
+                                <div class="flex flex-col items-center">
+                                    <i class="ki-filled ki-tag text-muted-foreground text-4xl mb-3"></i>
+                                    <h4 class="text-muted-foreground mb-2">{% trans "No Brands Found" %}</h4>
+                                    <p class="text-muted-foreground">{% trans "Get started by creating your first brand." %}</p>
+                                    <a href="{% url 'nomenclatures:brands_create' %}" class="kt-btn kt-btn-primary mt-3">
+                                        <i class="ki-filled ki-plus"></i>
+                                        {% trans "Create First Brand" %}
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            {% if is_paginated %}
+            <div class="flex justify-between items-center mt-5">
+                <div class="text-sm text-muted-foreground">
+                    {% trans "Showing" %} {{ page_obj.start_index }}-{{ page_obj.end_index }} 
+                    {% trans "of" %} {{ paginator.count }} {% trans "brands" %}
+                </div>
+                
+                <div class="kt-pagination">
+                    {% if page_obj.has_previous %}
+                        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                           class="kt-pagination-link">
+                            <i class="ki-filled ki-left"></i>
+                        </a>
+                    {% endif %}
+                    
+                    {% for num in paginator.page_range %}
+                        {% if page_obj.number == num %}
+                            <span class="kt-pagination-link active">{{ num }}</span>
+                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
+                            <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                               class="kt-pagination-link">{{ num }}</a>
+                        {% endif %}
+                    {% endfor %}
+                    
+                    {% if page_obj.has_next %}
+                        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
+                           class="kt-pagination-link">
+                            <i class="ki-filled ki-right"></i>
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Brand Detail Modal -->
+<div class="kt-modal" data-kt-modal="true" id="brandDetailModal">
+    <div class="kt-modal-content" style="max-width: 500px;">
+        <div class="kt-modal-header">
+            <h3 class="kt-modal-title" id="brandDetailTitle">{% trans "Brand Details" %}</h3>
+            <button class="btn btn-sm btn-icon btn-light" data-kt-modal-dismiss="true">
+                <i class="ki-filled ki-cross"></i>
+            </button>
+        </div>
+        <div class="kt-modal-body" id="brandDetailBody">
+            <div class="text-center py-8">
+                <div class="spinner-border text-primary"></div>
+            </div>
+        </div>
+        <div class="kt-modal-footer">
+            <button type="button" class="kt-btn kt-btn-light" data-kt-modal-dismiss="true">
+                {% trans "Close" %}
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function showBrandDetail(brandId) {
+    const modal = KTModal.getInstance(document.getElementById('brandDetailModal'));
+    modal.show();
+    
+    // Load brand details
+    fetch(`/nomenclatures/brands/${brandId}/`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const brand = data.brand;
+                document.getElementById('brandDetailTitle').textContent = brand.name;
+                
+                let html = '<div class="space-y-4">';
+                
+                // Logo
+                if (brand.logo_url) {
+                    html += `<div class="text-center">
+                        <img src="${brand.logo_url}" alt="${brand.name}" class="mx-auto h-24 w-24 object-contain rounded">
+                    </div>`;
+                }
+                
+                // Info grid
+                html += '<div class="grid grid-cols-2 gap-4">';
+                html += `<div>
+                    <div class="text-sm text-muted-foreground">{% trans "Code" %}</div>
+                    <div class="font-semibold">${brand.code}</div>
+                </div>`;
+                html += `<div>
+                    <div class="text-sm text-muted-foreground">{% trans "Status" %}</div>
+                    <div>${brand.is_active ? '<span class="kt-badge kt-badge-success">{% trans "Active" %}</span>' : '<span class="kt-badge kt-badge-warning">{% trans "Inactive" %}</span>'}</div>
+                </div>`;
+                
+                if (brand.website) {
+                    html += `<div class="col-span-2">
+                        <div class="text-sm text-muted-foreground">{% trans "Website" %}</div>
+                        <div><a href="${brand.website}" target="_blank" class="text-primary hover:underline">${brand.website}</a></div>
+                    </div>`;
+                }
+                
+                html += `<div>
+                    <div class="text-sm text-muted-foreground">{% trans "Products" %}</div>
+                    <div class="font-semibold">${brand.products_count}</div>
+                </div>`;
+                html += `<div>
+                    <div class="text-sm text-muted-foreground">{% trans "Created" %}</div>
+                    <div>${brand.created_at}</div>
+                </div>`;
+                html += '</div></div>';
+                
+                document.getElementById('brandDetailBody').innerHTML = html;
+            }
+        })
+        .catch(error => {
+            document.getElementById('brandDetailBody').innerHTML = '<div class="text-danger">{% trans "Error loading brand details" %}</div>';
+        });
+}
+
+function confirmDelete(url) {
+    if (confirm('{% trans "Are you sure you want to delete this brand?" %}')) {
+        window.location.href = url;
+    }
+}
+</script>
+
+{% endblock %}

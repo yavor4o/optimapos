@@ -1,7 +1,7 @@
 # nomenclatures/forms/product.py
 from django import forms
 from django.utils.translation import gettext_lazy as _
-from ..models import ProductGroup
+from ..models import ProductGroup, Brand
 
 
 class ProductGroupForm(forms.ModelForm):
@@ -131,3 +131,78 @@ class ProductGroupForm(forms.ModelForm):
             instance.save()
 
         return instance
+
+
+class BrandForm(forms.ModelForm):
+    class Meta:
+        model = Brand
+        fields = ['code', 'name', 'logo', 'website', 'is_active']
+        widgets = {
+            'code': forms.TextInput(attrs={
+                'class': 'kt-input',
+                'placeholder': _('e.g., COCA, PEPSI'),
+            }),
+            'name': forms.TextInput(attrs={
+                'class': 'kt-input',
+                'placeholder': _('e.g., Coca-Cola, Pepsi'),
+            }),
+            'website': forms.URLInput(attrs={
+                'class': 'kt-input',
+                'placeholder': 'https://example.com',
+            }),
+            'logo': forms.FileInput(attrs={
+                'class': 'kt-input',
+                'accept': 'image/*',
+            }),
+            'is_active': forms.CheckboxInput(attrs={
+                'class': 'kt-checkbox',
+            }),
+        }
+        help_texts = {
+            'code': _('Unique code for the brand (e.g., COCA)'),
+            'name': _('Full brand name (e.g., Coca-Cola)'),
+            'logo': _('Upload brand logo (JPG, PNG, etc.)'),
+            'website': _('Official brand website'),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Маркираме задължителните полета
+        self.fields['code'].required = True
+        self.fields['name'].required = True
+
+        # Добавяме * към labels на задължителните полета
+        for field_name, field in self.fields.items():
+            if field.required:
+                field.label = f"{field.label} *"
+
+    def clean_code(self):
+        """Валидация на кода - uppercase и уникалност"""
+        code = self.cleaned_data.get('code')
+        if code:
+            code = code.upper().strip()
+
+            # Проверка за уникалност
+            qs = Brand.objects.filter(code=code)
+            if self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError(_('Brand with this code already exists.'))
+
+        return code
+
+    def clean_name(self):
+        """Валидация на името - уникалност (case insensitive)"""
+        name = self.cleaned_data.get('name')
+        if name:
+            name = name.strip()
+
+            # Проверка за уникалност (case insensitive)
+            qs = Brand.objects.filter(name__iexact=name)
+            if self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise forms.ValidationError(_('Brand with this name already exists.'))
+
+        return name
