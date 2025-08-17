@@ -10,7 +10,7 @@ urlpatterns = [
     path('product-groups/', include([
         path('', views.ProductGroupListView.as_view(), name='product_groups'),
         path('create/', views.ProductGroupCreateView.as_view(), name='product_groups_create'),
-        path('product-groups/<int:pk>/modal/', ProductGroupDetailModalView.as_view(), name='product_groups_detail_modal'),
+        path('<int:pk>/modal/', views.ProductGroupDetailModalView.as_view(), name='product_groups_detail_modal'),  # ← Правилно
         path('<int:pk>/edit/', views.ProductGroupUpdateView.as_view(), name='product_groups_edit'),
         path('<int:pk>/delete/', views.ProductGroupDeleteView.as_view(), name='product_groups_delete'),
     ])),
@@ -19,7 +19,7 @@ urlpatterns = [
     path('brands/', include([
         path('', views.BrandListView.as_view(), name='brands'),
         path('create/', views.BrandCreateView.as_view(), name='brands_create'),
-        path('<int:pk>/', views.BrandDetailView.as_view(), name='brands_detail'),
+
         path('<int:pk>/edit/', views.BrandUpdateView.as_view(), name='brands_edit'),
         path('<int:pk>/delete/', views.BrandDeleteView.as_view(), name='brands_delete'),
     ])),
@@ -28,7 +28,6 @@ urlpatterns = [
     path('product-types/', include([
         path('', views.ProductTypeListView.as_view(), name='product_types'),
         path('create/', views.ProductTypeCreateView.as_view(), name='product_types_create'),
-        path('<int:pk>/', views.ProductTypeDetailView.as_view(), name='product_types_detail'),
         path('<int:pk>/edit/', views.ProductTypeUpdateView.as_view(), name='product_types_edit'),
         path('<int:pk>/delete/', views.ProductTypeDeleteView.as_view(), name='product_types_delete'),
     ])),

@@ -164,45 +164,48 @@
 </div>
 
 <!-- Detail Modal -->
-<div id="groupDetailModal" class="modal fade" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="groupDetailModalTitle">{% trans "Product Group Details" %}</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
-            </div>
-            <div class="modal-body" id="groupDetailModalBody">
-                <div class="d-flex justify-content-center py-4">
-                    <div class="spinner-border" role="status">
-                        <span class="visually-hidden">{% trans "Loading..." %}</span>
-                    </div>
+<!-- Замени modal HTML в края на template-а: -->
+
+<!-- Detail Modal с KT UI -->
+<div class="kt-modal" data-kt-modal="true" id="groupDetailModal">
+    <div class="kt-modal-content max-w-[800px] w-full">
+        <div class="kt-modal-header">
+            <h3 class="kt-modal-title" id="groupDetailModalTitle">{% trans "Product Group Details" %}</h3>
+            <button class="kt-btn kt-btn-sm kt-btn-icon kt-btn-outline" data-kt-modal-dismiss="true">
+                <i class="ki-filled ki-cross"></i>
+            </button>
+        </div>
+        <div class="kt-modal-body kt-scrollable-y" id="groupDetailModalBody">
+            <div class="flex justify-center py-4">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">{% trans "Loading..." %}</span>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-{% endblock %}
-
-{% block extra_js %}
 <script>
-// Product Group Detail Modal Functions
-async function showGroupDetailModal(groupId) {
-    const modal = new bootstrap.Modal(document.getElementById('groupDetailModal'));
+window.showGroupDetailModal = async function(groupId) {
+    const modalEl = document.getElementById('groupDetailModal');
+    const modal = KTModal.getInstance(modalEl);
     const modalTitle = document.getElementById('groupDetailModalTitle');
     const modalBody = document.getElementById('groupDetailModalBody');
 
     // Show loading state
     modalTitle.textContent = '{% trans "Loading..." %}';
     modalBody.innerHTML = `
-        <div class="d-flex justify-content-center py-4">
+        <div class="flex justify-center py-4">
             <div class="spinner-border" role="status">
                 <span class="visually-hidden">{% trans "Loading..." %}</span>
             </div>
         </div>
     `;
 
-    modal.show();
+    // Show modal
+    if (modal) {
+        modal.show();
+    }
 
     try {
         const response = await fetch(`{% url 'nomenclatures:product_groups_detail_modal' 0 %}`.replace('0', groupId));
@@ -217,19 +220,19 @@ async function showGroupDetailModal(groupId) {
     } catch (error) {
         console.error('Error loading group details:', error);
         modalBody.innerHTML = `
-            <div class="alert alert-danger" role="alert">
+            <div class="kt-alert kt-alert-danger flex items-center gap-2 p-4">
                 <i class="ki-filled ki-information-5"></i>
                 {% trans "Error loading group details. Please try again." %}
             </div>
         `;
     }
-}
+};
 
-// Confirm delete function
-function confirmDelete(deleteUrl) {
+window.confirmDelete = function(deleteUrl) {
     if (confirm('{% trans "Are you sure you want to delete this product group?" %}')) {
         window.location.href = deleteUrl;
     }
-}
+};
 </script>
+
 {% endblock %}
