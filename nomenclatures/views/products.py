@@ -30,10 +30,12 @@ class NomenclatureListMixin(NomenclatureViewMixin):
     ordering = ['sort_order', 'name']
 
 
+
+
 class ProductGroupListView(NomenclatureListMixin, ListView):
     model = ProductGroup
     template_name = 'frontend/nomenclatures/product/product_groups_list.html'
-    context_object_name = 'product_groups'
+    context_object_name = 'object_list'
 
     def get_page_title(self):
         return _("Product Groups")
@@ -58,9 +60,13 @@ class ProductGroupListView(NomenclatureListMixin, ListView):
 
     def get_queryset(self):
         view_mode = self.request.GET.get('view', 'flat')
+
         if view_mode == 'tree':
-            return ProductGroup.objects.all().select_related('parent')
-        return super().get_queryset()
+            # MPTT tree view - CRITICAL: Use tree_id and lft ordering for depth-first order
+            return ProductGroup.objects.all().select_related('parent').order_by('tree_id', 'lft')
+        else:
+            # Flat list view - regular ordering
+            return ProductGroup.objects.all().order_by('sort_order', 'name')
 
 
 class ProductGroupCreateView(NomenclatureViewMixin, CreateView):
