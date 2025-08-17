@@ -163,29 +163,30 @@
     {% endif %}
 </div>
 
-<!-- Modal Container -->
-<div id="detail-modal-container"></div>
+
+<!-- Modal Container с правилните класове -->
+<div id="detail-modal-container" ></div>
 
 <script>
-// Product Group Modal JavaScript Functions
-// Add this to your list template or base template
+// Product Group Modal - Native KT Metronic System
 
 /**
- * Open product group detail modal via AJAX
- * @param {number} groupId - The product group ID
+ * Open product group detail modal using native KT Modal
  */
 function openDetailModal(groupId) {
-    // Show loading indicator
+    console.log('Opening modal for group:', groupId);
+
+    // Show loading
     showModalLoading();
 
-    // Make AJAX request to get modal HTML
+    // AJAX заявка
     fetch(`/nomenclatures/product-groups/${groupId}/`, {
         method: 'GET',
         headers: {
             'X-Requested-With': 'XMLHttpRequest',
             'Content-Type': 'application/json',
         },
-        credentials: 'same-origin'  // Include CSRF cookies
+        credentials: 'same-origin'
     })
     .then(response => {
         if (!response.ok) {
@@ -194,178 +195,165 @@ function openDetailModal(groupId) {
         return response.json();
     })
     .then(data => {
+        console.log('Data received, showing modal');
         hideModalLoading();
 
         if (data.success) {
             // Insert modal HTML into container
             const container = document.getElementById('detail-modal-container');
+            if (!container) return;
+
             container.innerHTML = data.html;
 
-            // Set page title if provided
+            // Initialize all new KT components (including modals)
+            KTModal.createInstances();
+
+            // Get the modal instance and show it
+            const modalElement = container.querySelector('#product-group-modal');
+            if (modalElement) {
+                const modal = KTModal.getInstance(modalElement);
+                if (modal) {
+                    // Setup cleanup when modal hides
+                    modal.on('hide', function() {
+                        setTimeout(() => {
+                            container.innerHTML = '';
+                            document.title = document.title.replace(/ - Product Group Details$/, '');
+                        }, 300);
+                    });
+
+                    // Show the modal using KT Modal API
+                    modal.show();
+                    console.log('Modal shown using KT Modal API');
+                } else {
+                    console.error('Could not get KT Modal instance');
+                }
+            }
+
+            // Set page title
             if (data.title) {
                 document.title = data.title;
             }
 
-            // Add modal event listeners
-            setupModalEventListeners();
-
-            // Focus on close button for accessibility
-            const closeBtn = container.querySelector('.kt-modal-close');
-            if (closeBtn) {
-                closeBtn.focus();
-            }
-
         } else {
-            // Show error message
             showErrorMessage(data.message || 'Error loading product group details');
         }
     })
     .catch(error => {
+        console.error('AJAX Error:', error);
         hideModalLoading();
-        console.error('Error loading modal:', error);
         showErrorMessage('Failed to load product group details. Please try again.');
     });
 }
 
 /**
- * Close the detail modal
- */
-function closeDetailModal() {
-    const container = document.getElementById('detail-modal-container');
-    if (container) {
-        // Add fade out animation
-        const modal = container.querySelector('#product-group-modal');
-        if (modal) {
-            modal.style.opacity = '0';
-            modal.style.transform = 'scale(0.95)';
-
-            // Remove after animation
-            setTimeout(() => {
-                container.innerHTML = '';
-                // Restore original page title if needed
-                document.title = document.title.replace(/ - Product Group Details$/, '');
-            }, 200);
-        } else {
-            container.innerHTML = '';
-        }
-    }
-}
-
-/**
- * Setup event listeners for modal
- */
-function setupModalEventListeners() {
-    const modal = document.getElementById('product-group-modal');
-    if (!modal) return;
-
-    // Close on ESC key
-    document.addEventListener('keydown', function escHandler(e) {
-        if (e.key === 'Escape') {
-            closeDetailModal();
-            document.removeEventListener('keydown', escHandler);
-        }
-    });
-
-    // Close on backdrop click
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeDetailModal();
-        }
-    });
-
-    // Prevent modal dialog clicks from closing modal
-    const modalContent = modal.querySelector('.kt-modal-content');
-    if (modalContent) {
-        modalContent.addEventListener('click', function(e) {
-            e.stopPropagation();
-        });
-    }
-}
-
-/**
- * Show loading state in modal container
+ * Show loading modal using KT Modal
  */
 function showModalLoading() {
     const container = document.getElementById('detail-modal-container');
     if (!container) return;
 
     container.innerHTML = `
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div class="kt-modal kt-modal-center max-w-md w-full mx-4">
-                <div class="kt-modal-content">
-                    <div class="kt-modal-body text-center py-8">
-                        <div class="flex flex-col items-center gap-4">
-                            <div class="kt-spinner kt-spinner-primary"></div>
-                            <span class="text-sm text-gray-600">Loading product group details...</span>
-                        </div>
+        <div class="kt-modal" data-kt-modal="true" id="loading-modal">
+            <div class="kt-modal-content max-w-[300px] top-[20%]">
+                <div class="kt-modal-body text-center py-8">
+                    <div class="flex flex-col items-center gap-4">
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                        <span class="text-sm text-gray-600">Loading...</span>
                     </div>
                 </div>
             </div>
         </div>
     `;
+
+    // Initialize and show loading modal
+    KTModal.createInstances();
+    const loadingModalElement = container.querySelector('#loading-modal');
+    const loadingModal = KTModal.getInstance(loadingModalElement);
+    if (loadingModal) {
+        loadingModal.show();
+    }
 }
 
 /**
- * Hide modal loading state
+ * Hide loading modal
  */
 function hideModalLoading() {
-    // Loading will be replaced by actual modal content
-    // This function exists for consistency
+    const loadingModalElement = document.querySelector('#loading-modal');
+    if (loadingModalElement) {
+        const loadingModal = KTModal.getInstance(loadingModalElement);
+        if (loadingModal) {
+            loadingModal.hide();
+        }
+    }
 }
 
 /**
- * Show error message
- * @param {string} message - Error message to display
+ * Show error message modal
  */
 function showErrorMessage(message) {
     const container = document.getElementById('detail-modal-container');
     if (!container) {
-        alert(message); // Fallback
+        alert(message);
         return;
     }
 
     container.innerHTML = `
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-            <div class="kt-modal kt-modal-center max-w-md w-full mx-4">
-                <div class="kt-modal-content">
-                    <div class="kt-modal-header">
-                        <div class="kt-modal-title">
-                            <h3 class="text-lg font-semibold text-red-600">Error</h3>
+        <div class="kt-modal" data-kt-modal="true" id="error-modal">
+            <div class="kt-modal-content max-w-[400px] top-[20%]">
+                <div class="kt-modal-header">
+                    <h3 class="kt-modal-title text-red-600">Error</h3>
+                    <button type="button" class="kt-modal-close" aria-label="Close modal" data-kt-modal-dismiss="#error-modal">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6 6 18"></path>
+                            <path d="m6 6 12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="kt-modal-body">
+                    <div class="flex items-center gap-3 p-4 bg-red-50 rounded-lg">
+                        <i class="ki-filled ki-information-2 text-red-500 text-xl"></i>
+                        <div>
+                            <p class="text-sm text-red-700">${message}</p>
                         </div>
-                        <button type="button" class="kt-modal-close" onclick="closeDetailModal()">
-                            <i class="ki-filled ki-cross"></i>
-                        </button>
                     </div>
-                    <div class="kt-modal-body">
-                        <div class="flex items-center gap-3 p-4 bg-red-50 rounded-lg">
-                            <i class="ki-filled ki-information-2 text-red-500 text-xl"></i>
-                            <div>
-                                <p class="text-sm text-red-700">${message}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="kt-modal-footer">
-                        <button type="button" class="kt-btn kt-btn-primary" onclick="closeDetailModal()">
-                            Close
-                        </button>
-                    </div>
+                </div>
+                <div class="kt-modal-footer">
+                    <button type="button" class="kt-btn kt-btn-primary" data-kt-modal-dismiss="#error-modal">
+                        Close
+                    </button>
                 </div>
             </div>
         </div>
     `;
 
-    // Setup event listeners for error modal
-    setupModalEventListeners();
+    // Initialize and show error modal
+    KTModal.createInstances();
+    const errorModalElement = container.querySelector('#error-modal');
+    const errorModal = KTModal.getInstance(errorModalElement);
+    if (errorModal) {
+        errorModal.on('hide', function() {
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 300);
+        });
+        errorModal.show();
+    }
 }
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('Initializing KT Modal system...');
+
     // Ensure modal container exists
     if (!document.getElementById('detail-modal-container')) {
         const container = document.createElement('div');
         container.id = 'detail-modal-container';
         document.body.appendChild(container);
     }
+
+    // Initialize all KT Modals on the page
+    KTModal.init();
+    console.log('KT Modal system initialized');
 });
 </script>
 
