@@ -1,0 +1,28 @@
+{% extends "frontend/base.html" %}
+{% load i18n %}
+
+{% block title %}{{ object.name }} - {{ block.super }}{% endblock %}
+
+{% block content %}
+<div class="kt-container-fixed">
+
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="text-xl font-bold">{{ object.name }}</h1>
+    <a href="{% url 'nomenclatures:product_groups' %}" class="kt-btn kt-btn-secondary">
+      ← {% trans "Back to List" %}
+    </a>
+  </div>
+
+  <div class="kt-card">
+    <div class="kt-card-body">
+      <p><strong>{% trans "Code" %}:</strong> {{ object.code }}</p>
+      <p><strong>{% trans "Parent" %}:</strong>
+         {% if object.parent %}{{ object.parent.name }}{% else %}—{% endif %}
+      </p>
+      <p><strong>{% trans "Sort Order" %}:</strong> {{ object.sort_order }}</p>
+      <p><strong>{% trans "Active" %}:</strong> {{ object.is_active|yesno:"Yes,No" }}</p>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
