@@ -1,22 +1,18 @@
-# nomenclatures/models/numbering.py - NEW FILE
+# nomenclatures/models/numbering.py - CLEANED VERSION
 """
 Document Numbering System - Bulgarian Standard
+
+РЕФАКТОРИРАНЕ: Почистена от дублирана логика с NumberingService
 
 АРХИТЕКТУРА:
 - NumberingConfiguration: основни настройки за номерация
 - LocationNumberingAssignment: връзка между location и numbering config
 - UserNumberingPreference: user preferences за избор на numbering
 
-ФИСКАЛНО СЪОТВЕТСТВИЕ:
-- Фискални документи: 10 цифри БЕЗ префикс (1000000001)
-- Вътрешни документи: гъвкави с префикс (REQ001, PO023)
-- Multi-location support със separate броячи
-
-ПРИМЕРИ:
-- София фактури: 1000000001, 1000000002, 1000000003...
-- Варна фактури: 2100000001, 2100000002, 2100000003...
-- София заявки: REQ001, REQ002, REQ003...
-- Варна заявки: VAR-REQ001, VAR-REQ002...
+PRINCIPII СЛЕД РЕФАКТОРИРАНЕ:
+- Моделът управлява САМО database operations
+- NumberingService управлява business logic
+- НЕ дублираме formatting logic
 """
 
 from django.db import models, transaction
@@ -31,11 +27,11 @@ User = get_user_model()
 
 
 # =================================================================
-# NUMBERING CONFIGURATION - CORE
+# NUMBERING CONFIGURATION MANAGER
 # =================================================================
 
 class NumberingConfigurationManager(BaseNomenclatureManager):
-    """Manager за numbering configurations"""
+    """Manager за numbering configurations - БЕЗ дублирана логика"""
 
     def for_document_type(self, document_type):
         """Get configs for specific document type"""
@@ -64,14 +60,16 @@ class NumberingConfigurationManager(BaseNomenclatureManager):
         ).first()
 
 
+# =================================================================
+# NUMBERING CONFIGURATION - CORE MODEL
+# =================================================================
+
 class NumberingConfiguration(BaseNomenclature):
     """
-    Numbering Configuration - Microinvest Style
+    Numbering Configuration - CLEANED VERSION
 
-    Конфигурира как се номерират документите:
-    - Фискални: 10 цифри без префикс (Bulgarian law)
-    - Вътрешни: гъвкави с префикс
-    - Per location или global
+    САМО database schema и basic operations.
+    Business logic е преместена в NumberingService!
     """
 
     # =====================
@@ -210,10 +208,13 @@ class NumberingConfiguration(BaseNomenclature):
             return f"{self.document_type.name} ({self.series_number})"
 
     def clean(self):
-        """Business rules validation"""
+        """
+        Model validation - САМО schema validations!
+        Business rules са в NumberingService.
+        """
         super().clean()
 
-        # Fiscal document validation
+        # Basic fiscal document validation
         if self.numbering_type == 'fiscal':
             if self.prefix:
                 raise ValidationError({
@@ -232,7 +233,7 @@ class NumberingConfiguration(BaseNomenclature):
                     'digits_count': _('Must have at least 1 digit')
                 })
 
-        # Prefix validation
+        # Prefix format validation
         if self.prefix:
             if not re.match(r'^[A-Z0-9\-]+$', self.prefix):
                 raise ValidationError({
@@ -246,18 +247,19 @@ class NumberingConfiguration(BaseNomenclature):
             })
 
     # =====================
-    # NUMBERING METHODS
+    # DATABASE OPERATIONS САМО - БЕЗ BUSINESS LOGIC!
     # =====================
 
     @transaction.atomic
-    def get_next_number(self):
+    def increment_counter(self):
         """
-        Thread-safe number generation
+        САМО database increment - БЕЗ formatting!
+        Business logic е в NumberingService.
 
         Returns:
-            str: Formatted document number (e.g., "REQ0001", "1000000001")
+            int: New current_number
         """
-        # Lock record for update to prevent race conditions
+        # Lock за update
         config = NumberingConfiguration.objects.select_for_update().get(pk=self.pk)
 
         # Check yearly reset
@@ -266,99 +268,62 @@ class NumberingConfiguration(BaseNomenclature):
             config.current_number = 0
             config.last_reset_year = current_year
 
-        # Increment counter
+        # Increment
         config.current_number += 1
 
-        # Check max number limit
+        # Limit check
         if config.max_number and config.current_number > config.max_number:
-            raise ValidationError(f'Number limit exceeded. Max: {config.max_number}')
+            raise ValidationError(f'Number limit exceeded: {config.max_number}')
 
-        # Save updated counter
+        # Save САМО числото
         config.save(update_fields=['current_number', 'last_reset_year'])
 
-        # Format and return number
-        return config.format_number(config.current_number)
+        # Refresh self
+        self.refresh_from_db()
 
-    def format_number(self, number):
+        return config.current_number
+
+    def reset_counter(self, new_value=0):
         """
-        Format number according to configuration
+        Reset counter to specific value
 
         Args:
-            number (int): Raw number to format
-
-        Returns:
-            str: Formatted number
+            new_value: New counter value (default 0)
         """
-        # Zero-pad the number
-        padded_number = str(number).zfill(self.digits_count)
-
-        # Add prefix if exists
-        if self.prefix:
-            return f"{self.prefix}{padded_number}"
-        else:
-            return padded_number
-
-    def preview_next_numbers(self, count=5):
-        """
-        Preview next N numbers without incrementing counter
-
-        Args:
-            count (int): How many numbers to preview
-
-        Returns:
-            list: List of next formatted numbers
-        """
-        preview_numbers = []
-        for i in range(1, count + 1):
-            next_num = self.current_number + i
-            if self.max_number and next_num > self.max_number:
-                break
-            preview_numbers.append(self.format_number(next_num))
-
-        return preview_numbers
-
-    def reset_counter(self, new_start=0):
-        """
-        Reset numbering counter
-
-        Args:
-            new_start (int): New starting number
-        """
-        self.current_number = new_start
+        self.current_number = new_value
         self.last_reset_year = timezone.now().year
         self.save(update_fields=['current_number', 'last_reset_year'])
 
+    def preview_next_number(self):
+        """
+        Preview next number БЕЗ increment
+
+        Returns:
+            int: Next number που ще бъде vydaden
+        """
+        next_num = self.current_number + 1
+
+        # Check yearly reset
+        current_year = timezone.now().year
+        if self.reset_yearly and self.last_reset_year != current_year:
+            next_num = 1
+
+        return next_num
+
     # =====================
-    # BUSINESS METHODS
+    # REMOVED: get_next_number() method
+    # REASON: Дублира логиката на NumberingService
+    # USE: NumberingService.generate_document_number() instead
     # =====================
-
-    def is_fiscal_compliant(self):
-        """Check if config meets Bulgarian fiscal requirements"""
-        if self.numbering_type != 'fiscal':
-            return True
-
-        return (
-                not self.prefix and  # No prefix
-                self.digits_count >= 10 and  # At least 10 digits
-                not self.reset_yearly  # No yearly reset (recommended)
-        )
-
-    def get_microinvest_display(self):
-        """Get Microinvest-style display string"""
-        prefix_display = f'Префикс: {self.prefix}' if self.prefix else 'Без префикс'
-        return f"{self.document_type.name} ({self.series_number}) - {prefix_display}, Следващ: {self.format_number(self.current_number + 1)}"
 
 
 # =================================================================
-# LOCATION NUMBERING ASSIGNMENT
+# LOCATION NUMBERING ASSIGNMENT - UNCHANGED
 # =================================================================
 
 class LocationNumberingAssignment(models.Model):
     """
-    Връзка между Location и NumberingConfiguration
-
-    Позволява на всяка локация да използва различни numbering configs
-    за различни document types.
+    Location-specific numbering assignments - НЕ СЕ ПРОМЕНЯ
     """
 
     # =====================
@@ -398,7 +363,9 @@ class LocationNumberingAssignment(models.Model):
         User,
         on_delete=models.PROTECT,
         related_name='numbering_assignments_made',
-        verbose_name=_('Assigned By')
+        verbose_name=_('Assigned By'),
+        null=True,  # ADDED: За compatibility
+        blank=True
     )
 
     # =====================
@@ -426,15 +393,12 @@ class LocationNumberingAssignment(models.Model):
 
 
 # =================================================================
-# USER NUMBERING PREFERENCES
+# USER NUMBERING PREFERENCES - UNCHANGED
 # =================================================================
 
 class UserNumberingPreference(models.Model):
     """
-    User preferences за numbering
-
-    Позволява на users да избират кои numbering configs да използват
-    за различни document types.
+    User preferences за numbering - НЕ СЕ ПРОМЕНЯ
     """
 
     # =====================
@@ -496,25 +460,17 @@ class UserNumberingPreference(models.Model):
 
 
 # =================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS - SIMPLIFIED
 # =================================================================
 
 def get_numbering_config_for_document(document_type, location=None, user=None):
     """
-    Get appropriate numbering configuration for document creation
+    Get appropriate numbering configuration - НЕ СЕ ПРОМЕНЯ
 
     Priority:
     1. User preference (if specified)
     2. Location assignment (if specified)
     3. Default config for document type
-
-    Args:
-        document_type: DocumentType instance
-        location: Location instance (optional)
-        user: User instance (optional)
-
-    Returns:
-        NumberingConfiguration instance or None
     """
 
     # Priority 1: User preference
@@ -548,33 +504,30 @@ def get_numbering_config_for_document(document_type, location=None, user=None):
     return default_config
 
 
+# =================================================================
+# DEPRECATED FUNCTION - ЗА BACKWARD COMPATIBILITY
+# =================================================================
+
 def generate_document_number(document_type, location=None, user=None):
     """
-    Generate next document number
+    DEPRECATED: Use NumberingService.generate_document_number() instead
 
-    Args:
-        document_type: DocumentType instance
-        location: Location instance (optional)
-        user: User instance (optional)
-
-    Returns:
-        str: Generated document number
-
-    Raises:
-        ValidationError: If no numbering config found or number generation fails
+    Kept only for backward compatibility
     """
+    import warnings
+    warnings.warn(
+        "generate_document_number() in models.numbering is deprecated. "
+        "Use NumberingService.generate_document_number() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
 
-    config = get_numbering_config_for_document(document_type, location, user)
-
-    if not config:
-        raise ValidationError(
-            f'No numbering configuration found for {document_type.name}. '
-            f'Please create a NumberingConfiguration for this document type.'
-        )
-
+    # Delegate to NumberingService if available
     try:
-        return config.get_next_number()
-    except ValidationError as e:
-        raise ValidationError(f'Number generation failed: {e}')
-
-
+        from ..services.numbering_service import NumberingService
+        return NumberingService.generate_document_number(document_type, location, user)
+    except ImportError:
+        # Emergency fallback
+        from django.utils import timezone
+        timestamp = timezone.now().strftime("%y%m%d%H%M%S")
+        return f"FALLBACK{timestamp}"

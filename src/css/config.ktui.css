@@ -116,10 +116,12 @@ html {
 @utility container {
   @apply mx-auto max-w-none px-4 lg:px-5;
 
-  @media (width >= --theme(--breakpoint-xl)) {
-    @apply max-w-(--breakpoint-xl);
+@media (min-width: var(--breakpoint-xl)) {
+  .container {
+    max-width: var(--breakpoint-xl);
   }
 }
+
 
 @utility container-fluid {
   @apply w-full mx-auto px-4 lg:px-5;
@@ -136,4 +138,4 @@ html {
 
 /** Dark/Light Theme Variant **/
 @custom-variant dark (&:is(.dark *));
-@custom-variant light (&:not(.dark *));
+@custom-variant light (&:not(.dark *));}
