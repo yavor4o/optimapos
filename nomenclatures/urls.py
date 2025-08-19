@@ -20,6 +20,7 @@ urlpatterns = [
     path('brands/', include([
         path('', views.BrandListView.as_view(), name='brands'),
         path('create/', views.BrandCreateView.as_view(), name='brands_create'),
+        path('<int:pk>/', views.BrandDetailView.as_view(), name='brands_detail'),
 
         path('<int:pk>/edit/', views.BrandUpdateView.as_view(), name='brands_edit'),
         path('<int:pk>/delete/', views.BrandDeleteView.as_view(), name='brands_delete'),

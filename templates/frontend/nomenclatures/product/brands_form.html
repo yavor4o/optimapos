@@ -5,123 +5,185 @@
 
 {% block content %}
 <div class="kt-container-fixed">
-    
-    <!-- Breadcrumb -->
-    <div class="flex flex-wrap items-center gap-2 pb-5">
-        <a href="{% url 'nomenclatures:brands' %}" class="text-muted-foreground hover:text-primary">
-            {% trans "Brands" %}
-        </a>
-        <i class="ki-filled ki-right text-muted-foreground text-xs"></i>
-        <span class="text-foreground">{{ page_title }}</span>
+
+    <!-- Page Header -->
+    <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+        <div class="flex flex-col justify-center gap-2">
+            <h1 class="text-xl font-medium leading-none text-mono">
+                {{ page_title }}
+            </h1>
+            <div class="flex items-center gap-2 text-sm font-normal text-secondary-foreground">
+                <a href="{% url 'nomenclatures:brands' %}" class="hover:text-primary">{% trans "Brands" %}</a>
+                <i class="ki-filled ki-right text-xs"></i>
+                <span>{{ object.name|default:_("New Brand") }}</span>
+            </div>
+        </div>
     </div>
 
     <!-- Form Card -->
     <div class="kt-card">
         <div class="kt-card-header">
-            <h3 class="kt-card-title">{{ page_title }}</h3>
+            <h3 class="kt-card-title">
+                {% trans "Brand Information" %}
+            </h3>
         </div>
-        
+
         <form method="post" enctype="multipart/form-data">
             {% csrf_token %}
-            
-            <div class="kt-card-body">
+
+            <div class="kt-card-body mb-3 mt-3">
                 <!-- Error Messages -->
                 {% if form.non_field_errors %}
-                <div class="kt-alert kt-alert-danger mb-5">
+                <div style="padding: 12px; background-color: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; margin-bottom: 20px;">
+                    <div style="color: #dc2626; font-weight: 500;">{% trans "Please correct the errors below:" %}</div>
                     {{ form.non_field_errors }}
                 </div>
                 {% endif %}
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <!-- Form Fields -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 0 20px;">
+
                     <!-- Code Field -->
                     <div>
-                        <label class="kt-label {% if form.code.field.required %}required{% endif %}">
+                        <label class="kt-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 500; color: #374151;">
                             {{ form.code.label }}
+                            {% if form.code.field.required %}<span style="color: #dc2626;">*</span>{% endif %}
                         </label>
-                        {{ form.code }}
+                        <input type="text"
+                               name="code"
+                               value="{{ form.code.value|default:'' }}"
+                               class="kt-input"
+                               style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px;"
+                               placeholder="{% trans 'e.g., COCA, PEPSI' %}"
+                               {% if form.code.field.required %}required{% endif %}>
                         {% if form.code.help_text %}
-                            <div class="kt-hint">{{ form.code.help_text }}</div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
+                                {{ form.code.help_text }}
+                            </div>
                         {% endif %}
                         {% if form.code.errors %}
-                            <div class="kt-error">{{ form.code.errors }}</div>
+                            <div style="font-size: 12px; color: #dc2626; margin-top: 4px;">
+                                {{ form.code.errors.0 }}
+                            </div>
                         {% endif %}
                     </div>
 
                     <!-- Name Field -->
                     <div>
-                        <label class="kt-label {% if form.name.field.required %}required{% endif %}">
+                        <label class="kt-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 500; color: #374151;">
                             {{ form.name.label }}
+                            {% if form.name.field.required %}<span style="color: #dc2626;">*</span>{% endif %}
                         </label>
-                        {{ form.name }}
+                        <input type="text"
+                               name="name"
+                               value="{{ form.name.value|default:'' }}"
+                               class="kt-input"
+                               style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px;"
+                               placeholder="{% trans 'e.g., Coca-Cola, Pepsi' %}"
+                               {% if form.name.field.required %}required{% endif %}>
                         {% if form.name.help_text %}
-                            <div class="kt-hint">{{ form.name.help_text }}</div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
+                                {{ form.name.help_text }}
+                            </div>
                         {% endif %}
                         {% if form.name.errors %}
-                            <div class="kt-error">{{ form.name.errors }}</div>
+                            <div style="font-size: 12px; color: #dc2626; margin-top: 4px;">
+                                {{ form.name.errors.0 }}
+                            </div>
                         {% endif %}
                     </div>
 
                     <!-- Website Field -->
                     <div>
-                        <label class="kt-label">
+                        <label class="kt-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 500; color: #374151;">
                             {{ form.website.label }}
                         </label>
-                        {{ form.website }}
+                        <input type="url"
+                               name="website"
+                               value="{{ form.website.value|default:'' }}"
+                               class="kt-input"
+                               style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px;"
+                               placeholder="https://example.com">
                         {% if form.website.help_text %}
-                            <div class="kt-hint">{{ form.website.help_text }}</div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
+                                {{ form.website.help_text }}
+                            </div>
                         {% endif %}
                         {% if form.website.errors %}
-                            <div class="kt-error">{{ form.website.errors }}</div>
+                            <div style="font-size: 12px; color: #dc2626; margin-top: 4px;">
+                                {{ form.website.errors.0 }}
+                            </div>
                         {% endif %}
                     </div>
 
                     <!-- Logo Field -->
                     <div>
-                        <label class="kt-label">
+                        <label class="kt-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 500; color: #374151;">
                             {{ form.logo.label }}
                         </label>
-                        
+
                         {% if object and object.logo %}
-                        <div class="mb-3">
-                            <img src="{{ object.logo.url }}" 
-                                 alt="{{ object.name }}"
-                                 class="h-20 w-20 object-contain rounded border">
-                            <div class="text-sm text-muted-foreground mt-1">
+                        <div style="margin-bottom: 12px;">
+                            <div style="width: 80px; height: 80px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px;">
+                                <img src="{{ object.logo.url }}"
+                                     alt="{{ object.name }}"
+                                     style="width: 100%; height: 100%; object-fit: contain;">
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
                                 {% trans "Current logo" %}
                             </div>
                         </div>
                         {% endif %}
-                        
-                        {{ form.logo }}
+
+                        <input type="file"
+                               name="logo"
+                               class="kt-input"
+                               style="width: 100%; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px;"
+                               accept="image/*">
                         {% if form.logo.help_text %}
-                            <div class="kt-hint">{{ form.logo.help_text }}</div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">
+                                {{ form.logo.help_text }}
+                            </div>
                         {% endif %}
                         {% if form.logo.errors %}
-                            <div class="kt-error">{{ form.logo.errors }}</div>
+                            <div style="font-size: 12px; color: #dc2626; margin-top: 4px;">
+                                {{ form.logo.errors.0 }}
+                            </div>
                         {% endif %}
                     </div>
 
-                    <!-- Active Status -->
-                    <div class="col-span-2">
-                        <label class="kt-checkbox-label">
-                            {{ form.is_active }}
-                            <span>{{ form.is_active.label }}</span>
+                    <!-- Status Field -->
+                    <div style="grid-column: span 2;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px;">
+                            <input type="checkbox"
+                                   name="is_active"
+                                   class="kt-checkbox"
+                                   style="width: 18px; height: 18px; border-radius: 4px;"
+                                   {% if form.is_active.value %}checked{% endif %}>
+                            <span style="color: #374151; font-weight: 500;">{{ form.is_active.label }}</span>
                         </label>
                         {% if form.is_active.errors %}
-                            <div class="kt-error">{{ form.is_active.errors }}</div>
+                            <div style="font-size: 12px; color: #dc2626; margin-top: 4px;">
+                                {{ form.is_active.errors.0 }}
+                            </div>
                         {% endif %}
                     </div>
                 </div>
             </div>
 
+            <!-- Form Actions -->
             <div class="kt-card-footer">
-                <div class="flex justify-end gap-2">
+                <div style="display: flex; justify-content: flex-end; gap: 8px;">
                     <a href="{% url 'nomenclatures:brands' %}" class="kt-btn kt-btn-light">
                         {% trans "Cancel" %}
                     </a>
                     <button type="submit" class="kt-btn kt-btn-primary">
                         <i class="ki-filled ki-check"></i>
-                        {% trans "Save" %}
+                        {% if object %}
+                            {% trans "Update Brand" %}
+                        {% else %}
+                            {% trans "Create Brand" %}
+                        {% endif %}
                     </button>
                 </div>
             </div>

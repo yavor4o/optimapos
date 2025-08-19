@@ -27,96 +27,11 @@
         </div>
     </div>
 
-    <!-- Filters Card -->
-    <div class="kt-card mb-5">
-        <div class="kt-card-body">
-            <form method="get" class="flex flex-wrap gap-3">
-                <!-- Search -->
-                <div class="flex-1 min-w-[200px]">
-                    <input type="text" 
-                           name="search" 
-                           value="{{ search_query }}"
-                           placeholder="{% trans 'Search by name or code...' %}"
-                           class="kt-input">
-                </div>
-
-                <!-- Status Filter -->
-                <select name="status" class="kt-select min-w-[150px]">
-                    <option value="">{% trans "All Status" %}</option>
-                    <option value="active" {% if status_filter == 'active' %}selected{% endif %}>
-                        {% trans "Active" %}
-                    </option>
-                    <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>
-                        {% trans "Inactive" %}
-                    </option>
-                </select>
-
-                <!-- Buttons -->
-                <button type="submit" class="kt-btn kt-btn-primary">
-                    <i class="ki-filled ki-magnifier"></i>
-                    {% trans "Search" %}
-                </button>
-                
-                {% if search_query or status_filter %}
-                <a href="{% url 'nomenclatures:brands' %}" class="kt-btn kt-btn-light">
-                    <i class="ki-filled ki-cross-circle"></i>
-                    {% trans "Clear" %}
-                </a>
-                {% endif %}
-            </form>
-        </div>
-    </div>
-
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-7.5">
-        <div class="kt-card">
-            <div class="kt-card-body">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-2xl font-semibold text-foreground">{{ total_count }}</div>
-                        <div class="text-sm text-muted-foreground">{% trans "Total Brands" %}</div>
-                    </div>
-                    <div class="kt-badge kt-badge-light kt-badge-lg">
-                        <i class="ki-filled ki-tag text-primary"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="kt-card">
-            <div class="kt-card-body">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-2xl font-semibold text-success">{{ active_count }}</div>
-                        <div class="text-sm text-muted-foreground">{% trans "Active" %}</div>
-                    </div>
-                    <div class="kt-badge kt-badge-success kt-badge-lg">
-                        <i class="ki-filled ki-check-circle"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="kt-card">
-            <div class="kt-card-body">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <div class="text-2xl font-semibold text-warning">{{ inactive_count }}</div>
-                        <div class="text-sm text-muted-foreground">{% trans "Inactive" %}</div>
-                    </div>
-                    <div class="kt-badge kt-badge-warning kt-badge-lg">
-                        <i class="ki-filled ki-information-circle"></i>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Main Content Card -->
     <div class="kt-card">
         <div class="kt-card-header">
             <h3 class="kt-card-title">
-                {% trans "Brand List" %}
+                {% trans "Brands" %} ({{ total_count }})
             </h3>
         </div>
 
@@ -125,14 +40,13 @@
                 <table class="kt-table kt-table-border kt-table-rounded">
                     <thead>
                         <tr>
-                            <th style="width: 60px;">{% trans "Logo" %}</th>
+                            <th style="width: 50px;">{% trans "Logo" %}</th>
                             <th>{% trans "Code" %}</th>
                             <th>{% trans "Name" %}</th>
                             <th>{% trans "Website" %}</th>
                             <th>{% trans "Products" %}</th>
                             <th>{% trans "Status" %}</th>
-                            <th>{% trans "Created" %}</th>
-                            <th style="width: 100px; text-align: right;">{% trans "Actions" %}</th>
+                            <th style="width: 80px; text-align: right;">{% trans "Actions" %}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -140,24 +54,23 @@
                         <tr>
                             <td>
                                 {% if brand.logo %}
-                                    <img src="{{ brand.logo.url }}" 
-                                         alt="{{ brand.name }}"
-                                         class="w-10 h-10 rounded object-cover">
+                                    <div style="width: 32px; height: 32px;">
+                                        <img src="{{ brand.logo.url }}"
+                                             alt="{{ brand.name }}"
+                                             style="width: 100%; height: 100%; object-fit: contain; border-radius: 4px;">
+                                    </div>
                                 {% else %}
-                                    <div class="w-10 h-10 rounded bg-secondary/10 flex items-center justify-center">
-                                        <i class="ki-filled ki-picture text-muted-foreground"></i>
+                                    <div style="width: 32px; height: 32px; background-color: #f3f4f6; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="ki-filled ki-picture" style="color: #9ca3af; font-size: 14px;"></i>
                                     </div>
                                 {% endif %}
                             </td>
-                            <td>
-                                <span class="font-mono font-semibold text-primary">{{ brand.code }}</span>
-                            </td>
+                            <td><strong class="text-primary">{{ brand.code }}</strong></td>
                             <td>{{ brand.name }}</td>
                             <td>
                                 {% if brand.website %}
-                                    <a href="{{ brand.website }}" target="_blank" class="text-primary hover:underline">
-                                        <i class="ki-filled ki-global"></i>
-                                        {% trans "Website" %}
+                                    <a href="{{ brand.website }}" target="_blank" style="color: #3b82f6; text-decoration: none;">
+                                        <i class="ki-filled ki-global" style="font-size: 12px;"></i> {% trans "Visit" %}
                                     </a>
                                 {% else %}
                                     <span class="text-muted-foreground">-</span>
@@ -175,36 +88,31 @@
                                     <span class="kt-badge kt-badge-warning kt-badge-sm">{% trans "Inactive" %}</span>
                                 {% endif %}
                             </td>
-                            <td>
-                                <span class="text-sm text-muted-foreground">
-                                    {{ brand.created_at|date:"d.m.Y" }}
-                                </span>
-                            </td>
-                            <td style="text-align: right;">
-                                <div class="flex justify-end gap-1">
+                            <td style="width: 80px; text-align: right; padding: 8px;">
+                                <div style="display: flex; justify-content: flex-end; gap: 4px;">
                                     <button type="button"
-                                            class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
-                                            onclick="showBrandDetail({{ brand.pk }})"
+                                            style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 4px; cursor: pointer;"
+                                            onclick="showBrandDetailModal({{ brand.pk }})"
                                             title="{% trans 'View Details' %}">
-                                        <i class="ki-filled ki-eye"></i>
+                                        <i class="ki-filled ki-eye" style="font-size: 14px; color: #6b7280;"></i>
                                     </button>
                                     <a href="{% url 'nomenclatures:brands_edit' brand.pk %}"
-                                       class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
+                                       style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 4px; text-decoration: none;"
                                        title="{% trans 'Edit Brand' %}">
-                                        <i class="ki-filled ki-notepad-edit"></i>
+                                        <i class="ki-filled ki-notepad-edit" style="font-size: 14px; color: #6b7280;"></i>
                                     </a>
                                     <button type="button"
-                                            class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm"
+                                            style="width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: 4px; cursor: pointer;"
                                             onclick="confirmDelete('{% url 'nomenclatures:brands_delete' brand.pk %}')"
                                             title="{% trans 'Delete Brand' %}">
-                                        <i class="ki-filled ki-trash text-danger"></i>
+                                        <i class="ki-filled ki-trash" style="font-size: 14px; color: #dc3545;"></i>
                                     </button>
                                 </div>
                             </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="8" class="text-center py-8">
+                            <td colspan="7" class="text-center py-8">
                                 <div class="flex flex-col items-center">
                                     <i class="ki-filled ki-tag text-muted-foreground text-4xl mb-3"></i>
                                     <h4 class="text-muted-foreground mb-2">{% trans "No Brands Found" %}</h4>
@@ -220,130 +128,208 @@
                     </tbody>
                 </table>
             </div>
-
-            <!-- Pagination -->
-            {% if is_paginated %}
-            <div class="flex justify-between items-center mt-5">
-                <div class="text-sm text-muted-foreground">
-                    {% trans "Showing" %} {{ page_obj.start_index }}-{{ page_obj.end_index }} 
-                    {% trans "of" %} {{ paginator.count }} {% trans "brands" %}
-                </div>
-                
-                <div class="kt-pagination">
-                    {% if page_obj.has_previous %}
-                        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
-                           class="kt-pagination-link">
-                            <i class="ki-filled ki-left"></i>
-                        </a>
-                    {% endif %}
-                    
-                    {% for num in paginator.page_range %}
-                        {% if page_obj.number == num %}
-                            <span class="kt-pagination-link active">{{ num }}</span>
-                        {% elif num > page_obj.number|add:'-3' and num < page_obj.number|add:'3' %}
-                            <a href="?page={{ num }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
-                               class="kt-pagination-link">{{ num }}</a>
-                        {% endif %}
-                    {% endfor %}
-                    
-                    {% if page_obj.has_next %}
-                        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" 
-                           class="kt-pagination-link">
-                            <i class="ki-filled ki-right"></i>
-                        </a>
-                    {% endif %}
-                </div>
-            </div>
-            {% endif %}
         </div>
     </div>
 </div>
 
-<!-- Brand Detail Modal -->
+<!-- Modal HTML -->
 <div class="kt-modal" data-kt-modal="true" id="brandDetailModal">
-    <div class="kt-modal-content" style="max-width: 500px;">
+    <div class="kt-modal-content" style="max-width: 500px; width: 100%; top: 15%;">
+        <!-- Modal Header -->
         <div class="kt-modal-header">
-            <h3 class="kt-modal-title" id="brandDetailTitle">{% trans "Brand Details" %}</h3>
-            <button class="btn btn-sm btn-icon btn-light" data-kt-modal-dismiss="true">
+            <h3 class="kt-modal-title" id="brandDetailModalTitle">
+                {% trans "Brand Details" %}
+            </h3>
+            <button class="btn btn-sm btn-icon btn-light"
+                    data-kt-modal-dismiss="true"
+                    title="{% trans 'Close' %}">
                 <i class="ki-filled ki-cross"></i>
             </button>
         </div>
-        <div class="kt-modal-body" id="brandDetailBody">
-            <div class="text-center py-8">
-                <div class="spinner-border text-primary"></div>
+
+        <!-- Modal Body -->
+        <div class="kt-modal-body" style="padding-right: 8px;" id="brandDetailModalBody">
+            <!-- Loading State -->
+            <div id="loadingState" style="border-radius: 8px; background-color: #f1f5f9; width: 100%; flex-grow: 1; height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div class="spinner-border text-primary mb-3"></div>
+                <div class="text-sm text-gray-600">{% trans "Loading..." %}</div>
+            </div>
+
+            <!-- Content State - hidden initially -->
+            <div id="contentState" style="display: none; padding: 20px; height: 280px; overflow-y: auto;">
+                <!-- Will be populated by JavaScript -->
             </div>
         </div>
+
+        <!-- Modal Footer -->
         <div class="kt-modal-footer">
-            <button type="button" class="kt-btn kt-btn-light" data-kt-modal-dismiss="true">
+            <button type="button" class="btn btn-light" data-kt-modal-dismiss="true">
                 {% trans "Close" %}
             </button>
         </div>
     </div>
 </div>
 
+<!-- JavaScript -->
 <script>
-function showBrandDetail(brandId) {
-    const modal = KTModal.getInstance(document.getElementById('brandDetailModal'));
-    modal.show();
-    
-    // Load brand details
-    fetch(`/nomenclatures/brands/${brandId}/`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                const brand = data.brand;
-                document.getElementById('brandDetailTitle').textContent = brand.name;
-                
-                let html = '<div class="space-y-4">';
-                
-                // Logo
-                if (brand.logo_url) {
-                    html += `<div class="text-center">
-                        <img src="${brand.logo_url}" alt="${brand.name}" class="mx-auto h-24 w-24 object-contain rounded">
-                    </div>`;
+window.showBrandDetailModal = async function(brandId) {
+    const modalEl = document.getElementById('brandDetailModal');
+    const modal = KTModal.getInstance(modalEl);
+    const modalTitle = document.getElementById('brandDetailModalTitle');
+
+    if (modal) {
+        modal.show();
+    }
+
+    // Reset modal state
+    document.getElementById('loadingState').style.display = 'flex';
+    document.getElementById('contentState').style.display = 'none';
+
+    try {
+        const response = await fetch(`/nomenclatures/brands/${brandId}/`);
+        const data = await response.json();
+
+        if (data.success) {
+            modalTitle.textContent = data.brand?.name || '{% trans "Brand Details" %}';
+
+            // Show content, hide loading
+            document.getElementById('loadingState').style.display = 'none';
+            document.getElementById('contentState').style.display = 'block';
+
+            // Build content HTML
+            // в showBrandDetailModal
+let html = `
+  <div class="flex flex-col gap-6">
+
+    <!-- Logo -->
+    ${data.brand?.logo_url ? `
+  <div style="display:flex; justify-content:center;">
+    <div style="
+      width: 120px; height: 120px;
+      display:flex; align-items:center; justify-content:center;
+      border:1px solid #e5e7eb; border-radius:8px;
+      background:#fff; overflow:hidden;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    ">
+      <img src="${data.brand.logo_url}"
+           alt="${data.brand.name}"
+           style="
+             max-width:100%; max-height:100%;
+             width:auto !important; height:auto !important;
+             object-fit:contain; display:block;
+           ">
+    </div>
+  </div>
+` : '' }
+
+
+    <!-- Info Grid -->
+    <div class="grid grid-cols-2 gap-y-4 gap-x-6 text-sm">
+      <div>
+        <div class="text-gray-500 mb-1">{% trans "Code" %}</div>
+        <div class="font-semibold text-gray-900">${data.brand?.code || '-'}</div>
+      </div>
+
+      <div>
+        <div class="text-gray-500 mb-1">{% trans "Name" %}</div>
+        <div class="font-semibold text-gray-900">${data.brand?.name || '-'}</div>
+      </div>
+
+      <div>
+        <div class="text-gray-500 mb-1">{% trans "Products" %}</div>
+        <div class="font-semibold text-gray-900">${data.brand?.products_count || 0}</div>
+      </div>
+
+      <div>
+        <div class="text-gray-500 mb-1">{% trans "Status" %}</div>
+        <div>
+          ${data.brand?.is_active
+            ? '<span class="px-2 py-0.5 text-xs rounded bg-green-100 text-green-700">{% trans "Active" %}</span>'
+            : '<span class="px-2 py-0.5 text-xs rounded bg-yellow-100 text-yellow-700">{% trans "Inactive" %}</span>'}
+        </div>
+      </div>
+
+      ${data.brand?.website ? `
+      <div class="col-span-2">
+        <div class="text-gray-500 mb-1">{% trans "Website" %}</div>
+        <a href="${data.brand.website}" target="_blank"
+           class="text-blue-600 hover:underline">${data.brand.website}</a>
+      </div>` : ''}
+    </div>
+  </div>
+`;
+
+
+            html += '</div></div>';
+
+            document.getElementById('contentState').innerHTML = html;
+
+        } else {
+            throw new Error(data.error || '{% trans "Failed to load brand details" %}');
+        }
+    } catch (error) {
+        console.error('{% trans "Error:" %}', error);
+        document.getElementById('loadingState').innerHTML = '<div class="text-danger text-center py-4">Error loading data</div>';
+    }
+};
+
+window.confirmDelete = function(deleteUrl) {
+    Swal.fire({
+        title: "{% trans 'Are you sure?' %}",
+        text: "{% trans 'This action cannot be undone!' %}",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonColor: "#d33",
+        cancelButtonColor: "#3085d6",
+        confirmButtonText: "{% trans 'Yes, delete it!' %}",
+        cancelButtonText: "{% trans 'Cancel' %}"
+    }).then((result) => {
+        if (result.isConfirmed) {
+            fetch(deleteUrl, {
+                method: "POST",
+                headers: {
+                    "X-CSRFToken": getCookie("csrftoken"),  // ако си с CSRF
+                    "X-Requested-With": "XMLHttpRequest"
                 }
-                
-                // Info grid
-                html += '<div class="grid grid-cols-2 gap-4">';
-                html += `<div>
-                    <div class="text-sm text-muted-foreground">{% trans "Code" %}</div>
-                    <div class="font-semibold">${brand.code}</div>
-                </div>`;
-                html += `<div>
-                    <div class="text-sm text-muted-foreground">{% trans "Status" %}</div>
-                    <div>${brand.is_active ? '<span class="kt-badge kt-badge-success">{% trans "Active" %}</span>' : '<span class="kt-badge kt-badge-warning">{% trans "Inactive" %}</span>'}</div>
-                </div>`;
-                
-                if (brand.website) {
-                    html += `<div class="col-span-2">
-                        <div class="text-sm text-muted-foreground">{% trans "Website" %}</div>
-                        <div><a href="${brand.website}" target="_blank" class="text-primary hover:underline">${brand.website}</a></div>
-                    </div>`;
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Swal.fire(
+                        "{% trans 'Deleted!' %}",
+                        "{% trans 'The brand was deleted successfully.' %}",
+                        "success"
+                    ).then(() => {
+                        window.location.reload(); // презареждаме таблицата
+                    });
+                } else {
+                    Swal.fire("Error", data.error || "Failed to delete", "error");
                 }
-                
-                html += `<div>
-                    <div class="text-sm text-muted-foreground">{% trans "Products" %}</div>
-                    <div class="font-semibold">${brand.products_count}</div>
-                </div>`;
-                html += `<div>
-                    <div class="text-sm text-muted-foreground">{% trans "Created" %}</div>
-                    <div>${brand.created_at}</div>
-                </div>`;
-                html += '</div></div>';
-                
-                document.getElementById('brandDetailBody').innerHTML = html;
-            }
-        })
-        .catch(error => {
-            document.getElementById('brandDetailBody').innerHTML = '<div class="text-danger">{% trans "Error loading brand details" %}</div>';
-        });
+            })
+            .catch(err => {
+                Swal.fire("Error", err.message, "error");
+            });
+        }
+    });
 }
 
-function confirmDelete(url) {
-    if (confirm('{% trans "Are you sure you want to delete this brand?" %}')) {
-        window.location.href = url;
+// helper за CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
     }
+    return cookieValue;
 }
 </script>
+    <!-- SweetAlert2 -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
 {% endblock %}

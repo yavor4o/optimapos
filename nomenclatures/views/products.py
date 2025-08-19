@@ -299,15 +299,9 @@ class BrandDetailView(NomenclatureViewMixin, DetailView):
 
 class BrandDeleteView(NomenclatureViewMixin, DeleteView):
     model = Brand
-    template_name = 'frontend/nomenclatures/brand/brands_confirm_delete.html'
     success_url = reverse_lazy('nomenclatures:brands')
 
-    def get_page_title(self):
-        return _("Delete Brand")
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        # Проверяваме дали има свързани продукти
-        context['has_products'] = self.object.product_set.exists() if hasattr(self.object, 'product_set') else False
-        context['products_count'] = self.object.product_set.count() if hasattr(self.object, 'product_set') else 0
-        return context
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        self.object.delete()
+        return JsonResponse({'success': True})

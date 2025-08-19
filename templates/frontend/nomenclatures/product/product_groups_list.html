@@ -108,8 +108,8 @@
                                     </span>
 
                                     <!-- Products Count -->
-                                    <span class="kt-badge kt-badge-info kt-badge-xs" title="{% trans 'Products' %}">
-                                        <i class="ki-filled ki-package-box text-[10px]"></i> {{ group.product_set.count|default:"0" }}
+                                    <span class="kt-badge kt-badge-light kt-badge-xs" title="{% trans 'Products' %}">
+                                        <i class="ki-filled ki-basket-ok text-[10px]"></i> {{ group.product_set.count|default:"0" }}
                                     </span>
 
                                     <!-- Level Indicator -->
@@ -117,22 +117,9 @@
                                         L{{ group.level }}
                                     </span>
 
-                                    <!-- Sort Order -->
-                                    <span class="kt-badge kt-badge-outline kt-badge-xs" title="{% trans 'Sort Order' %}">
-                                        #{{ group.sort_order }}
-                                    </span>
 
-                                    <!-- ID -->
-                                    <span class="text-[10px] text-muted-foreground">
-                                        ID:{{ group.pk }}
-                                    </span>
 
-                                    <!-- Parent Code -->
-                                    {% if group.parent %}
-                                        <span class="text-[10px] text-muted-foreground">
-                                            ↑{{ group.parent.code }}
-                                        </span>
-                                    {% endif %}
+
                                 </div>
                             </a>
                         </div>
