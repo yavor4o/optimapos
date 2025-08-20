@@ -1,24 +1,23 @@
-
-# nomenclatures/models/base_document.py - EXACT COPY ОТ purchases/models/base.py
+# nomenclatures/models/base_document.py - UNIVERSAL BASE DOCUMENT
 """
-Base Document Models - MOVED FROM purchases.models.base
+Base Document Models - УНИВЕРСАЛЕН И НЕЗАВИСИМ
 
-MIGRATION: Moved to nomenclatures for logical coherence
-- BaseDocument: Core document functionality
-- BaseDocumentLine: Core line functionality
-- DocumentManager: Dynamic queries via DocumentService
-- LineManager: Standard line operations
+КЛЮЧОВА ПРОМЯНА: 
+- Премахнат supplier = ForeignKey('partners.Supplier')  
+- Добавен partner = GenericForeignKey за всякакви партньори
+- Backward compatibility properties за supplier/customer
 
-USAGE: Used by purchases, sales, inventory apps
+РЕЗУЛТАТ: BaseDocument може да работи с purchases, sales, hr, accounting apps
 """
 
 import warnings
 from django.db import models
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class DocumentManager(models.Manager):
     """
-    Base manager for all purchase documents
+    Base manager for all documents
 
     100% СИНХРОНИЗИРАН с nomenclatures.DocumentService:
     - NO hardcoded статуси никъде
@@ -39,114 +38,71 @@ class DocumentManager(models.Manager):
 
     def active(self):
         """Return only active documents - DYNAMIC от DocumentService"""
-        from nomenclatures.services import DocumentService
-        return DocumentService.get_active_documents(queryset=self.get_queryset())
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_active_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback
+            return self.exclude(status__in=['cancelled', 'deleted'])
 
     def pending_approval(self):
         """Documents pending approval - DYNAMIC от ApprovalRule"""
-        from nomenclatures.services import DocumentService
-        return DocumentService.get_pending_approval_documents(queryset=self.get_queryset())
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_pending_approval_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback
+            return self.filter(status__in=['submitted', 'pending'])
 
     def ready_for_processing(self):
-        """Documents ready for processing - DYNAMIC от ApprovalRule"""
-        from nomenclatures.services import DocumentService
-        return DocumentService.get_ready_for_processing_documents(queryset=self.get_queryset())
+        """Documents ready for processing - DYNAMIC от DocumentType"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_ready_for_processing_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback
+            return self.filter(status__in=['approved', 'confirmed'])
 
-    def by_document_type(self, type_key):
-        """Filter by DocumentType.type_key"""
-        return self.filter(document_type__type_key=type_key)
-
-    def for_app(self, app_name):
-        """Filter by DocumentType.app_name"""
-        return self.filter(document_type__app_name=app_name)
-
-    def requiring_approval(self):
-        """Documents that require approval workflow"""
-        return self.filter(document_type__requires_approval=True)
-
-    def affecting_inventory(self):
-        """Documents that affect inventory"""
-        return self.filter(document_type__affects_inventory=True)
-
-    def fiscal_documents(self):
-        """Fiscal documents (Bulgarian legal requirement)"""
-        return self.filter(document_type__is_fiscal=True)
-
-    def search(self, query):
-        """Enhanced search across multiple fields"""
-        if not query:
-            return self.all()
-
-        return self.filter(
-            models.Q(document_number__icontains=query) |
-            models.Q(supplier__name__icontains=query) |
-            models.Q(external_reference__icontains=query) |
-            models.Q(notes__icontains=query)
-        )
-
-    def by_status(self, status):
-        """Filter by specific status"""
-        return self.filter(status=status)
-
-    def in_statuses(self, statuses):
-        """Filter by multiple statuses"""
-        return self.filter(status__in=statuses)
-
-    def by_date_range(self, date_from=None, date_to=None):
-        """Filter by document date range"""
-        queryset = self.all()
-        if date_from:
-            queryset = queryset.filter(document_date__gte=date_from)
-        if date_to:
-            queryset = queryset.filter(document_date__lte=date_to)
-        return queryset
-
-    def by_supplier(self, supplier):
-        """Filter by supplier"""
-        return self.filter(supplier=supplier)
-
-    def by_location(self, location):
+    def for_location(self, location):
         """Filter by location"""
         return self.filter(location=location)
 
-    def recent(self, days=30):
-        """Documents from last N days"""
-        from django.utils import timezone
-        from datetime import timedelta
-        cutoff_date = timezone.now().date() - timedelta(days=days)
-        return self.filter(document_date__gte=cutoff_date)
-
-
-
-
-
-    def get_status_summary(self):
-        """Get count by status for dashboard"""
-        return self.values('status').annotate(
-            count=models.Count('id')
-        ).order_by('status')
-
-    def get_supplier_summary(self):
-        """Get count by supplier"""
-        return self.values('supplier__name').annotate(
-            count=models.Count('id'),
-            total_value=models.Sum('total')  # If FinancialMixin
-        ).order_by('-count')
-
-    def get_monthly_stats(self, year=None):
-        """Get monthly statistics"""
-        from django.utils import timezone
-
-        if not year:
-            year = timezone.now().year
-
+    def for_partner(self, partner):
+        """Filter by partner using GenericForeignKey"""
+        from django.contrib.contenttypes.models import ContentType
+        partner_ct = ContentType.objects.get_for_model(partner.__class__)
         return self.filter(
-            document_date__year=year
-        ).extra(
-            select={'month': 'EXTRACT(month FROM document_date)'}
-        ).values('month').annotate(
-            count=models.Count('id')
-        ).order_by('month')
+            partner_content_type=partner_ct,
+            partner_object_id=partner.pk
+        )
+
+    def by_document_type(self, doc_type_key):
+        """Filter by document type key"""
+        return self.filter(document_type__type_key=doc_type_key)
+
+    def this_month(self):
+        """Documents created this month"""
+        today = timezone.now().date()
+        return self.filter(
+            document_date__month=today.month,
+            document_date__year=today.year
+        )
+
+    def by_status(self, status):
+        """Filter by status"""
+        return self.filter(status=status)
+
+    def drafts(self):
+        """Draft documents"""
+        return self.filter(status__in=['draft', ''])
+
+    def submitted(self):
+        """Submitted documents"""
+        return self.filter(status='submitted')
+
+    def approved(self):
+        """Approved documents"""
+        return self.filter(status='approved')
 
 
 class LineManager(models.Manager):
@@ -163,14 +119,16 @@ class LineManager(models.Manager):
             models.Q(variance_quantity__lt=0)
         )
 
+
 # =================================================================
-# BASE DOCUMENT - CORE MODEL
+# BASE DOCUMENT - UNIVERSAL MODEL
 # =================================================================
 
 class BaseDocument(models.Model):
     """
     Base Document Model - UNIVERSAL FOR ALL APPS
 
+    КЛЮЧОВА ПРОМЯНА: Използва GenericForeignKey за партньори
     Used by: purchases, sales, inventory, hr apps
     """
 
@@ -213,15 +171,45 @@ class BaseDocument(models.Model):
     )
 
     # =====================
-    # BUSINESS RELATIONSHIPS
+    # UNIVERSAL PARTNER RELATIONSHIP
     # =====================
+    # НОВО: GenericForeignKey за универсални партньори
+    partner_content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        verbose_name=_('Partner Type'),
+        help_text=_('Type of partner (Supplier, Customer, etc.)'),
+        limit_choices_to=models.Q(
+            app_label='partners',
+            model__in=['supplier', 'customer']
+        ) | models.Q(
+            app_label='hr',
+            model='employee'  # За HR документи
+        )
+    )
+
+    partner_object_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_('Partner ID'),
+        help_text=_('ID of the partner object')
+    )
+
+    partner = GenericForeignKey(
+        'partner_content_type',
+        'partner_object_id'
+    )
+
+    # СТАРО: За backward compatibility - ще ги премахнем в следваща миграция
     supplier = models.ForeignKey(
         'partners.Supplier',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
-        verbose_name=_('Supplier'),
-        help_text=_('The supplier for this document')
+        verbose_name=_('Supplier (Legacy)'),
+        help_text=_('DEPRECATED: Use partner field instead')
     )
 
     location = models.ForeignKey(
@@ -248,58 +236,148 @@ class BaseDocument(models.Model):
     )
 
     # =====================
-    # AUDIT FIELDS
+    # SYSTEM FIELDS
     # =====================
     created_by = models.ForeignKey(
-        'accounts.User',
+        'accounts.User',  # ПОПРАВКА: accounts.User, не auth.User
         on_delete=models.PROTECT,
         related_name='%(class)s_created',
         verbose_name=_('Created By')
     )
 
     updated_by = models.ForeignKey(
-        'accounts.User',
+        'accounts.User',  # ПОПРАВКА: accounts.User, не auth.User
         on_delete=models.PROTECT,
         related_name='%(class)s_updated',
         verbose_name=_('Updated By')
     )
 
-    created_at = models.DateTimeField(
-        _('Created At'),
-        auto_now_add=True
-    )
+    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
 
-    updated_at = models.DateTimeField(
-        _('Updated At'),
-        auto_now=True
-    )
-
-    # =====================
-    # MANAGER
-    # =====================
     objects = DocumentManager()
 
     class Meta:
         abstract = True
-        ordering = ['-created_at']
+        ordering = ['-document_date', '-created_at']  # ДОБАВЕНО: ordering по document_date
+        indexes = [  # ДОБАВЕНО: важни индекси
+            models.Index(fields=['document_number']),
+            models.Index(fields=['status']),
+            models.Index(fields=['document_date']),
+            models.Index(fields=['location']),
+            models.Index(fields=['partner_content_type', 'partner_object_id']),
+            models.Index(fields=['created_at']),
+        ]
 
-    def __str__(self):
-        return f"{self.document_number or 'Draft'} - {self.get_document_prefix()}"
+    # =====================
+    # BACKWARD COMPATIBILITY PROPERTIES
+    # =====================
+
+    def get_supplier(self):
+        """Връща partner ако е Supplier, иначе legacy supplier"""
+        if self.partner and self.partner.__class__.__name__ == 'Supplier':
+            return self.partner
+        return self.supplier
+
+    def set_supplier(self, supplier_obj):
+        """Сетва supplier през новия partner field"""
+        if supplier_obj is None:
+            self.partner = None
+            self.supplier = None  # Почисти и legacy полето
+        else:
+            # Валидирай че е наистина Supplier
+            from core.interfaces.partner_interface import validate_partner
+            validate_partner(supplier_obj)
+
+            if supplier_obj.__class__.__name__ != 'Supplier':
+                raise ValidationError("Partner must be a Supplier instance")
+
+            self.partner = supplier_obj
+            self.supplier = supplier_obj  # Синхронизирай legacy полето
+
+    # Property за legacy код
+    @property
+    def supplier_property(self):
+        return self.get_supplier()
+
+    @supplier_property.setter
+    def supplier_property(self, value):
+        self.set_supplier(value)
+
+    def get_customer(self):
+        """Връща partner ако е Customer"""
+        if self.partner and self.partner.__class__.__name__ == 'Customer':
+            return self.partner
+        return None
+
+    def set_customer(self, customer_obj):
+        """Сетва customer през новия partner field"""
+        if customer_obj is None:
+            self.partner = None
+        else:
+            # Валидирай че е наистина Customer
+            from core.interfaces.partner_interface import validate_partner
+            validate_partner(customer_obj)
+
+            if customer_obj.__class__.__name__ != 'Customer':
+                raise ValidationError("Partner must be a Customer instance")
+
+            self.partner = customer_obj
+
+    # Property за sales app
+    @property
+    def customer(self):
+        return self.get_customer()
+
+    @customer.setter
+    def customer(self, value):
+        self.set_customer(value)
+
+    # =====================
+    # UNIVERSAL PARTNER METHODS
+    # =====================
+
+    def get_partner_info(self):
+        """Връща информация за партньора независимо от типа"""
+        if not self.partner:
+            return None
+
+        from core.interfaces.partner_interface import get_partner_info
+        return get_partner_info(self.partner)
+
+    def get_partner_display(self):
+        """Форматиран низ за партньора"""
+        if not self.partner:
+            return _('No partner')
+
+        from core.interfaces.partner_interface import format_partner_display
+        return format_partner_display(self.partner)
+
+    # =====================
+    # VALIDATION AND SAVE
+    # =====================
 
     def clean(self):
-        """
-        САМО data validation - БЕЗ business logic
-        DocumentService handles all business rules
-        """
         super().clean()
 
-        # Required fields validation ONLY
-        if not self.location:
-            raise ValidationError({'location': _('Location is required')})
+        # Валидация на partner
+        if self.partner:
+            from core.interfaces.partner_interface import validate_partner
+            try:
+                validate_partner(self.partner)
+            except ValidationError as e:
+                raise ValidationError({'partner': str(e)})
+
+        # Синхронизация между partner и legacy полета
+        if self.partner and self.partner.__class__.__name__ == 'Supplier':
+            self.supplier = self.partner
+        elif not self.partner and self.supplier:
+            # Ако имаме само legacy supplier, копирай в partner
+            self.partner = self.supplier
 
     def save(self, *args, **kwargs):
-        # Автоматично номериране
-        if not self.pk and not self.document_number:
+        # Auto-generate document number ако липсва
+        if not self.document_number:
             try:
                 from nomenclatures.services import DocumentService
                 self.document_number = DocumentService.generate_number_for(self)
@@ -307,6 +385,10 @@ class BaseDocument(models.Model):
                 # Fallback numbering
                 model_name = self._meta.model_name.upper()
                 self.document_number = f"{model_name}-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+
+        # ВАЖНО: Извикай clean преди save
+        if not kwargs.get('skip_validation', False):
+            self.full_clean()
 
         super().save(*args, **kwargs)
 
@@ -344,8 +426,43 @@ class BaseDocument(models.Model):
         return type_key_map.get(model_name, 'document')
 
     # =====================
-    # BUSINESS LOGIC INTEGRATION (will be moved to services)
+    # WORKFLOW AND STATUS METHODS
     # =====================
+
+    def can_edit(self, user=None):
+        """Check if document can be edited - USES DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            can_edit, reason = DocumentService.can_edit_document(self, user)
+            return can_edit
+        except ImportError:
+            # Fallback - basic logic
+            readonly_statuses = ['confirmed', 'closed', 'cancelled']
+            return self.status not in readonly_statuses
+
+    def can_delete(self, user=None):
+        """Check if document can be deleted"""
+        try:
+            from nomenclatures.services import DocumentService
+            can_delete, reason = DocumentService.can_delete_document(self, user)
+            return can_delete
+        except ImportError:
+            # Fallback - only draft documents
+            return self.status in ['draft', ''] and not self.lines.exists()
+
+    def get_available_actions(self, user=None):
+        """Get available actions for user - USES DocumentService"""
+        try:
+            from nomenclatures.services import DocumentService
+            return DocumentService.get_available_actions(self, user)
+        except ImportError:
+            # Fallback - basic actions
+            actions = []
+            if self.can_edit(user):
+                actions.append({'key': 'edit', 'name': _('Edit'), 'icon': 'edit'})
+            if self.can_delete(user):
+                actions.append({'key': 'delete', 'name': _('Delete'), 'icon': 'trash'})
+            return actions
 
     def transition_to(self, new_status, user, comments=''):
         """Transition to new status - USES DocumentService"""
@@ -356,28 +473,20 @@ class BaseDocument(models.Model):
             )
         except ImportError:
             # Simple fallback
+            old_status = self.status
             self.status = new_status
             self.updated_by = user
             self.save(update_fields=['status', 'updated_by'])
             return True
 
-    def can_edit(self, user=None):
-        """Check if document can be edited - USES DocumentService"""
-        try:
-            from nomenclatures.services import DocumentService
-            can_edit, reason = DocumentService.can_edit_document(self, user)
-            return can_edit
-        except ImportError:
-            # Fallback
-            return self.status in ['draft']
+    def __str__(self):
+        partner_info = ""
+        if self.partner:
+            partner_info = f" ({self.get_partner_display()})"
+        elif self.supplier:  # Fallback за legacy
+            partner_info = f" ({self.supplier.name})"
 
-    def get_available_actions(self, user=None):
-        """Get available actions for user - USES DocumentService"""
-        try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.get_available_actions(self, user)
-        except ImportError:
-            return []
+        return f"{self.document_number or 'Draft'}{partner_info}"
 
 
 # =================================================================
@@ -399,132 +508,59 @@ class BaseDocumentLine(models.Model):
     # =====================
     # CORE FIELDS
     # =====================
-    line_number = models.PositiveIntegerField(
+    line_number = models.PositiveSmallIntegerField(
         _('Line Number'),
-        help_text=_('Line number within document (auto-generated)')
+        help_text=_('Sequential line number within document')
     )
 
     product = models.ForeignKey(
         'products.Product',
         on_delete=models.PROTECT,
-        verbose_name=_('Product'),
-        help_text=_('Product for this line')
+        verbose_name=_('Product')
     )
 
     quantity = models.DecimalField(
         _('Quantity'),
-        null=True,
-        blank=True,
-        max_digits=10,
+        max_digits=12,
         decimal_places=3,
-        help_text=_('Quantity for this line')
+        help_text=_('Quantity in specified unit')
     )
 
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
         on_delete=models.PROTECT,
-        verbose_name=_('Unit'),
-        help_text=_('Unit of measure')
+        verbose_name=_('Unit of Measure')
     )
 
-    notes = models.TextField(
-        _('Line Notes'),
+    # =====================
+    # ADDITIONAL FIELDS
+    # =====================
+    description = models.TextField(
+        _('Description'),
         blank=True,
-        help_text=_('Notes specific to this line')
+        help_text=_('Additional description for this line')
     )
 
-    # =====================
-    # MANAGERS
-    # =====================
+    # Система полета
+    created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
+
     objects = LineManager()
 
     class Meta:
         abstract = True
         ordering = ['line_number']
-        indexes = [
-            models.Index(fields=['product']),
-            models.Index(fields=['line_number']),
-        ]
-
-    def __str__(self):
-        return f"Line {self.line_number}: {self.product.code} x {self.quantity} {self.unit.code}"
-
-    # =====================
-    # BASIC VALIDATION
-    # =====================
 
     def clean(self):
-        """Basic line validation - tolerant to None quantity"""
         super().clean()
 
-
-        if self.quantity is not None and self.quantity <= 0:
-            raise ValidationError({
-                'quantity': _('Quantity must be greater than zero')
-            })
-
-        # Product-unit compatibility validation
-        if self.product and self.unit:
-            # Check if Product has unit compatibility method
-            if hasattr(self.product, 'is_unit_compatible'):
-                if not self.product.is_unit_compatible(self.unit):
-                    raise ValidationError({
-                        'unit': _(f'Unit {self.unit.code} is not compatible with product {self.product.code}')
-                    })
-            # Basic fallback: check if unit matches product's base_unit
-            elif hasattr(self.product, 'base_unit') and self.product.base_unit:
-                if self.unit != self.product.base_unit:
-                    # Warning but not error - allow different units for flexibility
-                    logger.warning(
-                        f"Unit {self.unit.code} differs from product {self.product.code} base unit {self.product.base_unit.code}")
+        # Основни валидации
+        if self.quantity <= 0:
+            raise ValidationError({'quantity': _('Quantity must be positive')})
 
     def save(self, *args, **kwargs):
-        """Enhanced save with auto-line numbering"""
-        # Auto-generate line number if not set
-        if not self.line_number and hasattr(self, 'document'):
-            document = getattr(self, 'document', None)
-            if document and hasattr(document, 'lines'):
-                max_line = document.lines.aggregate(
-                    max_line=models.Max('line_number')
-                )['max_line'] or 0
-                self.line_number = max_line + 1
-
-        # Auto-set unit from product if not provided
-        if self.product and not self.unit:
-            base_unit = getattr(self.product, 'base_unit', None)
-            if base_unit:
-                self.unit = base_unit
-
+        self.full_clean()
         super().save(*args, **kwargs)
 
-    # =====================
-    # HELPER METHODS
-    # =====================
-
-    def get_product_info(self):
-        """Get extended product information"""
-        if not self.product:
-            return {}
-
-        return {
-            'code': getattr(self.product, 'code', ''),
-            'name': getattr(self.product, 'name', ''),
-            'category': getattr(self.product.category, 'name', None) if hasattr(self.product,
-                                                                                'category') and self.product.category else None,
-            'base_unit': getattr(self.product.base_unit, 'code', None) if hasattr(self.product,
-                                                                                  'base_unit') and self.product.base_unit else None,
-        }
-
-    def get_unit_info(self):
-        """Get unit information"""
-        if not self.unit:
-            return {}
-
-        return {
-            'code': getattr(self.unit, 'code', ''),
-            'name': getattr(self.unit, 'name', ''),
-            'symbol': getattr(self.unit, 'symbol', ''),
-            'unit_type': getattr(self.unit, 'unit_type', ''),
-            'allow_decimals': getattr(self.unit, 'allow_decimals', True),
-            'decimal_places': getattr(self.unit, 'decimal_places', 3),
-        }
+    def __str__(self):
+        return f"Line {self.line_number}: {self.product.name} x {self.quantity}"

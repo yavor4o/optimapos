@@ -17,6 +17,13 @@ class Weekday(models.TextChoices):
 class PartnerBase(models.Model):
     """Базов клас за партньори (Supplier/Customer)"""
 
+    code = models.CharField(
+        _('Partner Code'),
+        max_length=20,
+        unique=True,
+        help_text=_('Short unique code for this partner (e.g. ABC, PIXEL)')
+    )
+
     # Основни данни
     name = models.CharField(_('Name'), max_length=255)
 

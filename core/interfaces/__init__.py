@@ -12,7 +12,7 @@ from .approval_interface import IApprovalService
 # Business entity interfaces
 from .inventory_interface import IInventoryService, IMovementService
 from .pricing_interface import IPricingService
-from .partner_interface import ISupplierService, ICustomerService
+from .partner_interface import ISupplierService, ICustomerService, IPartner
 from .vat_interface import IVATCalculationService
 
 # NEW: Location interface за pricing dependency resolution
@@ -39,6 +39,8 @@ __all__ = [
 
     # Foundation interface
     'ILocation',  # NEW
+
+    'IPartner',
 ]
 
 # Version info
