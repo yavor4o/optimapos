@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 
+from core.utils.result import Result
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
 
 logger = logging.getLogger(__name__)
@@ -839,10 +840,9 @@ class MovementService:
         return history
 
     @staticmethod
-    def validate_movement_data(movement_data: Dict) -> Tuple[bool, List[str]]:
+    def validate_movement_data(movement_data: Dict) -> Result:
         """
-        Validate movement data before creation
-        ✅ ENHANCED: Includes sale_price validation
+        Validate movement data before creation - NEW Result-based method
         """
         errors = []
 
@@ -877,7 +877,17 @@ class MovementService:
             if movement_data['movement_date'] > date.today():
                 errors.append('Movement date cannot be in the future')
 
-        return len(errors) == 0, errors
+        if errors:
+            return Result.error(
+                code='VALIDATION_FAILED',
+                msg=f"Movement data validation failed: {len(errors)} errors",
+                data={'errors': errors, 'movement_data': movement_data}
+            )
+
+        return Result.success(
+            data={'movement_data': movement_data, 'validated_fields': list(movement_data.keys())},
+            msg="Movement data is valid"
+        )
 
     @staticmethod
     def can_create_movement(location, product, movement_type: str, quantity: Decimal) -> Tuple[bool, str]:
