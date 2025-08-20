@@ -340,90 +340,81 @@ class PurchaseWorkflowService:
     # =====================
     # DELIVERY CREATION
     # =====================
+
     # ===================================================================
-    # ПОПРАВКА: purchases/services/workflow_service.py
-    # FIX field name error: prices_include_vat → prices_entered_with_vat
+    # ПРАВИЛНА ПОПРАВКА: purchases/services/workflow_service.py
+    # Използвай DocumentCreator с правилните параметри
     # ===================================================================
 
     @classmethod
     @transaction.atomic
     def create_delivery_from_order(cls, order, delivery_data=None, user=None) -> Result:
         """
-        Create delivery receipt from purchase order - FIELD NAME FIXED.
-
-        ✅ ПОПРАВКА: Използва правилните field names от модела
+        Create delivery receipt from purchase order using correct DocumentCreator signature.
         """
         try:
-            # Import services
-            from nomenclatures.services import DocumentService
-            from nomenclatures.services.vat_calculation_service import VATCalculationService
             from purchases.models import DeliveryReceipt, DeliveryLine
+            from nomenclatures.services.document.creator import DocumentCreator
+            from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-            # Validate order status
+            # Validate order
             if order.status not in ['confirmed', 'sent']:
                 return Result.error(
                     'INVALID_ORDER_STATUS',
-                    f'Cannot create delivery from order with status: {order.status}',
-                    {'order_status': order.status}
+                    f'Cannot create delivery from order with status: {order.status}'
                 )
 
             # ===================================================================
-            # ПРАВИЛНИ FIELD NAMES според migration files
+            # СТЪПКА 1: СЪЗДАЙ DELIVERY INSTANCE (БЕЗ SAVE)
             # ===================================================================
-            delivery_data_for_service = {
-                'supplier': order.supplier,  # Legacy compatibility
-                'partner': order.supplier,  # Generic field
+            delivery_data_final = {
+                'supplier': order.supplier,
                 'location': order.location,
                 'delivery_date': timezone.now().date(),
                 'source_order': order,
-                'external_reference': order.external_reference,
+                'external_reference': getattr(order, 'external_reference', ''),
                 'notes': f"Created from order {order.document_number}",
                 'received_by': user,
-                # ✅ CORRECT FIELD NAME:
+                'subtotal': Decimal('0.00'),
+                'vat_total': Decimal('0.00'),
+                'discount_total': Decimal('0.00'),
+                'total': Decimal('0.00'),
                 'prices_entered_with_vat': getattr(order, 'prices_entered_with_vat', None),
             }
 
-            # Apply any user overrides
             if delivery_data:
-                delivery_data_for_service.update(delivery_data)
+                delivery_data_final.update(delivery_data)
 
-            # Create delivery using DocumentService
-            create_result = DocumentService.create_document(
-                model_class=DeliveryReceipt,
-                data=delivery_data_for_service,
-                user=user,
-                location=order.location
-            )
-
-            if not create_result.ok:
-                return create_result
-
-            delivery = create_result.data['document']
+            # Създай instance БЕЗ save - СЕТНИ ЗАДЪЛЖИТЕЛНИТЕ ПОЛЕТА
+            delivery = DeliveryReceipt(**delivery_data_final)
+            delivery.created_by = user
+            delivery.updated_by = user
 
             # ===================================================================
-            # COPY LINES WITH PROPER FIELD HANDLING
+            # СТЪПКА 2: ИЗПОЛЗВАЙ DocumentCreator ПРАВИЛНО
+            # ===================================================================
+            try:
+                # DocumentCreator.create_document(instance, user) - правилната сигнатура
+                DocumentCreator.create_document(delivery, user)
+            except Exception as e:
+                logger.warning(f"DocumentCreator failed: {e}, using manual save")
+                # Fallback: manual save
+                delivery.save()
+
+            # ===================================================================
+            # СТЪПКА 3: КОПИРАЙ LINES
             # ===================================================================
             lines_created = 0
-            for order_line in order.lines.select_related('product').all():
-                # Determine quantity field name (handle both old and new field names)
-                quantity_value = None
-                if hasattr(order_line, 'ordered_quantity'):
-                    quantity_value = order_line.ordered_quantity
-                elif hasattr(order_line, 'quantity'):
-                    quantity_value = order_line.quantity
-                else:
-                    logger.warning(f"Could not find quantity field for order line {order_line.id}")
-                    quantity_value = Decimal('1.00')  # Safe fallback
-
-                delivery_line = DeliveryLine.objects.create(
+            for order_line in order.lines.all():
+                DeliveryLine.objects.create(
                     document=delivery,
                     line_number=order_line.line_number,
                     product=order_line.product,
-                    quantity=quantity_value,  # Use detected quantity field
-                    unit=order_line.unit,
-                    unit_price=order_line.unit_price,
-                    source_order_line=order_line,  # Critical for Expected/Variance
-                    # Quality control defaults
+                    quantity=getattr(order_line, 'ordered_quantity',
+                                     getattr(order_line, 'quantity', Decimal('1.00'))),
+                    unit=getattr(order_line, 'unit', ''),
+                    unit_price=getattr(order_line, 'unit_price', Decimal('0.00')),
+                    source_order_line=order_line,
                     quality_approved=False,
                     quality_issue_type='',
                     batch_number='',
@@ -433,33 +424,17 @@ class PurchaseWorkflowService:
                 lines_created += 1
 
             # ===================================================================
-            # RECALCULATE TOTALS USING VAT SERVICE
-            # ===================================================================
-            totals_result = VATCalculationService.recalculate_document_totals(delivery)
-            if not totals_result.ok:
-                logger.warning(f"VAT calculation failed: {totals_result.msg}")
-                # Continue anyway, but try manual calculation
-                try:
-                    delivery.recalculate_totals()
-                except Exception as e:
-                    logger.warning(f"Manual recalculation also failed: {e}")
-
-            # ===================================================================
-            # UPDATE ORDER STATUS USING DocumentService
+            # СТЪПКА 4: ИЗЧИСЛИ TOTALS
             # ===================================================================
             try:
-                order_transition_result = DocumentService.transition_document(
-                    document=order,
-                    to_status='partial',
-                    user=user,
-                    comments=f'Delivery {delivery.document_number} created'
-                )
-
-                if not order_transition_result.ok:
-                    logger.info(f"Could not transition order to partial: {order_transition_result.msg}")
-
+                totals_result = VATCalculationService.recalculate_document_totals(delivery)
+                if not totals_result.ok:
+                    logger.warning(f"VAT service failed: {totals_result.msg}")
+                    delivery.recalculate_totals()  # Fallback
             except Exception as e:
-                logger.warning(f"Order status update failed: {e}")
+                logger.warning(f"Totals calculation failed: {e}")
+                # Manual fallback
+                delivery.recalculate_totals()
 
             return Result.success(
                 {
@@ -467,11 +442,11 @@ class PurchaseWorkflowService:
                     'lines_count': lines_created,
                     'order_status': order.status,
                     'delivery_status': delivery.status,
-                    'document_type': delivery.document_type.name if delivery.document_type else None,
+                    'document_number': delivery.document_number,
                     'totals': {
-                        'subtotal': float(delivery.subtotal),
-                        'vat_total': float(delivery.vat_total),
-                        'total': float(delivery.total)
+                        'subtotal': float(delivery.subtotal or 0),
+                        'vat_total': float(delivery.vat_total or 0),
+                        'total': float(delivery.total or 0)
                     }
                 },
                 f'Successfully created delivery {delivery.document_number} from order {order.document_number}'
@@ -481,34 +456,16 @@ class PurchaseWorkflowService:
             logger.error(f"Delivery creation failed: {str(e)}")
             return Result.error(
                 'DELIVERY_CREATION_ERROR',
-                f'Failed to create delivery: {str(e)}',
-                {'exception': str(e), 'order_id': order.pk}
+                f'Failed to create delivery: {str(e)}'
             )
 
-    # ===================================================================
-    # DEBUGGING: Check actual field names in the models
-    # ===================================================================
+        except Exception as e:
+            logger.error(f"Delivery creation failed: {str(e)}")
+            return Result.error(
+                'DELIVERY_CREATION_ERROR',
+                f'Failed to create delivery: {str(e)}'
+            )
 
-    """
-    # Run this in Django shell to check actual field names:
-
-    from purchases.models import PurchaseOrder, DeliveryReceipt
-
-    # Check PurchaseOrder fields
-    order = PurchaseOrder.objects.first()
-    print("PurchaseOrder fields:")
-    for field in order._meta.fields:
-        if 'price' in field.name or 'vat' in field.name:
-            print(f"  {field.name}: {getattr(order, field.name, 'N/A')}")
-
-    # Check DeliveryReceipt fields  
-    delivery = DeliveryReceipt.objects.first()
-    if delivery:
-        print("\nDeliveryReceipt fields:")
-        for field in delivery._meta.fields:
-            if 'price' in field.name or 'vat' in field.name:
-                print(f"  {field.name}: {getattr(delivery, field.name, 'N/A')}")
-    """
 
     # ===================================================================
     # SAFE FIELD ACCESS HELPER

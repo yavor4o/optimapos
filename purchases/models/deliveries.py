@@ -23,7 +23,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from nomenclatures.models import BaseDocument
-from nomenclatures.mixins import FinancialMixin
+from nomenclatures.mixins import FinancialMixin, PaymentMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class DeliveryReceiptManager(models.Manager):
             return []
 
 
-class DeliveryReceipt(BaseDocument, FinancialMixin):
+class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
     """
     Delivery Receipt - Clean Model Implementation
 
@@ -587,7 +587,7 @@ class DeliveryLineManager(models.Manager):
         return self.filter(quality_approved__isnull=True)
 
 
-class DeliveryLine(models.Model):
+class DeliveryLine(FinancialMixin):
     """
     Delivery Line - Simple data model with quality control
 

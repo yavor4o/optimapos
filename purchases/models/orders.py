@@ -612,7 +612,7 @@ class PurchaseOrderLineManager(models.Manager):
         return self.filter(delivery_status='completed')
 
 
-class PurchaseOrderLine(models.Model):
+class PurchaseOrderLine(FinancialMixin):
     """
     Purchase Order Line - Simple data model
 
