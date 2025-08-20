@@ -1,4 +1,5 @@
 # inventory/models/locations.py - REFACTORED
+from typing import Optional
 
 from django.conf import settings
 from django.db import models
@@ -6,6 +7,8 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+
+from core.interfaces import ILocation
 
 
 class InventoryLocationManager(models.Manager):
@@ -24,7 +27,7 @@ class InventoryLocationManager(models.Manager):
         return self.filter(allow_negative_stock=True)
 
 
-class InventoryLocation(models.Model):
+class InventoryLocation(models.Model,  ILocation):
     """
     Inventory locations (warehouses, shops, storage areas)
     REFACTORED: Added batch tracking settings for flexible batch control
@@ -358,6 +361,11 @@ class InventoryLocation(models.Model):
         else:
             # Default за други apps
             return False
+
+    @property
+    def default_markup_percentage_float(self) -> Optional[float]:
+        """ILocation interface compatibility"""
+        return float(self.default_markup_percentage) if self.default_markup_percentage else None
 
 
 class POSLocation(models.Model):

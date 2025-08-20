@@ -1,20 +1,33 @@
 # pricing/models/base_prices.py
-
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
+from core.interfaces import ILocation
+
 
 class ProductPriceManager(models.Manager):
-    """Manager for product base prices"""
+    """Updated manager с GenericForeignKey support"""
 
     def active(self):
         return self.filter(is_active=True)
 
-    def for_location(self, location):
-        return self.filter(location=location, is_active=True)
+    def for_location(self, location: ILocation):
+        """Get prices for any ILocation"""
+        content_type = ContentType.objects.get_for_model(location.__class__)
+        return self.filter(
+            content_type=content_type,
+            object_id=location.pk,
+            is_active=True
+        )
+
+    def for_inventory_location(self, inventory_location):
+        """Backward compatibility method"""
+        return self.for_location(inventory_location)
 
     def for_product(self, product):
         return self.filter(product=product, is_active=True)
@@ -26,17 +39,43 @@ class ProductPriceManager(models.Manager):
             is_active=True
         )
 
+    def create_for_location(self, location: ILocation, product, **kwargs):
+        """Create price for any ILocation"""
+        content_type = ContentType.objects.get_for_model(location.__class__)
+        return self.create(
+            content_type=content_type,
+            object_id=location.pk,
+            product=product,
+            **kwargs
+        )
+
 
 class ProductPrice(models.Model):
     """Base selling prices for products per location"""
 
-    # Core relationship
-    location = models.ForeignKey(
-        'inventory.InventoryLocation',
+    # =====================
+    # GENERIC LOCATION RELATIONSHIP (NEW)
+    # =====================
+    content_type = models.ForeignKey(
+        ContentType,
         on_delete=models.CASCADE,
-        related_name='product_prices',
-        verbose_name=_('Location')
+        verbose_name=_('Location Type'),
+        # Ограничаваме до известни location типове
+        limit_choices_to=models.Q(
+            app_label='inventory', model='inventorylocation'
+        ) | models.Q(
+            app_label='sales', model='onlinestore'  # За бъдещи типове
+        )
     )
+
+    object_id = models.PositiveIntegerField(
+        verbose_name=_('Location ID')
+    )
+
+    priceable_location = GenericForeignKey('content_type', 'object_id')
+
+
+
     product = models.ForeignKey(
         'products.Product',
         on_delete=models.CASCADE,
@@ -99,13 +138,18 @@ class ProductPrice(models.Model):
     objects = ProductPriceManager()
 
     class Meta:
-        unique_together = ('location', 'product')
         verbose_name = _('Product Price')
         verbose_name_plural = _('Product Prices')
-        ordering = ['location', 'product']
+        unique_together = [('content_type', 'object_id', 'product')]
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['product', 'is_active']),
+            models.Index(fields=['pricing_method']),
+        ]
 
     def __str__(self):
-        return f"{self.product.code} @ {self.location.code}: {self.effective_price}"
+        location_str = str(self.priceable_location) if self.priceable_location else 'Unknown Location'
+        return f"{self.product.code} @ {location_str}: {self.effective_price}"
 
     def clean(self):
         # Validate pricing method consistency
@@ -136,6 +180,38 @@ class ProductPrice(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
+    # =====================
+    # BACKWARD COMPATIBILITY PROPERTIES
+    # =====================
+    @property
+    def location(self) -> ILocation:
+        """Backward compatibility property"""
+        return self.priceable_location
+
+    @location.setter
+    def location(self, value: ILocation):
+        """Backward compatibility setter"""
+        self.content_type = ContentType.objects.get_for_model(value.__class__)
+        self.object_id = value.pk
+        self.priceable_location = value
+
+    def set_location(self, location: ILocation) -> None:
+        """Type-safe location setter"""
+        from core.interfaces.location_interface import validate_location
+
+        if not validate_location(location):
+            raise ValueError(f"Object {location} doesn't implement ILocation interface")
+
+        self.content_type = ContentType.objects.get_for_model(location.__class__)
+        self.object_id = location.pk
+
+    def get_location(self) -> ILocation:
+        """Type-safe location getter"""
+        return self.priceable_location
+
+    # =====================
+    # PRICE CALCULATION METHODS
+    # =====================
     def calculate_effective_price(self):
         """Calculate effective selling price based on pricing method"""
         if self.pricing_method == 'FIXED' and self.base_price:
