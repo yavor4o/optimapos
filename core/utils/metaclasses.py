@@ -4,6 +4,8 @@ Core metaclass utilities for Django + ABC integration
 
 Provides hybrid metaclasses that resolve conflicts between Django ORM
 and Python abstract base classes.
+
+Used primarily for service interfaces that need strict ABC behavior.
 """
 
 from abc import ABCMeta
@@ -16,18 +18,22 @@ class ModelABCMeta(ModelBase, ABCMeta):
 
     Allows Django models to inherit from ABC interfaces without metaclass conflicts.
 
+    PRIMARY USE CASE: Service interfaces that need ABC behavior
+
     Usage:
-        class IMyInterface(ABC, metaclass=ModelABCMeta):
+        class IMyService(ABC, metaclass=ModelABCMeta):
             @abstractmethod
             def my_method(self): pass
 
-        class MyModel(models.Model, IMyInterface):
+        class MyService(IMyService):
             def my_method(self): return "implemented"
 
     Examples:
-        - ILocation interface for pricing/inventory models
-        - IDocument interface for document models
-        - Any ABC that needs to be implemented by Django models
+        - IDocumentService, IPricingService, IInventoryService
+        - Any service interface that needs strict ABC validation
+
+    NOTE: For model interfaces (like ILocation), prefer Protocol pattern
+          which is more modern and doesn't require metaclass complexity.
     """
     pass
 
@@ -55,41 +61,11 @@ class ServiceABCMeta(ABCMeta):
 
 
 # Convenience aliases for common patterns
-DjangoModelInterface = ModelABCMeta
+DjangoModelInterface = ModelABCMeta  # Keep for backward compatibility
 ServiceInterface = ServiceABCMeta
 
-
-def create_model_interface(interface_name: str, methods: dict):
-    """
-    Factory function to create model interfaces dynamically.
-
-    Args:
-        interface_name: Name of the interface class
-        methods: Dict of method_name -> signature
-
-    Returns:
-        Interface class with ModelABCMeta metaclass
-
-    Example:
-        IProduct = create_model_interface('IProduct', {
-            'get_price': 'def get_price(self) -> Decimal',
-            'is_available': 'def is_available(self) -> bool'
-        })
-    """
-    from abc import ABC, abstractmethod
-
-    # Create abstract methods dynamically
-    namespace = {}
-    for method_name, signature in methods.items():
-        # This is a simplified version - real implementation would parse signature
-        namespace[method_name] = abstractmethod(lambda self: None)
-
-    # Create the interface class
-    return type(interface_name, (ABC,), namespace, metaclass=ModelABCMeta)
-
-
 # Version info
-__version__ = '1.0.0'
+__version__ = '2.0.0'  # Updated to reflect Protocol preference
 __author__ = 'Your Company'
 
 # Export all
@@ -98,5 +74,22 @@ __all__ = [
     'ServiceABCMeta',
     'DjangoModelInterface',
     'ServiceInterface',
-    'create_model_interface'
 ]
+
+# Development notes
+"""
+ARCHITECTURAL GUIDELINES:
+
+1. For MODEL interfaces (like ILocation):
+   - Use Protocol pattern (modern, no metaclass conflicts)
+   - Example: @runtime_checkable class ILocation(Protocol)
+
+2. For SERVICE interfaces (like IDocumentService):
+   - Use ABC pattern with ModelABCMeta if Django integration needed
+   - Use ABC pattern with ServiceABCMeta for pure Python services
+   - Example: class IDocumentService(ABC, metaclass=ServiceABCMeta)
+
+3. Protocol vs ABC decision:
+   - Protocol: For duck typing, structural compatibility
+   - ABC: For strict contracts, explicit inheritance
+"""

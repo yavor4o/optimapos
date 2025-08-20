@@ -8,7 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
-from core.interfaces import ILocation
+
 
 
 class InventoryLocationManager(models.Manager):
@@ -27,7 +27,7 @@ class InventoryLocationManager(models.Manager):
         return self.filter(allow_negative_stock=True)
 
 
-class InventoryLocation(models.Model,  ILocation):
+class InventoryLocation(models.Model):
     """
     Inventory locations (warehouses, shops, storage areas)
     REFACTORED: Added batch tracking settings for flexible batch control
@@ -362,10 +362,7 @@ class InventoryLocation(models.Model,  ILocation):
             # Default за други apps
             return False
 
-    @property
-    def default_markup_percentage_float(self) -> Optional[float]:
-        """ILocation interface compatibility"""
-        return float(self.default_markup_percentage) if self.default_markup_percentage else None
+
 
 
 class POSLocation(models.Model):
