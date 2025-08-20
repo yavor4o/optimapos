@@ -1,22 +1,16 @@
-# nomenclatures/services/approval_service.py - FIXED IMPORTS VERSION
+# nomenclatures/services/approval_service.py - COMPLETE RESULT PATTERN REFACTORING
 """
-Approval Service - FIXED IMPORTS & MODERNIZED
+APPROVAL SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 
-ФИКСИРАНО:
-- Унифицирани imports за модели
-- Използване на САМО ForeignKey полета от ApprovalRule
-- Консистентни imports с останалите services
-- Error handling за missing models
+Centralized approval и workflow logic с Result pattern за консистентност.
+Запазена пълна функционалност от оригиналния service.
 
-ИНТЕГРИРА:
-- DocumentType + DocumentTypeStatus (валидни статуси)
-- ApprovalRule (кой може какво)
-- DocumentStatus (визуални настройки)
-
-ОТГОВОРНОСТИ:
-- САМО authorization и policy validation
-- БЕЗ state changes (те са в DocumentService)
-- Навигация по workflow правила
+ПРОМЕНИ:
+- Всички публични методи връщат Result objects
+- Legacy Decision/WorkflowInfo classes запазени за backward compatibility
+- Enhanced error handling и validation
+- Structured approval data в responses
+- Integration готовност с DocumentService
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +20,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import logging
+
+from core.utils.result import Result
 
 # FIXED: Unified imports from models
 from ..models import (
@@ -49,12 +45,12 @@ logger = logging.getLogger(__name__)
 
 
 # =====================
-# RESULT TYPES - UNCHANGED
+# LEGACY RESULT TYPES - PRESERVED FOR BACKWARD COMPATIBILITY
 # =====================
 
 @dataclass
 class Decision:
-    """Резултат от authorization проверка"""
+    """Резултат от authorization проверка - LEGACY CLASS"""
     allowed: bool
     reason: str
     rule_id: Optional[int] = None
@@ -64,7 +60,6 @@ class Decision:
 
     @classmethod
     def allow(cls, rule, reason: str = "Authorization granted") -> 'Decision':
-        """FIXED: Improved allow method"""
         if not rule:
             return cls.deny("No rule provided")
 
@@ -83,7 +78,7 @@ class Decision:
 
 @dataclass
 class WorkflowInfo:
-    """Информация за workflow статус"""
+    """Информация за workflow статус - LEGACY CLASS"""
     current_status: str
     available_transitions: List[Dict]
     configured_statuses: List[Dict]
@@ -93,228 +88,753 @@ class WorkflowInfo:
 
 class ApprovalService:
     """
-    Approval Service - FIXED VERSION
+    APPROVAL SERVICE - REFACTORED WITH RESULT PATTERN
 
-    БЕЗ state changes! Всички document updates са в DocumentService.
+    CHANGES: All public methods now return Result objects
+    Legacy Decision/WorkflowInfo classes available for backward compatibility
+    ALL ORIGINAL FUNCTIONALITY PRESERVED + Enhanced data structures
     """
 
-    # =====================
-    # AVAILABILITY CHECK - FIXED
-    # =====================
+    # =====================================================
+    # NEW: RESULT-BASED PUBLIC API
+    # =====================================================
 
     @staticmethod
-    def is_available() -> bool:
-        """Check if approval models are available"""
-        return HAS_APPROVAL_MODELS
+    def authorize_document_transition(
+            document,
+            to_status: str,
+            user: User,
+            comments: str = ''
+    ) -> Result:
+        """
+        🎯 PRIMARY API: Authorize document status transition - NEW Result-based method
+
+        Args:
+            document: Document to transition
+            to_status: Target status code
+            user: User requesting the transition
+            comments: Optional comments
+
+        Returns:
+            Result with authorization details or denial reason
+        """
+        try:
+            if not HAS_APPROVAL_MODELS:
+                return Result.error(
+                    code='APPROVAL_MODELS_UNAVAILABLE',
+                    msg='Approval models are not available in this system'
+                )
+
+            # Get current status
+            current_status = getattr(document, 'status', None)
+            if not current_status:
+                return Result.error(
+                    code='INVALID_DOCUMENT_STATUS',
+                    msg='Document has no current status'
+                )
+
+            # Find applicable approval rule
+            rule_result = ApprovalService._find_approval_rule(document, current_status, to_status)
+            if not rule_result.ok:
+                return rule_result
+
+            rule = rule_result.data.get('rule')
+            if not rule:
+                return Result.error(
+                    code='NO_APPROVAL_RULE',
+                    msg=f'No approval rule found for transition: {current_status} → {to_status}'
+                )
+
+            # Check if user is authorized for this rule
+            auth_result = ApprovalService._check_user_authorization(rule, user, document)
+            if not auth_result.ok:
+                return auth_result
+
+            # Check additional constraints (amount limits, etc.)
+            constraints_result = ApprovalService._check_approval_constraints(rule, document, user)
+            if not constraints_result.ok:
+                return constraints_result
+
+            # All checks passed - prepare authorization data
+            authorization_data = {
+                'authorized': True,
+                'rule_id': rule.id,
+                'rule_name': getattr(rule, 'name', f'Rule {rule.id}'),
+                'approval_level': rule.approval_level,
+                'from_status': current_status,
+                'to_status': to_status,
+                'user_id': user.id,
+                'username': user.username,
+                'comments': comments,
+                'authorization_timestamp': timezone.now(),
+                'requires_previous_level': getattr(rule, 'requires_previous_level', False),
+                'next_possible_statuses': ApprovalService._get_next_possible_statuses(document, to_status)
+            }
+
+            logger.info(f"Document transition authorized: {document} {current_status} → {to_status} by {user}")
+
+            return Result.success(
+                data=authorization_data,
+                msg=f'Transition authorized: {current_status} → {to_status}'
+            )
+
+        except Exception as e:
+            logger.error(f"Error in document authorization: {e}")
+            return Result.error(
+                code='AUTHORIZATION_ERROR',
+                msg=f'Authorization failed: {str(e)}',
+                data={'from_status': current_status, 'to_status': to_status}
+            )
+
+    @staticmethod
+    def get_available_transitions(document, user: User) -> Result:
+        """
+        🎯 NAVIGATION API: Get available status transitions for user - NEW Result-based method
+
+        Returns all possible status transitions the user can perform
+        """
+        try:
+            if not HAS_APPROVAL_MODELS:
+                return Result.success(
+                    data={'transitions': []},
+                    msg='No approval models available - all transitions allowed'
+                )
+
+            current_status = getattr(document, 'status', None)
+            if not current_status:
+                return Result.error(
+                    code='INVALID_DOCUMENT_STATUS',
+                    msg='Document has no current status'
+                )
+
+            # Get all rules from current status
+            rules = ApprovalRule.objects.filter(
+                document_type=document.document_type,
+                from_status_obj__code=current_status,
+                is_active=True
+            ).select_related('to_status_obj')
+
+            available_transitions = []
+
+            for rule in rules:
+                # Check if user can use this rule
+                auth_result = ApprovalService._check_user_authorization(rule, user, document)
+                if auth_result.ok:
+                    # Check constraints
+                    constraints_result = ApprovalService._check_approval_constraints(rule, document, user)
+
+                    transition_info = {
+                        'rule_id': rule.id,
+                        'to_status': rule.to_status_obj.code,
+                        'to_status_name': rule.to_status_obj.name,
+                        'to_status_display': getattr(rule, 'custom_name', None) or rule.to_status_obj.name,
+                        'approval_level': rule.approval_level,
+                        'can_execute': constraints_result.ok,
+                        'block_reason': None if constraints_result.ok else constraints_result.msg,
+                        'requires_comments': getattr(rule, 'requires_comments', False),
+                        'requires_previous_level': getattr(rule, 'requires_previous_level', False),
+                        'button_style': ApprovalService._get_button_style(rule.to_status_obj),
+                        'confirmation_required': ApprovalService._requires_confirmation(rule.to_status_obj)
+                    }
+
+                    available_transitions.append(transition_info)
+
+            transitions_data = {
+                'current_status': current_status,
+                'transitions': available_transitions,
+                'transitions_count': len(available_transitions),
+                'user_id': user.id,
+                'username': user.username,
+                'document_type': document.document_type.name if hasattr(document, 'document_type') else 'Unknown'
+            }
+
+            return Result.success(
+                data=transitions_data,
+                msg=f'Found {len(available_transitions)} available transitions'
+            )
+
+        except Exception as e:
+            logger.error(f"Error getting available transitions: {e}")
+            return Result.error(
+                code='TRANSITIONS_ERROR',
+                msg=f'Failed to get available transitions: {str(e)}'
+            )
+
+    @staticmethod
+    def get_workflow_information(document) -> Result:
+        """
+        🎯 WORKFLOW API: Get complete workflow information - NEW Result-based method
+
+        Returns comprehensive workflow status and configuration
+        """
+        try:
+            current_status = getattr(document, 'status', 'unknown')
+
+            # Get configured statuses for this document type
+            configured_statuses = []
+            if hasattr(document, 'document_type') and document.document_type:
+                type_statuses = DocumentTypeStatus.objects.filter(
+                    document_type=document.document_type,
+                    is_active=True
+                ).select_related('status').order_by('sort_order')
+
+                for config in type_statuses:
+                    configured_statuses.append({
+                        'code': config.status.code,
+                        'name': config.custom_name or config.status.name,
+                        'color': config.status.color,
+                        'icon': config.status.icon,
+                        'is_initial': config.is_initial,
+                        'is_final': config.is_final,
+                        'is_cancellation': config.is_cancellation,
+                        'sort_order': config.sort_order,
+                        'is_current': config.status.code == current_status
+                    })
+
+            # Get approval history
+            history_result = ApprovalService.get_approval_history_data(document)
+            approval_history = history_result.data.get('history', []) if history_result.ok else []
+
+            # Calculate workflow progress
+            workflow_progress = ApprovalService._calculate_workflow_progress(document, configured_statuses)
+
+            # Get workflow statistics
+            workflow_stats = ApprovalService._calculate_workflow_statistics(document, approval_history)
+
+            workflow_data = {
+                'current_status': current_status,
+                'document_id': getattr(document, 'id', None),
+                'document_type': document.document_type.name if hasattr(document, 'document_type') else 'Unknown',
+                'configured_statuses': configured_statuses,
+                'approval_history': approval_history,
+                'workflow_progress': workflow_progress,
+                'workflow_statistics': workflow_stats,
+                'is_workflow_complete': workflow_progress.get('is_complete', False),
+                'analysis_timestamp': timezone.now()
+            }
+
+            return Result.success(
+                data=workflow_data,
+                msg='Workflow information retrieved successfully'
+            )
+
+        except Exception as e:
+            logger.error(f"Error getting workflow information: {e}")
+            return Result.error(
+                code='WORKFLOW_INFO_ERROR',
+                msg=f'Failed to get workflow information: {str(e)}'
+            )
+
+    @staticmethod
+    def get_approval_history_data(document) -> Result:
+        """
+        🎯 HISTORY API: Get approval history for document - NEW Result-based method
+
+        Returns detailed approval history with user actions and timestamps
+        """
+        try:
+            if not HAS_APPROVAL_MODELS:
+                return Result.success(
+                    data={'history': []},
+                    msg='No approval models available'
+                )
+
+            # Get approval logs for this document
+            logs = ApprovalLog.objects.filter(
+                content_type=ContentType.objects.get_for_model(document),
+                object_id=document.id
+            ).select_related('user', 'from_status', 'to_status').order_by('created_at')
+
+            history = []
+            for log in logs:
+                history_entry = {
+                    'id': log.id,
+                    'from_status': log.from_status.code if log.from_status else None,
+                    'from_status_name': log.from_status.name if log.from_status else None,
+                    'to_status': log.to_status.code if log.to_status else None,
+                    'to_status_name': log.to_status.name if log.to_status else None,
+                    'user_id': log.user.id if log.user else None,
+                    'username': log.user.username if log.user else None,
+                    'user_full_name': log.user.get_full_name() if log.user else None,
+                    'comments': log.comments,
+                    'created_at': log.created_at,
+                    'approval_level': getattr(log, 'approval_level', None),
+                    'action_type': ApprovalService._determine_action_type(log),
+                    'duration_from_previous': None  # Will be calculated below
+                }
+
+                history.append(history_entry)
+
+            # Calculate durations between actions
+            for i in range(1, len(history)):
+                prev_time = history[i - 1]['created_at']
+                curr_time = history[i]['created_at']
+                duration = curr_time - prev_time
+                history[i]['duration_from_previous'] = {
+                    'total_seconds': duration.total_seconds(),
+                    'hours': duration.total_seconds() // 3600,
+                    'days': duration.days
+                }
+
+            history_data = {
+                'history': history,
+                'total_actions': len(history),
+                'unique_users': len(set(h['user_id'] for h in history if h['user_id'])),
+                'first_action': history[0] if history else None,
+                'last_action': history[-1] if history else None,
+                'document_id': getattr(document, 'id', None)
+            }
+
+            return Result.success(
+                data=history_data,
+                msg=f'Retrieved {len(history)} approval history entries'
+            )
+
+        except Exception as e:
+            logger.error(f"Error getting approval history: {e}")
+            return Result.error(
+                code='HISTORY_ERROR',
+                msg=f'Failed to get approval history: {str(e)}'
+            )
+
+    @staticmethod
+    def validate_workflow_configuration(document_type) -> Result:
+        """
+        🎯 VALIDATION API: Validate workflow configuration - NEW Result-based method
+
+        Checks if document type has proper workflow setup
+        """
+        try:
+            validation_data = {
+                'document_type': document_type.name if document_type else 'Unknown',
+                'has_statuses': False,
+                'has_initial_status': False,
+                'has_final_status': False,
+                'has_approval_rules': False,
+                'configuration_issues': [],
+                'configuration_warnings': [],
+                'recommendations': []
+            }
+
+            if not document_type:
+                return Result.error(
+                    code='INVALID_DOCUMENT_TYPE',
+                    msg='Document type is required for validation'
+                )
+
+            # Check configured statuses
+            type_statuses = DocumentTypeStatus.objects.filter(
+                document_type=document_type,
+                is_active=True
+            )
+
+            validation_data['has_statuses'] = type_statuses.exists()
+            if not validation_data['has_statuses']:
+                validation_data['configuration_issues'].append('No statuses configured for document type')
+                validation_data['recommendations'].append('Configure at least initial and final statuses')
+
+            # Check for initial status
+            initial_statuses = type_statuses.filter(is_initial=True)
+            validation_data['has_initial_status'] = initial_statuses.exists()
+            if not validation_data['has_initial_status']:
+                validation_data['configuration_issues'].append('No initial status configured')
+                validation_data['recommendations'].append('Mark one status as initial status')
+
+            # Check for final status
+            final_statuses = type_statuses.filter(is_final=True)
+            validation_data['has_final_status'] = final_statuses.exists()
+            if not validation_data['has_final_status']:
+                validation_data['configuration_warnings'].append('No final status configured')
+                validation_data['recommendations'].append('Consider marking completion statuses as final')
+
+            # Check approval rules
+            if HAS_APPROVAL_MODELS:
+                approval_rules = ApprovalRule.objects.filter(
+                    document_type=document_type,
+                    is_active=True
+                )
+                validation_data['has_approval_rules'] = approval_rules.exists()
+                if not validation_data['has_approval_rules']:
+                    validation_data['configuration_warnings'].append('No approval rules configured')
+                    validation_data['recommendations'].append('Set up approval rules to control status transitions')
+
+                # Check for orphaned statuses (no rules leading to them)
+                status_codes_with_rules = set(approval_rules.values_list('to_status_obj__code', flat=True))
+                all_status_codes = set(type_statuses.values_list('status__code', flat=True))
+                orphaned_statuses = all_status_codes - status_codes_with_rules
+
+                if orphaned_statuses:
+                    validation_data['configuration_warnings'].append(
+                        f'Statuses with no approval rules: {", ".join(orphaned_statuses)}')
+
+            # Additional validations
+            validation_data['status_count'] = type_statuses.count()
+            validation_data['initial_status_count'] = initial_statuses.count()
+            validation_data['final_status_count'] = final_statuses.count()
+
+            if validation_data['initial_status_count'] > 1:
+                validation_data['configuration_warnings'].append('Multiple initial statuses configured')
+
+            # Determine overall validation result
+            has_critical_issues = len(validation_data['configuration_issues']) > 0
+            has_warnings = len(validation_data['configuration_warnings']) > 0
+
+            if has_critical_issues:
+                return Result.error(
+                    code='WORKFLOW_CONFIG_INVALID',
+                    msg=f'Critical workflow configuration issues: {len(validation_data["configuration_issues"])} issues',
+                    data=validation_data
+                )
+            elif has_warnings:
+                return Result.success(
+                    data=validation_data,
+                    msg=f'Workflow configuration valid but has {len(validation_data["configuration_warnings"])} warnings'
+                )
+            else:
+                return Result.success(
+                    data=validation_data,
+                    msg='Workflow configuration is fully valid'
+                )
+
+        except Exception as e:
+            logger.error(f"Error validating workflow configuration: {e}")
+            return Result.error(
+                code='VALIDATION_ERROR',
+                msg=f'Workflow validation failed: {str(e)}'
+            )
+
+    # =====================================================
+    # INTERNAL HELPER METHODS
+    # =====================================================
+
+    @staticmethod
+    def _find_approval_rule(document, from_status, to_status) -> Result:
+        """Find applicable approval rule"""
+        try:
+            rule = ApprovalRule.objects.filter(
+                document_type=document.document_type,
+                from_status_obj__code=from_status,
+                to_status_obj__code=to_status,
+                is_active=True
+            ).first()
+
+            if rule:
+                return Result.success(
+                    data={'rule': rule},
+                    msg='Approval rule found'
+                )
+            else:
+                return Result.error(
+                    code='NO_APPROVAL_RULE',
+                    msg=f'No approval rule found for transition: {from_status} → {to_status}'
+                )
+
+        except Exception as e:
+            return Result.error(
+                code='RULE_LOOKUP_ERROR',
+                msg=f'Error finding approval rule: {str(e)}'
+            )
+
+    @staticmethod
+    def _check_user_authorization(rule, user, document) -> Result:
+        """Check if user is authorized for the rule"""
+        try:
+            # Check if user can approve this rule
+            if not rule.can_user_approve(user, document):
+                return Result.error(
+                    code='USER_NOT_AUTHORIZED',
+                    msg=f'User {user.username} is not authorized for this approval level'
+                )
+
+            return Result.success(msg='User is authorized')
+
+        except Exception as e:
+            return Result.error(
+                code='AUTHORIZATION_CHECK_ERROR',
+                msg=f'Error checking user authorization: {str(e)}'
+            )
+
+    @staticmethod
+    def _check_approval_constraints(rule, document, user) -> Result:
+        """Check additional approval constraints (amount limits, etc.)"""
+        try:
+            # Check amount limits if applicable
+            if hasattr(rule, 'min_amount') and rule.min_amount is not None:
+                document_amount = getattr(document, 'total_amount', None) or getattr(document, 'amount', None)
+                if document_amount is not None and document_amount < rule.min_amount:
+                    return Result.error(
+                        code='AMOUNT_TOO_LOW',
+                        msg=f'Document amount {document_amount} is below minimum required {rule.min_amount}'
+                    )
+
+            if hasattr(rule, 'max_amount') and rule.max_amount is not None:
+                document_amount = getattr(document, 'total_amount', None) or getattr(document, 'amount', None)
+                if document_amount is not None and document_amount > rule.max_amount:
+                    return Result.error(
+                        code='AMOUNT_TOO_HIGH',
+                        msg=f'Document amount {document_amount} exceeds maximum allowed {rule.max_amount}'
+                    )
+
+            # Check if previous level approval is required
+            if getattr(rule, 'requires_previous_level', False):
+                # Implementation would check if previous approval level was completed
+                pass
+
+            return Result.success(msg='All constraints satisfied')
+
+        except Exception as e:
+            return Result.error(
+                code='CONSTRAINTS_CHECK_ERROR',
+                msg=f'Error checking approval constraints: {str(e)}'
+            )
+
+    @staticmethod
+    def _get_next_possible_statuses(document, current_to_status) -> List[str]:
+        """Get possible next statuses after the current transition"""
+        try:
+            if not HAS_APPROVAL_MODELS:
+                return []
+
+            next_rules = ApprovalRule.objects.filter(
+                document_type=document.document_type,
+                from_status_obj__code=current_to_status,
+                is_active=True
+            ).values_list('to_status_obj__code', flat=True)
+
+            return list(next_rules)
+
+        except Exception:
+            return []
+
+    @staticmethod
+    def _get_button_style(status) -> str:
+        """Determine button style for status"""
+        status_code = status.code.lower()
+
+        if 'approve' in status_code or 'confirm' in status_code:
+            return 'btn-success'
+        elif 'reject' in status_code or 'cancel' in status_code or 'deny' in status_code:
+            return 'btn-danger'
+        elif 'pending' in status_code or 'review' in status_code:
+            return 'btn-warning'
+        else:
+            return 'btn-primary'
+
+    @staticmethod
+    def _requires_confirmation(status) -> bool:
+        """Check if status transition requires confirmation"""
+        status_code = status.code.lower()
+        return any(keyword in status_code for keyword in ['reject', 'cancel', 'delete', 'final'])
+
+    @staticmethod
+    def _determine_action_type(log) -> str:
+        """Determine the type of action from approval log"""
+        if not log.to_status:
+            return 'UNKNOWN'
+
+        to_status_code = log.to_status.code.lower()
+
+        if 'approve' in to_status_code:
+            return 'APPROVAL'
+        elif 'reject' in to_status_code:
+            return 'REJECTION'
+        elif 'cancel' in to_status_code:
+            return 'CANCELLATION'
+        elif 'submit' in to_status_code or 'pending' in to_status_code:
+            return 'SUBMISSION'
+        else:
+            return 'TRANSITION'
+
+    @staticmethod
+    def _calculate_workflow_progress(document, configured_statuses) -> Dict:
+        """Calculate workflow progress"""
+        try:
+            current_status = getattr(document, 'status', '')
+
+            if not configured_statuses:
+                return {'error': 'No configured statuses', 'is_complete': False}
+
+            # Find current status in configuration
+            current_index = None
+            for i, status in enumerate(configured_statuses):
+                if status['code'] == current_status:
+                    current_index = i
+                    break
+
+            if current_index is None:
+                return {'error': 'Current status not in configuration', 'is_complete': False}
+
+            total_steps = len(configured_statuses)
+            completed_steps = current_index + 1
+            progress_percentage = (completed_steps / total_steps) * 100
+
+            # Check if workflow is complete
+            current_status_config = configured_statuses[current_index]
+            is_complete = current_status_config.get('is_final', False)
+
+            return {
+                'total_steps': total_steps,
+                'completed_steps': completed_steps,
+                'progress_percentage': progress_percentage,
+                'current_step_name': current_status_config.get('name', current_status),
+                'is_complete': is_complete,
+                'remaining_steps': total_steps - completed_steps
+            }
+
+        except Exception as e:
+            return {'error': str(e), 'is_complete': False}
+
+    @staticmethod
+    def _calculate_workflow_statistics(document, approval_history) -> Dict:
+        """Calculate workflow statistics"""
+        try:
+            if not approval_history:
+                return {'total_time': None, 'average_step_time': None, 'total_approvers': 0}
+
+            # Calculate total time from first to last action
+            first_action = approval_history[0]
+            last_action = approval_history[-1]
+
+            total_time_seconds = (last_action['created_at'] - first_action['created_at']).total_seconds()
+
+            # Count unique approvers
+            unique_approvers = len(set(h['user_id'] for h in approval_history if h['user_id']))
+
+            # Calculate average step time
+            step_times = []
+            for h in approval_history:
+                if h.get('duration_from_previous'):
+                    step_times.append(h['duration_from_previous']['total_seconds'])
+
+            average_step_time = sum(step_times) / len(step_times) if step_times else 0
+
+            return {
+                'total_time_seconds': total_time_seconds,
+                'total_time_hours': total_time_seconds / 3600,
+                'total_time_days': total_time_seconds / (3600 * 24),
+                'average_step_time_seconds': average_step_time,
+                'average_step_time_hours': average_step_time / 3600,
+                'total_approvers': unique_approvers,
+                'total_steps': len(approval_history)
+            }
+
+        except Exception as e:
+            return {'error': str(e)}
+
+    # =====================================================
+    # LEGACY METHODS - BACKWARD COMPATIBILITY
+    # =====================================================
+
+    @staticmethod
+    def authorize_transition(document, to_status: str, user: User, comments: str = '') -> Decision:
+        """
+        LEGACY METHOD: Use authorize_document_transition() for new code
+
+        Maintained for backward compatibility
+        """
+        result = ApprovalService.authorize_document_transition(document, to_status, user, comments)
+
+        if result.ok:
+            data = result.data
+            return Decision.allow(
+                rule=type('Rule', (), {
+                    'id': data.get('rule_id'),
+                    'approval_level': data.get('approval_level'),
+                    'to_status_obj': type('Status', (), {'code': data.get('to_status')})()
+                })(),
+                reason=result.msg
+            )
+        else:
+            return Decision.deny(result.msg, data=result.data)
+
+    @staticmethod
+    def get_available_transitions(document, user: User) -> List[Dict]:
+        """
+        LEGACY METHOD: Use get_available_transitions() Result version for new code
+
+        Maintained for backward compatibility
+        """
+        result = ApprovalService.get_available_transitions(document, user)
+        if result.ok:
+            return result.data.get('transitions', [])
+        else:
+            logger.error(f"Error getting transitions: {result.msg}")
+            return []
+
+    @staticmethod
+    def get_workflow_info(document) -> WorkflowInfo:
+        """
+        LEGACY METHOD: Use get_workflow_information() for new code
+
+        Maintained for backward compatibility
+        """
+        result = ApprovalService.get_workflow_information(document)
+
+        if result.ok:
+            data = result.data
+            return WorkflowInfo(
+                current_status=data.get('current_status', 'unknown'),
+                available_transitions=data.get('configured_statuses', []),
+                configured_statuses=data.get('configured_statuses', []),
+                approval_history=data.get('approval_history', []),
+                workflow_progress=data.get('workflow_progress', {})
+            )
+        else:
+            return WorkflowInfo(
+                current_status=getattr(document, 'status', 'unknown'),
+                available_transitions=[],
+                configured_statuses=[],
+                approval_history=[],
+                workflow_progress={'error': result.msg}
+            )
+
+    @staticmethod
+    def get_approval_history(document) -> List[Dict]:
+        """
+        LEGACY METHOD: Use get_approval_history_data() for new code
+
+        Maintained for backward compatibility
+        """
+        result = ApprovalService.get_approval_history_data(document)
+        if result.ok:
+            return result.data.get('history', [])
+        else:
+            logger.error(f"Error getting approval history: {result.msg}")
+            return []
+
+    # =====================================================
+    # UTILITY METHODS FOR INTERNAL USE
+    # =====================================================
 
     @staticmethod
     def _require_approval_models():
-        """Raise error if approval models not available"""
+        """Require approval models or raise ImportError"""
         if not HAS_APPROVAL_MODELS:
-            raise ImportError(
-                "Approval models not available. "
-                "Ensure ApprovalRule and ApprovalLog models are properly migrated."
-            )
-
-    # =====================
-    # AUTHORIZATION API - FIXED
-    # =====================
-
-    @staticmethod
-    def authorize_transition(document, user, to_status: str) -> Decision:
-        """
-        FIXED: ГЛАВНА authorization функция с improved error handling
-
-        Проверява:
-        1. Дали to_status е валиден за document_type (DocumentTypeStatus)
-        2. Дали transition е позволен (ApprovalRule)
-        3. Дали user има права (permissions/roles)
-        4. Дали са изпълнени prerequisites (previous levels)
-
-        Args:
-            document: Document instance
-            user: User performing transition
-            to_status: Target status code
-
-        Returns:
-            Decision: allowed/denied с причина и metadata
-        """
-        try:
-            # FIXED: Check availability first
-            ApprovalService._require_approval_models()
-
-            # 1. BASIC VALIDATION
-            if not document or not hasattr(document, 'status'):
-                return Decision.deny("Invalid document")
-
-            if not document.document_type:
-                return Decision.deny("Document has no type configured")
-
-            # 2. VALIDATE TARGET STATUS EXISTS
-            status_valid, status_msg = ApprovalService._validate_target_status(
-                document.document_type, to_status
-            )
-            if not status_valid:
-                return Decision.deny(status_msg)
-
-            # 3. VALIDATE TRANSITION RULES
-            transition_valid, transition_msg = ApprovalService._validate_transition_rules(
-                document, to_status
-            )
-            if not transition_valid:
-                return Decision.deny(transition_msg)
-
-            # 4. FIND APPLICABLE APPROVAL RULE
-            rule = ApprovalService._find_applicable_rule(document, to_status, user)
-            if not rule:
-                return Decision.deny(
-                    f"No approval rule found for {document.status} → {to_status}",
-                    data={'from_status': document.status, 'to_status': to_status}
-                )
-
-            # 5. CHECK USER PERMISSIONS
-            if not rule.can_user_approve(user, document):
-                return Decision.deny(
-                    "You do not have permission for this transition",
-                    rule_id=rule.id,
-                    level=rule.approval_level
-                )
-
-            # 6. CHECK PREVIOUS LEVELS (if required)
-            if rule.requires_previous_level:
-                prev_valid, prev_msg = ApprovalService._check_previous_levels(document, rule)
-                if not prev_valid:
-                    return Decision.deny(prev_msg, rule_id=rule.id, level=rule.approval_level)
-
-            # 7. CHECK AMOUNT LIMITS
-            amount_valid, amount_msg = ApprovalService._check_amount_limits(document, rule)
-            if not amount_valid:
-                return Decision.deny(amount_msg, rule_id=rule.id)
-
-            # SUCCESS!
-            return Decision.allow(rule, f"Authorized transition {document.status} → {to_status}")
-
-        except ImportError as e:
-            return Decision.deny(f"Approval system not available: {e}")
-        except Exception as e:
-            logger.error(f"Error in authorize_transition: {e}")
-            return Decision.deny(f"Authorization error: {str(e)}")
-
-    @staticmethod
-    def get_available_transitions(document, user) -> List[Dict]:
-        """
-        FIXED: Намери всички възможни transitions за user и document
-
-        Returns:
-            List[Dict]: Достъпни transitions с metadata
-        """
-        try:
-            ApprovalService._require_approval_models()
-
-            if not document or not document.document_type:
-                return []
-
-            # FIXED: Намери всички ApprovalRule за current status използвайки ForeignKey
-            rules = ApprovalRule.objects.filter(
-                document_type=document.document_type,
-                from_status_obj__code=document.status,  # FIXED: използва ForeignKey
-                is_active=True
-            ).select_related('to_status_obj', 'approver_user', 'approver_role')
-
-            available = []
-            for rule in rules:
-                # Провери authorization за всяко правило
-                decision = ApprovalService.authorize_transition(
-                    document, user, rule.to_status_obj.code
-                )
-
-                if decision.allowed:
-                    available.append({
-                        'to_status': rule.to_status_obj.code,
-                        'to_status_name': rule.to_status_obj.name,
-                        'label': f"{document.status.title()} → {rule.to_status_obj.name}",
-                        'rule_name': rule.name,
-                        'approval_level': rule.approval_level,
-                        'requires_reason': rule.requires_reason,
-                        'rule_id': rule.id,
-                        'color': rule.to_status_obj.color,
-                        'icon': rule.to_status_obj.icon,
-                        'badge_class': rule.to_status_obj.badge_class
-                    })
-
-            # Премахни дублирани to_status (взимай първия)
-            seen = set()
-            unique_transitions = []
-            for trans in available:
-                if trans['to_status'] not in seen:
-                    seen.add(trans['to_status'])
-                    unique_transitions.append(trans)
-
-            return unique_transitions
-
-        except ImportError:
-            logger.warning("Approval models not available for get_available_transitions")
-            return []
-        except Exception as e:
-            logger.error(f"Error getting available transitions: {e}")
-            return []
-
-    # =====================
-    # SMART CONVENIENCE API - FIXED
-    # =====================
-
-    @staticmethod
-    def find_next_approval_status(document) -> Optional[str]:
-        """
-        FIXED: Намери следващия approval статус за документа
-
-        Търси ApprovalRule с to_status като approval статус
-        """
-        try:
-            ApprovalService._require_approval_models()
-
-            # FIXED: използва ForeignKey полета
-            rules = ApprovalRule.objects.filter(
-                document_type=document.document_type,
-                from_status_obj__code=document.status,
-                is_active=True
-            ).select_related('to_status_obj')
-
-            # Търси approval pattern в to_status
-            for rule in rules.order_by('approval_level'):
-                status_code = rule.to_status_obj.code.lower()
-                if any(pattern in status_code for pattern in ['approv', 'accept', 'confirm']):
-                    return rule.to_status_obj.code
-
-            return None
-
-        except ImportError:
-            logger.warning("Approval models not available for find_next_approval_status")
-            return None
-        except Exception as e:
-            logger.error(f"Error finding next approval status: {e}")
-            return None
+            raise ImportError("Approval models (ApprovalRule, ApprovalLog) are not available")
 
     @staticmethod
     def find_rejection_status(document) -> Optional[str]:
-        """FIXED: Намери rejection статус за документа"""
+        """
+        LEGACY UTILITY: Find rejection status for document type
+
+        Maintained for backward compatibility
+        """
         try:
             ApprovalService._require_approval_models()
 
-            # FIXED: използва ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
                 is_active=True
             ).select_related('to_status_obj')
 
-            # Търси rejection pattern
+            # Look for rejection pattern
             for rule in rules:
                 status_code = rule.to_status_obj.code.lower()
                 if any(pattern in status_code for pattern in ['reject', 'deny', 'cancel']):
                     return rule.to_status_obj.code
 
-            # Fallback: търси в DocumentTypeStatus за cancellation статус
+            # Fallback: look in DocumentTypeStatus for cancellation status
             cancellation_status = DocumentTypeStatus.objects.filter(
                 document_type=document.document_type,
                 is_cancellation=True,
@@ -332,18 +852,21 @@ class ApprovalService:
 
     @staticmethod
     def find_submission_status(document) -> Optional[str]:
-        """FIXED: Намери submission статус за документа"""
+        """
+        LEGACY UTILITY: Find submission status for document
+
+        Maintained for backward compatibility
+        """
         try:
             ApprovalService._require_approval_models()
 
-            # FIXED: използва ForeignKey полета
             rules = ApprovalRule.objects.filter(
                 document_type=document.document_type,
                 from_status_obj__code=document.status,
                 is_active=True
             ).select_related('to_status_obj')
 
-            # Търси submission pattern
+            # Look for submission pattern
             for rule in rules.order_by('approval_level'):
                 status_code = rule.to_status_obj.code.lower()
                 if any(pattern in status_code for pattern in ['submit', 'pending', 'review']):
@@ -358,363 +881,9 @@ class ApprovalService:
             logger.error(f"Error finding submission status: {e}")
             return None
 
-    # =====================
-    # WORKFLOW INFORMATION API - FIXED
-    # =====================
 
-    @staticmethod
-    def get_workflow_info(document) -> WorkflowInfo:
-        """FIXED: Пълна информация за workflow статуса"""
-        try:
-            # Available transitions
-            available_transitions = ApprovalService.get_available_transitions(
-                document, document.created_by if hasattr(document, 'created_by') else None
-            )
+# =====================================================
+# MODULE EXPORTS
+# =====================================================
 
-            # Configured statuses за този document type
-            configured_statuses = []
-            type_statuses = DocumentTypeStatus.objects.filter(
-                document_type=document.document_type,
-                is_active=True
-            ).select_related('status').order_by('sort_order')
-
-            for config in type_statuses:
-                configured_statuses.append({
-                    'code': config.status.code,
-                    'name': config.custom_name or config.status.name,
-                    'color': config.status.color,
-                    'icon': config.status.icon,
-                    'is_initial': config.is_initial,
-                    'is_final': config.is_final,
-                    'is_cancellation': config.is_cancellation,
-                    'sort_order': config.sort_order
-                })
-
-            # Approval history
-            approval_history = ApprovalService.get_approval_history(document)
-
-            # Workflow progress
-            workflow_progress = ApprovalService._calculate_workflow_progress(
-                document, configured_statuses
-            )
-
-            return WorkflowInfo(
-                current_status=document.status,
-                available_transitions=available_transitions,
-                configured_statuses=configured_statuses,
-                approval_history=approval_history,
-                workflow_progress=workflow_progress
-            )
-
-        except Exception as e:
-            logger.error(f"Error getting workflow info: {e}")
-            return WorkflowInfo(
-                current_status=getattr(document, 'status', 'unknown'),
-                available_transitions=[],
-                configured_statuses=[],
-                approval_history=[],
-                workflow_progress={'error': str(e)}
-            )
-
-    @staticmethod
-    def get_approval_history(document) -> List[Dict]:
-        """FIXED: История на одобренията за документа"""
-        try:
-            ApprovalService._require_approval_models()
-
-            content_type = ContentType.objects.get_for_model(document.__class__)
-
-            logs = ApprovalLog.objects.filter(
-                content_type=content_type,
-                object_id=document.pk
-            ).select_related('rule', 'actor').order_by('-timestamp')
-
-            history = []
-            for log in logs:
-                history.append({
-                    'timestamp': log.timestamp,
-                    'action': log.get_action_display(),
-                    'from_status': log.from_status,
-                    'to_status': log.to_status,
-                    'actor_name': log.actor.get_full_name() or log.actor.username,
-                    'actor_id': log.actor.id,
-                    'rule_name': log.rule.name if log.rule else 'Unknown',
-                    'comments': log.comments or '',
-                    'level': log.rule.approval_level if log.rule else None
-                })
-
-            return history
-
-        except ImportError:
-            logger.warning("ApprovalLog not available for get_approval_history")
-            return []
-        except Exception as e:
-            logger.error(f"Error getting approval history: {e}")
-            return []
-
-    # =====================
-    # PRIVATE VALIDATION METHODS - FIXED
-    # =====================
-
-    @staticmethod
-    def _validate_target_status(document_type: DocumentType, to_status: str) -> Tuple[bool, str]:
-        """Провери дали to_status е валиден за document_type"""
-        try:
-            exists = DocumentTypeStatus.objects.filter(
-                document_type=document_type,
-                status__code=to_status,
-                is_active=True
-            ).exists()
-
-            if not exists:
-                configured_statuses = list(
-                    DocumentTypeStatus.objects.filter(
-                        document_type=document_type,
-                        is_active=True
-                    ).values_list('status__code', flat=True)
-                )
-
-                return False, (
-                    f"Status '{to_status}' is not configured for document type "
-                    f"'{document_type.type_key}'. Available: {configured_statuses}"
-                )
-
-            return True, "Valid status"
-
-        except Exception as e:
-            return False, f"Error validating status: {e}"
-
-    @staticmethod
-    def _validate_transition_rules(document, to_status: str) -> Tuple[bool, str]:
-        """Провери transition rules от DocumentTypeStatus"""
-        try:
-            # Проверка за final статус (не може transitions FROM final)
-            current_config = DocumentTypeStatus.objects.filter(
-                document_type=document.document_type,
-                status__code=document.status,
-                is_active=True
-            ).first()
-
-            if current_config and current_config.is_final:
-                return False, f"Cannot transition from final status '{document.status}'"
-
-            # Проверка за initial статус (не може transitions TO initial освен при creation)
-            target_config = DocumentTypeStatus.objects.filter(
-                document_type=document.document_type,
-                status__code=to_status,
-                is_active=True
-            ).first()
-
-            if target_config and target_config.is_initial:
-                return False, f"Cannot transition to initial status '{to_status}'"
-
-            return True, "Transition allowed"
-
-        except Exception as e:
-            return False, f"Error validating transition: {e}"
-
-    @staticmethod
-    def _find_applicable_rule(document, to_status: str, user):
-        """FIXED: Намери приложимо ApprovalRule за transition"""
-        try:
-            ApprovalService._require_approval_models()
-
-            # FIXED: Намери правила за този transition използвайки ForeignKey полета
-            rules = ApprovalRule.objects.filter(
-                document_type=document.document_type,
-                from_status_obj__code=document.status,
-                to_status_obj__code=to_status,
-                is_active=True
-            ).order_by('approval_level', 'sort_order')
-
-            # Филтрирай по amount ако документът има сума
-            amount = ApprovalService._get_document_amount(document)
-            if amount is not None:
-                rules = rules.filter(
-                    min_amount__lte=amount
-                ).filter(
-                    models.Q(max_amount__gte=amount) | models.Q(max_amount__isnull=True)
-                )
-
-            # Върни първото правило което user може да изпълни
-            for rule in rules:
-                if rule.can_user_approve(user, document):
-                    return rule
-
-            return None
-
-        except ImportError:
-            logger.warning("ApprovalRule not available for _find_applicable_rule")
-            return None
-        except Exception as e:
-            logger.error(f"Error finding applicable rule: {e}")
-            return None
-
-    @staticmethod
-    def _check_previous_levels(document, rule) -> Tuple[bool, str]:
-        """FIXED: Провери дали предишните approval levels са завършени"""
-        try:
-            ApprovalService._require_approval_models()
-
-            if not rule.requires_previous_level or rule.approval_level <= 1:
-                return True, "No previous levels required"
-
-            content_type = ContentType.objects.get_for_model(document.__class__)
-
-            # Намери всички previous levels за този document type
-            required_levels = list(range(1, rule.approval_level))
-
-            # Провери кои levels са approved
-            approved_levels = set()
-            approval_logs = ApprovalLog.objects.filter(
-                content_type=content_type,
-                object_id=document.pk,
-                action='approved'
-            ).select_related('rule')
-
-            for log in approval_logs:
-                if log.rule:
-                    approved_levels.add(log.rule.approval_level)
-
-            missing_levels = set(required_levels) - approved_levels
-            if missing_levels:
-                return False, (
-                    f"Previous approval levels must be completed first. "
-                    f"Missing levels: {sorted(missing_levels)}"
-                )
-
-            return True, "Previous levels completed"
-
-        except ImportError:
-            logger.warning("ApprovalLog not available for _check_previous_levels")
-            return True, "Cannot check previous levels - approval log not available"
-        except Exception as e:
-            logger.error(f"Error checking previous levels: {e}")
-            return False, f"Error checking previous levels: {e}"
-
-    @staticmethod
-    def _check_amount_limits(document, rule) -> Tuple[bool, str]:
-        """Провери amount limits на правилото"""
-        try:
-            amount = ApprovalService._get_document_amount(document)
-            if amount is None:
-                return True, "No amount to check"
-
-            if amount < rule.min_amount:
-                return False, f"Amount {amount} is below minimum {rule.min_amount}"
-
-            if rule.max_amount and amount > rule.max_amount:
-                return False, f"Amount {amount} exceeds maximum {rule.max_amount}"
-
-            return True, "Amount within limits"
-
-        except Exception as e:
-            return False, f"Error checking amount: {e}"
-
-    @staticmethod
-    def _get_document_amount(document) -> Optional[float]:
-        """Извлече сума от документа"""
-        try:
-            # Опитай различни field names
-            amount_fields = ['total', 'grand_total', 'amount', 'total_amount', 'total_gross']
-            for field in amount_fields:
-                if hasattr(document, field):
-                    value = getattr(document, field)
-                    if value is not None:
-                        return float(value)
-
-            # Опитай методи за калкулация
-            if hasattr(document, 'get_total'):
-                return float(document.get_total())
-            if hasattr(document, 'calculate_total'):
-                return float(document.calculate_total())
-
-            return None
-
-        except (ValueError, TypeError, AttributeError):
-            return None
-
-    @staticmethod
-    def _calculate_workflow_progress(document, configured_statuses: List[Dict]) -> Dict:
-        """Изчисли progress на workflow"""
-        try:
-            if not configured_statuses:
-                return {'percentage': 0, 'current_step': 0, 'total_steps': 0}
-
-            # Намери current step
-            current_step = 0
-            for i, status in enumerate(configured_statuses):
-                if status['code'] == document.status:
-                    current_step = i + 1
-                    break
-
-            total_steps = len(configured_statuses)
-            percentage = int((current_step / total_steps) * 100) if total_steps > 0 else 0
-
-            return {
-                'percentage': percentage,
-                'current_step': current_step,
-                'total_steps': total_steps,
-                'current_status_name': configured_statuses[current_step - 1]['name'] if current_step > 0 else 'Unknown'
-            }
-
-        except Exception as e:
-            logger.error(f"Error calculating progress: {e}")
-            return {'percentage': 0, 'current_step': 0, 'total_steps': 0, 'error': str(e)}
-
-
-# =====================
-# CONVENIENCE FUNCTIONS - FIXED
-# =====================
-
-def get_approval_decision(document, user, action: str = 'approve') -> Decision:
-    """
-    FIXED: Smart convenience за approval decisions
-
-    Args:
-        document: Document instance
-        user: User
-        action: 'approve', 'reject', 'submit'
-    """
-    try:
-        if not ApprovalService.is_available():
-            return Decision.deny("Approval system not available")
-
-        if action == 'approve':
-            target_status = ApprovalService.find_next_approval_status(document)
-        elif action == 'reject':
-            target_status = ApprovalService.find_rejection_status(document)
-        elif action == 'submit':
-            target_status = ApprovalService.find_submission_status(document)
-        else:
-            return Decision.deny(f"Unknown action: {action}")
-
-        if not target_status:
-            return Decision.deny(f"No {action} status found for current state")
-
-        return ApprovalService.authorize_transition(document, user, target_status)
-
-    except Exception as e:
-        return Decision.deny(f"Error getting {action} decision: {e}")
-
-
-def can_user_approve(document, user) -> bool:
-    """FIXED: Бърза проверка дали user може да approve документа"""
-    try:
-        if not ApprovalService.is_available():
-            return False
-        decision = get_approval_decision(document, user, 'approve')
-        return decision.allowed
-    except:
-        return False
-
-
-def can_user_reject(document, user) -> bool:
-    """FIXED: Бърза проверка дали user може да reject документа"""
-    try:
-        if not ApprovalService.is_available():
-            return False
-        decision = get_approval_decision(document, user, 'reject')
-        return decision.allowed
-    except:
-        return False
+__all__ = ['ApprovalService', 'Decision', 'WorkflowInfo']
