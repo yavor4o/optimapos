@@ -1,16 +1,12 @@
-# nomenclatures/models/__init__.py - FIXED COMPLETE VERSION
-"""
-Nomenclatures models package - ПЪЛНО СИНХРОНИЗИРАНА ВЕРСИЯ
+# =====================================================
+# ФАЙЛ 6: nomenclatures/models/__init__.py - UPDATED
+# =====================================================
 
-Архитектура:
-- base_nomenclature.py: Базови класове и managers
-- documents.py: DocumentType (CLEAN REFACTORED)
-- statuses.py: DocumentStatus, DocumentTypeStatus (NEW)
-- approvals.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
-- numbering.py: NumberingConfiguration system (NEW)
-- product.py: ProductGroup, Brand, ProductType
-- financial.py: Currency, ExchangeRate, TaxGroup
-- operational.py: UnitOfMeasure, PaymentType
+# nomenclatures/models/__init__.py - UPDATED WITH BaseDocument
+"""
+Nomenclatures models package - UPDATED WITH BaseDocument
+
+НОВO: BaseDocument и mixins moved from purchases
 """
 
 # =====================
@@ -18,17 +14,26 @@ Nomenclatures models package - ПЪЛНО СИНХРОНИЗИРАНА ВЕРС�
 # =====================
 
 # Base imports
-from .base_nomenclature import BaseNomenclature, ActiveManager
+from .base import BaseNomenclature, ActiveManager
+
+# NEW: Base document imports
+from .base_document import (
+    BaseDocument,
+    BaseDocumentLine,
+    DocumentManager,
+    LineManager
+)
 
 # Documents & Workflow
 from .documents import DocumentType, DocumentTypeManager, get_document_type_by_key
 
-# Statuses - FIXED: правилен import
+# Statuses
 from .statuses import DocumentStatus, DocumentTypeStatus
 
-# Approvals - FIXED: с правилно error handling
+# Approvals - with error handling
 try:
     from .approvals import ApprovalRule, ApprovalLog, ApprovalRuleManager
+
     HAS_APPROVAL_MODELS = True
 except ImportError:
     ApprovalRule = None
@@ -36,7 +41,7 @@ except ImportError:
     ApprovalRuleManager = None
     HAS_APPROVAL_MODELS = False
 
-# Numbering - FIXED: с правилно error handling
+# Numbering - with error handling
 try:
     from .numbering import (
         NumberingConfiguration,
@@ -46,6 +51,7 @@ try:
         generate_document_number,
         get_numbering_config_for_document
     )
+
     HAS_NUMBERING_MODELS = True
 except ImportError:
     NumberingConfiguration = None
@@ -79,19 +85,25 @@ from .operational import (
 )
 
 # =====================
-# EXPORT DEFINITION - FIXED COMPLETE VERSION
+# EXPORT DEFINITION - UPDATED
 # =====================
 __all__ = [
     # Base
     'BaseNomenclature',
     'ActiveManager',
 
+    # NEW: Base Document classes
+    'BaseDocument',
+    'BaseDocumentLine',
+    'DocumentManager',
+    'LineManager',
+
     # Documents & Workflow
     'DocumentType',
     'DocumentTypeManager',
     'get_document_type_by_key',
 
-    # Statuses - FIXED: добавени
+    # Statuses
     'DocumentStatus',
     'DocumentTypeStatus',
 
@@ -112,46 +124,64 @@ __all__ = [
     'PaymentType',
 ]
 
-# FIXED: Add conditional exports with proper completion
+# Conditional exports
 if HAS_APPROVAL_MODELS:
-    __all__.extend([
-        'ApprovalRule',
-        'ApprovalLog',
-        'ApprovalRuleManager'
-    ])
+    __all__.extend(['ApprovalRule', 'ApprovalLog', 'ApprovalRuleManager'])
 
 if HAS_NUMBERING_MODELS:
     __all__.extend([
-        'NumberingConfiguration',
-        'NumberingConfigurationManager',
-        'LocationNumberingAssignment',
-        'UserNumberingPreference',
-        'generate_document_number',
-        'get_numbering_config_for_document'
+        'NumberingConfiguration', 'NumberingConfigurationManager',
+        'LocationNumberingAssignment', 'UserNumberingPreference',
+        'generate_document_number', 'get_numbering_config_for_document'
     ])
 
-# =====================
-# CONVENIENCE IMPORTS (за лесно debugging)
-# =====================
+# =====================================================
+# ФАЙЛ 7: nomenclatures/__init__.py - UPDATED
+# =====================================================
 
-def get_available_models():
-    """Get info about available models for debugging"""
-    info = {
-        'base_models': ['BaseNomenclature', 'ActiveManager'],
-        'document_models': ['DocumentType', 'DocumentStatus', 'DocumentTypeStatus'],
-        'approval_models': HAS_APPROVAL_MODELS,
-        'numbering_models': HAS_NUMBERING_MODELS,
-        'product_models': ['ProductGroup', 'Brand', 'ProductType'],
-        'financial_models': ['Currency', 'ExchangeRate', 'TaxGroup', 'PriceGroup'],
-        'operational_models': ['UnitOfMeasure', 'PaymentType']
-    }
-    return info
+# nomenclatures/__init__.py - UPDATED
+"""
+Nomenclatures package - UPDATED WITH BaseDocument & MIXINS
 
-# =====================
-# VERSION INFO
-# =====================
-__version__ = '4.0.0'  # FIXED COMPLETE VERSION
+НОВO: 
+- BaseDocument moved from purchases
+- Mixins package added
+"""
+
+# Re-export key classes for convenience
+from .models import (
+    BaseDocument,
+    BaseDocumentLine,
+    DocumentType,
+    DocumentStatus,
+    DocumentTypeStatus,
+)
+
+# NEW: Export mixins
+from .mixins import (
+    FinancialMixin,
+    PaymentMixin,
+    DeliveryMixin,
+    FinancialLineMixin,
+)
+
+__all__ = [
+    # Base Document classes
+    'BaseDocument',
+    'BaseDocumentLine',
+
+    # Document configuration
+    'DocumentType',
+    'DocumentStatus',
+    'DocumentTypeStatus',
+
+    # Mixins
+    'FinancialMixin',
+    'PaymentMixin',
+    'DeliveryMixin',
+    'FinancialLineMixin',
+]
+
+# Version info
+__version__ = '2.0.0'  # UPDATED для BaseDocument integration
 __author__ = 'Your Company'
-
-# Export version for external use
-__all__.extend(['__version__', 'get_available_models'])
