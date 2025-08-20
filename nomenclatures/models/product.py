@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from mptt.fields import TreeForeignKey
 from mptt.models import MPTTModel
-from .base import BaseNomenclature, ActiveManager
+from .base_nomenclature import BaseNomenclature, ActiveManager
 
 
 class ProductGroup(MPTTModel):

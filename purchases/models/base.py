@@ -1,4 +1,4 @@
-# purchases/models/base.py - CLEAN REFACTORED
+# purchases/models/base_nomenclature.py - CLEAN REFACTORED
 import warnings
 
 from django.db import models

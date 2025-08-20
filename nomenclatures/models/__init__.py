@@ -3,7 +3,7 @@
 Nomenclatures models package - ПЪЛНО СИНХРОНИЗИРАНА ВЕРСИЯ
 
 Архитектура:
-- base.py: Базови класове и managers
+- base_nomenclature.py: Базови класове и managers
 - documents.py: DocumentType (CLEAN REFACTORED)
 - statuses.py: DocumentStatus, DocumentTypeStatus (NEW)
 - approvals.py: ApprovalRule и ApprovalLog (SIMPLIFIED)
@@ -18,7 +18,7 @@ Nomenclatures models package - ПЪЛНО СИНХРОНИЗИРАНА ВЕРС�
 # =====================
 
 # Base imports
-from .base import BaseNomenclature, ActiveManager
+from .base_nomenclature import BaseNomenclature, ActiveManager
 
 # Documents & Workflow
 from .documents import DocumentType, DocumentTypeManager, get_document_type_by_key

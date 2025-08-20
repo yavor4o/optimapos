@@ -20,7 +20,7 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from .base import BaseNomenclature, BaseNomenclatureManager
+from .base_nomenclature import BaseNomenclature, BaseNomenclatureManager
 import re
 
 User = get_user_model()

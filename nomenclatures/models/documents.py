@@ -19,7 +19,7 @@ Document Type Definition - SIMPLIFIED & FOCUSED
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from .base import BaseNomenclature, BaseNomenclatureManager
+from .base_nomenclature import BaseNomenclature, BaseNomenclatureManager
 
 
 # =================================================================

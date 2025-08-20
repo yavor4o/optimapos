@@ -4,7 +4,7 @@
 Purchases models package - Clean organized structure
 
 АРХИТЕКТУРА:
-- base.py: BaseDocument, mixins и managers
+- base_nomenclature.py: BaseDocument, mixins и managers
 - requests.py: PurchaseRequest заявки (БЕЗ финансови данни)
 - orders.py: PurchaseOrder поръчки (С финансови данни)
 - deliveries.py: DeliveryReceipt доставки (С всички данни)

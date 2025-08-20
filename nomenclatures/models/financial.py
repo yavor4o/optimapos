@@ -5,7 +5,7 @@ from django.utils import timezone
 from decimal import Decimal
 
 from optimapos import settings
-from .base import BaseNomenclature, ActiveManager
+from .base_nomenclature import BaseNomenclature, ActiveManager
 
 
 class Currency(models.Model):
