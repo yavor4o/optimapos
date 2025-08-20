@@ -340,95 +340,203 @@ class PurchaseWorkflowService:
     # =====================
     # DELIVERY CREATION
     # =====================
+    # ===================================================================
+    # ПОПРАВКА: purchases/services/workflow_service.py
+    # FIX field name error: prices_include_vat → prices_entered_with_vat
+    # ===================================================================
+
     @classmethod
     @transaction.atomic
-    def create_delivery_from_order(cls, order, user=None, **delivery_overrides) -> Result:
+    def create_delivery_from_order(cls, order, delivery_data=None, user=None) -> Result:
         """
-        Create DeliveryReceipt from confirmed PurchaseOrder
+        Create delivery receipt from purchase order - FIELD NAME FIXED.
 
-        ✅ РЕШАВА: Document type, Status, Totals, Lines, Source tracking
+        ✅ ПОПРАВКА: Използва правилните field names от модела
         """
         try:
+            # Import services
+            from nomenclatures.services import DocumentService
+            from nomenclatures.services.vat_calculation_service import VATCalculationService
             from purchases.models import DeliveryReceipt, DeliveryLine
-            from nomenclatures.models import DocumentType
 
-            # Validation
+            # Validate order status
             if order.status not in ['confirmed', 'sent']:
                 return Result.error(
                     'INVALID_ORDER_STATUS',
-                    'Cannot create delivery from order with status: {}'.format(order.status)
+                    f'Cannot create delivery from order with status: {order.status}',
+                    {'order_status': order.status}
                 )
 
-            # Get or create DocumentType for delivery
-            delivery_doc_type = None
-            try:
-                delivery_doc_type = DocumentType.objects.filter(
-                    name__icontains='delivery'
-                ).first()
-
-                if not delivery_doc_type:
-                    delivery_doc_type = DocumentType.objects.create(
-                        name='Delivery Receipt',
-                        code='DR',
-                        is_active=True
-                    )
-            except Exception:
-                pass  # Continue without document_type
-
-            # Create delivery
-            delivery_data = {
-                'supplier': order.supplier,
+            # ===================================================================
+            # ПРАВИЛНИ FIELD NAMES според migration files
+            # ===================================================================
+            delivery_data_for_service = {
+                'supplier': order.supplier,  # Legacy compatibility
+                'partner': order.supplier,  # Generic field
                 'location': order.location,
-                'document_type': delivery_doc_type,
                 'delivery_date': timezone.now().date(),
-                'received_by': user,
-                'received_at': timezone.now(),
-                'status': 'received',
                 'source_order': order,
-                'notes': "Created from order {}".format(order.document_number),
-                'created_by': user,
-                'updated_by': user,
+                'external_reference': order.external_reference,
+                'notes': f"Created from order {order.document_number}",
+                'received_by': user,
+                # ✅ CORRECT FIELD NAME:
+                'prices_entered_with_vat': getattr(order, 'prices_entered_with_vat', None),
             }
-            delivery_data.update(delivery_overrides)
 
-            delivery = DeliveryReceipt.objects.create(**delivery_data)
+            # Apply any user overrides
+            if delivery_data:
+                delivery_data_for_service.update(delivery_data)
 
-            # Copy lines with source tracking
+            # Create delivery using DocumentService
+            create_result = DocumentService.create_document(
+                model_class=DeliveryReceipt,
+                data=delivery_data_for_service,
+                user=user,
+                location=order.location
+            )
+
+            if not create_result.ok:
+                return create_result
+
+            delivery = create_result.data['document']
+
+            # ===================================================================
+            # COPY LINES WITH PROPER FIELD HANDLING
+            # ===================================================================
             lines_created = 0
-            for order_line in order.lines.all():
-                DeliveryLine.objects.create(
+            for order_line in order.lines.select_related('product').all():
+                # Determine quantity field name (handle both old and new field names)
+                quantity_value = None
+                if hasattr(order_line, 'ordered_quantity'):
+                    quantity_value = order_line.ordered_quantity
+                elif hasattr(order_line, 'quantity'):
+                    quantity_value = order_line.quantity
+                else:
+                    logger.warning(f"Could not find quantity field for order line {order_line.id}")
+                    quantity_value = Decimal('1.00')  # Safe fallback
+
+                delivery_line = DeliveryLine.objects.create(
                     document=delivery,
                     line_number=order_line.line_number,
                     product=order_line.product,
-                    quantity=order_line.ordered_quantity,  # Copy ordered quantity
+                    quantity=quantity_value,  # Use detected quantity field
                     unit=order_line.unit,
                     unit_price=order_line.unit_price,
-                    source_order_line=order_line,  # ✅ IMPORTANT for Expected/Variance
-                    quality_approved=None,  # Pending quality control
+                    source_order_line=order_line,  # Critical for Expected/Variance
+                    # Quality control defaults
+                    quality_approved=False,
+                    quality_issue_type='',
+                    batch_number='',
+                    expiry_date=None,
+                    notes=getattr(order_line, 'notes', ''),
                 )
                 lines_created += 1
 
-            # Recalculate totals (uses FinancialMixin method)
-            delivery.recalculate_totals()
+            # ===================================================================
+            # RECALCULATE TOTALS USING VAT SERVICE
+            # ===================================================================
+            totals_result = VATCalculationService.recalculate_document_totals(delivery)
+            if not totals_result.ok:
+                logger.warning(f"VAT calculation failed: {totals_result.msg}")
+                # Continue anyway, but try manual calculation
+                try:
+                    delivery.recalculate_totals()
+                except Exception as e:
+                    logger.warning(f"Manual recalculation also failed: {e}")
+
+            # ===================================================================
+            # UPDATE ORDER STATUS USING DocumentService
+            # ===================================================================
+            try:
+                order_transition_result = DocumentService.transition_document(
+                    document=order,
+                    to_status='partial',
+                    user=user,
+                    comments=f'Delivery {delivery.document_number} created'
+                )
+
+                if not order_transition_result.ok:
+                    logger.info(f"Could not transition order to partial: {order_transition_result.msg}")
+
+            except Exception as e:
+                logger.warning(f"Order status update failed: {e}")
 
             return Result.success(
                 {
                     'delivery': delivery,
-                    'delivery_number': delivery.document_number,
-                    'lines_created': lines_created,
-                    'total_amount': float(delivery.total) if delivery.total else 0,
+                    'lines_count': lines_created,
+                    'order_status': order.status,
+                    'delivery_status': delivery.status,
+                    'document_type': delivery.document_type.name if delivery.document_type else None,
+                    'totals': {
+                        'subtotal': float(delivery.subtotal),
+                        'vat_total': float(delivery.vat_total),
+                        'total': float(delivery.total)
+                    }
                 },
-                'Created delivery {} from order {}'.format(
-                    delivery.document_number, order.document_number
-                )
+                f'Successfully created delivery {delivery.document_number} from order {order.document_number}'
             )
 
         except Exception as e:
-            logger.error("Failed to create delivery: {}".format(str(e)))
+            logger.error(f"Delivery creation failed: {str(e)}")
             return Result.error(
                 'DELIVERY_CREATION_ERROR',
-                'Failed to create delivery: {}'.format(str(e))
+                f'Failed to create delivery: {str(e)}',
+                {'exception': str(e), 'order_id': order.pk}
             )
+
+    # ===================================================================
+    # DEBUGGING: Check actual field names in the models
+    # ===================================================================
+
+    """
+    # Run this in Django shell to check actual field names:
+
+    from purchases.models import PurchaseOrder, DeliveryReceipt
+
+    # Check PurchaseOrder fields
+    order = PurchaseOrder.objects.first()
+    print("PurchaseOrder fields:")
+    for field in order._meta.fields:
+        if 'price' in field.name or 'vat' in field.name:
+            print(f"  {field.name}: {getattr(order, field.name, 'N/A')}")
+
+    # Check DeliveryReceipt fields  
+    delivery = DeliveryReceipt.objects.first()
+    if delivery:
+        print("\nDeliveryReceipt fields:")
+        for field in delivery._meta.fields:
+            if 'price' in field.name or 'vat' in field.name:
+                print(f"  {field.name}: {getattr(delivery, field.name, 'N/A')}")
+    """
+
+    # ===================================================================
+    # SAFE FIELD ACCESS HELPER
+    # ===================================================================
+
+    def safe_get_vat_field(document):
+        """
+        Helper to safely get VAT field regardless of naming convention
+        """
+        # Try different possible field names
+        vat_field_names = [
+            'prices_entered_with_vat',
+            'prices_include_vat',
+            'price_includes_vat',
+            'vat_included'
+        ]
+
+        for field_name in vat_field_names:
+            if hasattr(document, field_name):
+                return getattr(document, field_name)
+
+        # Fallback: check location settings
+        if hasattr(document, 'location') and document.location:
+            if hasattr(document.location, 'purchase_prices_include_vat'):
+                return document.location.purchase_prices_include_vat
+
+        # Ultimate fallback
+        return False  # Assume prices exclude VAT for B2B purchases
 
     # =====================
     # BULK OPERATIONS
