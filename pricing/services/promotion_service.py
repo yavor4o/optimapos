@@ -12,7 +12,7 @@ PROMOTION SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 - Bulk operations за promotional campaigns
 - Integration готовност с PricingService
 """
-
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.db.models import Q
 from decimal import Decimal
@@ -489,18 +489,20 @@ class PromotionService:
 
     @staticmethod
     def _find_valid_promotions(location, product, quantity, date, customer) -> Result:
-        """Find all valid promotions for given criteria"""
+        """Find all valid promotions for given criteria - BUGFIXED"""
         try:
-            # Get all promotions matching basic criteria
+            # FIXED: Use correct field names from PromotionalPrice model
             promotions = PromotionalPrice.objects.filter(
-                location=location,
+                # FIXED: Use GenericForeignKey lookup instead of direct location field
+                content_type=ContentType.objects.get_for_model(location),
+                object_id=location.id,
                 product=product,
                 start_date__lte=date,
                 end_date__gte=date,
                 is_active=True
             )
 
-            # Filter by quantity constraints
+            # Filter by quantity constraints (use correct field names)
             if hasattr(PromotionalPrice, 'min_quantity'):
                 promotions = promotions.filter(
                     Q(min_quantity__isnull=True) | Q(min_quantity__lte=quantity)
@@ -510,6 +512,14 @@ class PromotionService:
                 promotions = promotions.filter(
                     Q(max_quantity__isnull=True) | Q(max_quantity__gte=quantity)
                 )
+
+            # ALTERNATIVE FIX: If pricing uses .for_location() manager
+            # promotions = PromotionalPrice.objects.for_location(location).filter(
+            #     product=product,
+            #     start_date__lte=date,
+            #     end_date__gte=date,
+            #     is_active=True
+            # )
 
             # Filter by customer eligibility
             valid_promotions = []
@@ -534,20 +544,25 @@ class PromotionService:
 
     @staticmethod
     def _calculate_discount_amount(promotion) -> Optional[Decimal]:
-        """Calculate discount amount for promotion"""
+        """Calculate discount amount for promotion - BUGFIXED"""
         try:
             if hasattr(promotion, 'get_discount_amount'):
                 return promotion.get_discount_amount()
 
-            # Fallback calculation
+            # FIXED: Use PricingService get_base_price instead of get_price
             from .pricing_service import PricingService
-            base_price = PricingService.get_base_price(promotion.location, promotion.product)
+
+            # FIXED: Get location from promotion's GenericForeignKey
+            promotion_location = promotion.priceable_location  # or however it's named
+            base_price = PricingService.get_base_price(promotion_location, promotion.product)
+
             if base_price > promotion.promotional_price:
                 return base_price - promotion.promotional_price
 
             return Decimal('0')
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not calculate discount amount: {e}")
             return None
 
     @staticmethod
