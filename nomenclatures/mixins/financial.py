@@ -9,9 +9,13 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 
+
 class FinancialMixin(models.Model):
     """
-    Financial fields mixin - EXACT COPY FROM ORIGINAL base.py
+    Financial fields mixin - REFACTORED VERSION
+
+    ВАЖНО: Не прави изчисления! Само държи полета.
+    Всички изчисления се правят от VATCalculationService
     """
 
     # === TOTALS (всички суми се записват БЕЗ ДДС в базата) ===
@@ -58,77 +62,97 @@ class FinancialMixin(models.Model):
     class Meta:
         abstract = True
 
-    def clean(self):
-        """Financial validation"""
-        super().clean()
-
-        # Basic financial validation
-        if self.total_amount < 0:
-            raise ValidationError({'total_amount': _('Total amount cannot be negative')})
-
-        if self.tax_amount < 0:
-            raise ValidationError({'tax_amount': _('Tax amount cannot be negative')})
-
-        if self.grand_total < 0:
-            raise ValidationError({'grand_total': _('Grand total cannot be negative')})
-
-    def recalculate_totals(self):
+    def recalculate_totals(self, save=True):
         """
-        Recalculate document totals from lines
-        NOTE: This will be moved to services layer
+        Преизчислява всички totals от линиите
+        Делегира на VATCalculationService
         """
-        if not hasattr(self, 'lines'):
-            return
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-        lines_total = Decimal('0.00')
-        lines_tax = Decimal('0.00')
+        # Делегира изчислението
+        totals = VATCalculationService.recalculate_document_totals(self)
 
-        for line in self.lines.all():
-            if hasattr(line, 'line_total'):
-                lines_total += line.line_total or Decimal('0.00')
-            if hasattr(line, 'vat_amount'):
-                lines_tax += line.vat_amount or Decimal('0.00')
+        # Update полетата
+        self.subtotal = totals['subtotal']
+        self.vat_total = totals['vat_total']
+        self.discount_total = totals['discount_total']
+        self.total = totals['total']
 
-        self.total_amount = lines_total
-        self.tax_amount = lines_tax
-        self.grand_total = lines_total + lines_tax
+        if save:
+            self.save(update_fields=['subtotal', 'vat_total', 'discount_total', 'total'])
 
-    @property
-    def total_in_base_currency(self):
-        """Calculate total in base currency"""
-        return self.grand_total * self.exchange_rate
+        return totals
 
-    @property
-    def has_tax(self):
-        """Check if document has tax"""
-        return self.tax_amount > 0
+    def get_price_entry_mode(self) -> bool:
+        """
+        Делегира на VATCalculationService
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
+        return VATCalculationService.get_price_entry_mode(self)
+
+    def validate_totals(self) -> bool:
+        """
+        Валидира че totals са правилни
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
+        is_valid, error = VATCalculationService.validate_vat_consistency(self)
+        if not is_valid:
+            raise ValueError(f"VAT calculation error: {error}")
+        return is_valid
 
 
 class FinancialLineMixin(models.Model):
     """
-    Mixin за редове с финансови данни
+    Financial fields for document lines - REFACTORED VERSION
+
+    ВАЖНО: Не прави изчисления! Само държи полета.
     """
 
-    # =====================
-    # PRICING - ОРИГИНАЛНИ ПОЛЕТА
-    # =====================
+    # === PRICES (всички цени БЕЗ ДДС в базата) ===
     entered_price = models.DecimalField(
         _('Entered Price'),
         max_digits=10,
-        decimal_places=4,
-        default=Decimal('0.0000'),
-        help_text=_('Price as entered by user (before VAT processing)')
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_('Price as entered by user (may include VAT)')
     )
 
     unit_price = models.DecimalField(
         _('Unit Price'),
         max_digits=10,
-        decimal_places=4,
-        default=Decimal('0.0000'),
-        help_text=_('Price per unit')
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Unit price WITHOUT VAT (stored value)')
     )
 
-    discount_percentage = models.DecimalField(
+    unit_price_with_vat = models.DecimalField(
+        _('Unit Price with VAT'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Unit price INCLUDING VAT (calculated)')
+    )
+
+    # === VAT ===
+    vat_rate = models.DecimalField(
+        _('VAT Rate'),
+        max_digits=5,
+        decimal_places=3,
+        default=Decimal('0.200'),
+        help_text=_('VAT rate (0.20 = 20%)')
+    )
+
+    vat_amount = models.DecimalField(
+        _('VAT Amount'),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('VAT amount for this line')
+    )
+
+    # === DISCOUNTS ===
+    discount_percent = models.DecimalField(
         _('Discount %'),
         max_digits=5,
         decimal_places=2,
@@ -141,18 +165,16 @@ class FinancialLineMixin(models.Model):
         max_digits=10,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Calculated discount amount')
+        help_text=_('Discount amount')
     )
 
-    # =====================
-    # LINE TOTALS - ОРИГИНАЛНИ ПОЛЕТА
-    # =====================
+    # === TOTALS ===
     net_amount = models.DecimalField(
         _('Net Amount'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Line amount excluding VAT (after discount)')
+        help_text=_('Line amount excluding VAT')
     )
 
     gross_amount = models.DecimalField(
@@ -163,73 +185,90 @@ class FinancialLineMixin(models.Model):
         help_text=_('Line amount including VAT')
     )
 
-    line_total = models.DecimalField(
-        _('Line Total'),
-        max_digits=12,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Total for this line before tax')
-    )
-
-    # =====================
-    # VAT/TAX
-    # =====================
-    vat_rate = models.DecimalField(
-        _('VAT Rate %'),
-        max_digits=5,
-        decimal_places=2,
-        default=Decimal('20.00'),
-        help_text=_('VAT rate percentage')
-    )
-
-    vat_amount = models.DecimalField(
-        _('VAT Amount'),
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text=_('Calculated VAT amount')
-    )
-
     class Meta:
         abstract = True
 
-    def clean(self):
-        """Financial line validation"""
-        super().clean()
+    def get_quantity_for_calculation(self) -> Decimal:
+        """
+        Връща количеството за изчисления
+        Override в наследниците според техните полета
+        """
+        # За PurchaseRequestLine -> requested_quantity
+        if hasattr(self, 'requested_quantity'):
+            return self.requested_quantity or Decimal('1')
 
-        if self.unit_price < 0:
-            raise ValidationError({'unit_price': _('Unit price cannot be negative')})
+        # За PurchaseOrderLine -> ordered_quantity
+        if hasattr(self, 'ordered_quantity'):
+            return self.ordered_quantity or Decimal('1')
 
-        if self.discount_percentage < 0 or self.discount_percentage > 100:
-            raise ValidationError({'discount_percentage': _('Discount percentage must be between 0 and 100')})
+        # За DeliveryLine -> received_quantity
+        if hasattr(self, 'received_quantity'):
+            return self.received_quantity or Decimal('1')
 
-    def calculate_line_total(self):
-        """Calculate line total with discounts"""
-        if not hasattr(self, 'quantity'):
-            return Decimal('0.00')
+        # Default
+        return Decimal('1')
 
-        base_total = self.unit_price * self.quantity
+    def process_entered_price(self):
+        """
+        ✅ FIXED: Обработва въведената цена със unified VATCalculationService
+        """
+        from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-        # Apply percentage discount
-        if self.discount_percentage > 0:
-            discount = base_total * (self.discount_percentage / 100)
-            self.discount_amount = discount
+        # Намери entered_price
+        entered_price = getattr(self, 'entered_price', None)
+        if entered_price is None:  # ✅ Само ако няма стойност
+            return
 
-        # Apply fixed discount
-        total_discount = self.discount_amount
-
-        self.line_total = base_total - total_discount
-        return self.line_total
-
-    def calculate_vat(self):
-        """Calculate VAT amount"""
-        if self.vat_rate > 0:
-            self.vat_amount = self.line_total * (self.vat_rate / 100)
+        # Намери quantity
+        if hasattr(self, 'requested_quantity'):
+            quantity = self.requested_quantity
+        elif hasattr(self, 'ordered_quantity'):
+            quantity = self.ordered_quantity
+        elif hasattr(self, 'received_quantity'):
+            quantity = self.received_quantity
         else:
-            self.vat_amount = Decimal('0.00')
-        return self.vat_amount
+            quantity = Decimal('1')
 
-    @property
-    def total_including_vat(self):
-        """Line total including VAT"""
-        return self.line_total + self.vat_amount
+        if not quantity:
+            return
+
+        try:
+            calc_result = VATCalculationService.calculate_line_totals(
+                line=self,
+                entered_price=entered_price,
+                quantity=quantity,
+                document=getattr(self, 'document', None)
+            )
+
+            # Apply results
+            if hasattr(self, 'unit_price'):
+                self.unit_price = calc_result['unit_price']
+            if hasattr(self, 'vat_rate'):
+                self.vat_rate = calc_result['vat_rate']
+            if hasattr(self, 'vat_amount'):
+                self.vat_amount = calc_result['vat_amount']
+            if hasattr(self, 'net_amount'):
+                self.net_amount = calc_result['net_amount']
+            if hasattr(self, 'gross_amount'):
+                self.gross_amount = calc_result['gross_amount']
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"VAT calculation failed: {e}")
+
+    def save(self, *args, **kwargs):
+        """
+        Преизчислява при save
+        """
+        # Изчисли преди save
+        if self.entered_price is not None or self.unit_price:
+            self.process_entered_price()
+
+        super().save(*args, **kwargs)
+
+        # Update document totals след save
+        if hasattr(self, 'document') and self.document:
+            if hasattr(self.document, 'recalculate_totals'):
+                self.document.recalculate_totals(save=True)
+

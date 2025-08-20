@@ -12,11 +12,11 @@ from django.utils import timezone
 class PaymentMixin(models.Model):
     """
     Mixin за документи с плащания
+
+    Използва се главно от DeliveryReceipt и понякога от PurchaseOrder.
+    НЕ се използва от PurchaseRequest.
     """
 
-    # =====================
-    # PAYMENT STATUS
-    # =====================
     is_paid = models.BooleanField(
         _('Is Paid'),
         default=False,
@@ -30,9 +30,6 @@ class PaymentMixin(models.Model):
         help_text=_('When payment was made')
     )
 
-    # =====================
-    # PAYMENT DETAILS
-    # =====================
     payment_method = models.CharField(
         _('Payment Method'),
         max_length=50,
@@ -40,35 +37,11 @@ class PaymentMixin(models.Model):
         help_text=_('How payment was made')
     )
 
-    payment_reference = models.CharField(
-        _('Payment Reference'),
-        max_length=100,
-        blank=True,
-        help_text=_('Bank reference, transaction ID, etc.')
-    )
-
-    # =====================
-    # PAYMENT TERMS
-    # =====================
-    payment_terms = models.CharField(
-        _('Payment Terms'),
-        max_length=100,
-        blank=True,
-        help_text=_('Payment terms and conditions')
-    )
-
-    due_date = models.DateField(
-        _('Due Date'),
-        null=True,
-        blank=True,
-        help_text=_('When payment is due')
-    )
-
     class Meta:
         abstract = True
 
     def clean(self):
-        """Payment validation"""
+        """Payment validation enhanced with DocumentType"""
         super().clean()
 
         # Payment validation
@@ -79,19 +52,3 @@ class PaymentMixin(models.Model):
 
         if self.is_paid and not self.payment_date:
             self.payment_date = timezone.now().date()
-
-    @property
-    def is_overdue(self):
-        """Check if payment is overdue"""
-        if not self.due_date or self.is_paid:
-            return False
-        return timezone.now().date() > self.due_date
-
-    @property
-    def days_until_due(self):
-        """Days until payment is due"""
-        if not self.due_date or self.is_paid:
-            return None
-
-        delta = self.due_date - timezone.now().date()
-        return delta.days
