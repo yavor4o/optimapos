@@ -379,12 +379,18 @@ class BaseDocument(models.Model):
         # Auto-generate document number ако липсва
         if not self.document_number:
             try:
-                from nomenclatures.services import DocumentService
-                self.document_number = DocumentService.generate_number_for(self)
-            except ImportError:
-                # Fallback numbering
+                # ✅ ПОПРАВЕНО: Използвай NumberingService вместо DocumentService
+                from nomenclatures.services.numbering_service import NumberingService
+                self.document_number = NumberingService.generate_document_number(
+                    document_type=self.document_type,
+                    location=getattr(self, 'location', None),
+                    user=getattr(self, 'created_by', None)
+                )
+            except Exception as e:
+                # Fallback numbering ако service не работи
                 model_name = self._meta.model_name.upper()
-                self.document_number = f"{model_name}-{timezone.now().strftime('%Y%m%d%H%M%S')}"
+                timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
+                self.document_number = f"{model_name}-{timestamp}"
 
         # ВАЖНО: Извикай clean преди save
         if not kwargs.get('skip_validation', False):
