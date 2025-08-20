@@ -1,15 +1,4 @@
 # purchases/models/orders.py - ФИНАЛНА ВЕРСИЯ
-"""
-Purchase Order Models - ПЪЛНА СИНХРОНИЗАЦИЯ СЪС SERVICES
-
-АРХИТЕКТУРА:
-✅ DocumentService - статуси, transitions, validation
-✅ ApprovalService - workflow, permissions
-✅ MovementService - inventory movements
-✅ InventoryService - stock checks
-
-PATTERN: ТОЧНО като PurchaseRequest
-"""
 
 import logging
 from typing import Dict
@@ -21,7 +10,8 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 from inventory.services import InventoryService
-from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, FinancialLineMixin
+from nomenclatures.models import BaseDocument, BaseDocumentLine
+from nomenclatures.mixins import FinancialMixin, PaymentMixin, FinancialLineMixin
 
 logger = logging.getLogger(__name__)
 
@@ -716,40 +706,4 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         """Check if specific quantity can be delivered"""
         return qty <= self.remaining_quantity
 
-    # =====================
-    # VALIDATION - ENHANCED
-    # =====================
-    def clean(self):
-        """Order line validation - ENHANCED"""
-        super().clean()
 
-        # Delivered quantity cannot exceed ordered
-        if self.ordered_quantity is not None and self.delivered_quantity is not None:
-            if self.delivered_quantity > self.ordered_quantity:
-                raise ValidationError({
-                    'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
-                })
-
-        # Price validation
-        if self.unit_price is not None and self.unit_price < 0:
-            raise ValidationError({
-                'unit_price': _('Unit price cannot be negative')
-            })
-
-        # Product availability validation
-        if self.product and self.document and self.document.location and self.ordered_quantity:
-            try:
-                from products.services.validation_service import ProductValidationService
-
-                can_purchase, message, details = ProductValidationService.can_purchase_product(
-                    product=self.product,
-                    quantity=self.ordered_quantity,
-                    supplier=self.document.supplier
-                )
-
-                if not can_purchase:
-                    raise ValidationError({
-                        'product': f"Cannot purchase this product: {message}"
-                    })
-            except ImportError:
-                pass

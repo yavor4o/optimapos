@@ -11,54 +11,48 @@ from decimal import Decimal
 
 class FinancialMixin(models.Model):
     """
-    Mixin за документи с финансови данни
+    Financial fields mixin - EXACT COPY FROM ORIGINAL base.py
     """
 
-    # =====================
-    # FINANCIAL TOTALS
-    # =====================
-    total_amount = models.DecimalField(
-        _('Total Amount'),
+    # === TOTALS (всички суми се записват БЕЗ ДДС в базата) ===
+    subtotal = models.DecimalField(
+        _('Subtotal'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Total amount before tax')
+        help_text=_('Total before VAT and discounts')
     )
 
-    tax_amount = models.DecimalField(
-        _('Tax Amount'),
+    discount_total = models.DecimalField(
+        _('Discount Total'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Total tax amount')
+        help_text=_('Total discount amount')
     )
 
-    grand_total = models.DecimalField(
-        _('Grand Total'),
+    vat_total = models.DecimalField(
+        _('VAT Total'),
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
-        help_text=_('Total amount including tax')
+        help_text=_('Total VAT amount')
     )
 
-    # =====================
-    # CURRENCY
-    # =====================
-    currency = models.ForeignKey(
-        'nomenclatures.Currency',
-        on_delete=models.PROTECT,
+    total = models.DecimalField(
+        _('Total'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Final total including VAT')
+    )
+
+    # === VAT SETTINGS ===
+    prices_entered_with_vat = models.BooleanField(
+        _('Prices Include VAT'),
         null=True,
         blank=True,
-        verbose_name=_('Currency'),
-        help_text=_('Document currency')
-    )
-
-    exchange_rate = models.DecimalField(
-        _('Exchange Rate'),
-        max_digits=10,
-        decimal_places=6,
-        default=Decimal('1.000000'),
-        help_text=_('Exchange rate to base currency')
+        help_text=_('Override location settings. NULL means use location defaults')
     )
 
     class Meta:
@@ -116,8 +110,16 @@ class FinancialLineMixin(models.Model):
     """
 
     # =====================
-    # PRICING
+    # PRICING - ОРИГИНАЛНИ ПОЛЕТА
     # =====================
+    entered_price = models.DecimalField(
+        _('Entered Price'),
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('0.0000'),
+        help_text=_('Price as entered by user (before VAT processing)')
+    )
+
     unit_price = models.DecimalField(
         _('Unit Price'),
         max_digits=10,
@@ -143,8 +145,24 @@ class FinancialLineMixin(models.Model):
     )
 
     # =====================
-    # LINE TOTALS
+    # LINE TOTALS - ОРИГИНАЛНИ ПОЛЕТА
     # =====================
+    net_amount = models.DecimalField(
+        _('Net Amount'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Line amount excluding VAT (after discount)')
+    )
+
+    gross_amount = models.DecimalField(
+        _('Gross Amount'),
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text=_('Line amount including VAT')
+    )
+
     line_total = models.DecimalField(
         _('Line Total'),
         max_digits=12,

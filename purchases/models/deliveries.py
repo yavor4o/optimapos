@@ -7,8 +7,9 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
 
-from .base import BaseDocument, BaseDocumentLine, FinancialMixin, PaymentMixin, DeliveryMixin, FinancialLineMixin
 
+from nomenclatures.models import BaseDocument, BaseDocumentLine
+from nomenclatures.mixins import FinancialMixin, PaymentMixin, DeliveryMixin, FinancialLineMixin
 
 class DeliveryReceiptManager(models.Manager):
     """Manager for Delivery Receipts with specific queries"""
@@ -236,21 +237,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin, PaymentMixin, DeliveryMixin)
         return "DEL"
 
 
-    # =====================
-    # BUSINESS LOGIC CHECKS
-    # =====================
-    def can_be_edited(self):
-        return not self.is_final_status()
 
-    def can_be_received(self):
-        return 'received' in self.get_next_statuses() and self.lines.exists()
-
-    def can_be_completed(self):
-        next_statuses = self.get_next_statuses()
-        return 'completed' in next_statuses or 'accepted' in next_statuses
-
-    def can_be_cancelled(self):
-        return not self.is_final_status()
 
     # =====================
     # PROPERTIES

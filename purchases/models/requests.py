@@ -8,8 +8,8 @@ from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
-from inventory.services import InventoryService
-from .base import BaseDocument, BaseDocumentLine, FinancialMixin, FinancialLineMixin
+from nomenclatures.mixins import FinancialMixin, FinancialLineMixin
+from nomenclatures.models import BaseDocument, BaseDocumentLine
 
 logger = logging.getLogger(__name__)
 
