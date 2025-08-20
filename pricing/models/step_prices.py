@@ -1,27 +1,34 @@
-# pricing/models/step_prices.py
+# pricing/models/step_prices.py - REFACTORED
 
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
-from decimal import Decimal
-
+from core.interfaces import ILocation
 
 class ProductStepPriceManager(models.Manager):
-    """Manager for step prices"""
+    """Updated manager с GenericForeignKey support"""
 
     def active(self):
         return self.filter(is_active=True)
 
-    def for_location(self, location):
-        return self.filter(location=location, is_active=True)
+    def for_location(self, location: ILocation):
+        content_type = ContentType.objects.get_for_model(location.__class__)
+        return self.filter(
+            content_type=content_type,
+            object_id=location.pk,
+            is_active=True
+        )
 
     def for_product(self, product):
         return self.filter(product=product, is_active=True)
 
-    def for_quantity(self, location, product, quantity):
-        """Get applicable step price for quantity"""
+    def for_quantity(self, product, location, quantity):
+        """Get best step price for quantity"""
+        content_type = ContentType.objects.get_for_model(location.__class__)
         return self.filter(
-            location=location,
+            content_type=content_type,
+            object_id=location.pk,
             product=product,
             min_quantity__lte=quantity,
             is_active=True
@@ -29,14 +36,22 @@ class ProductStepPriceManager(models.Manager):
 
 
 class ProductStepPrice(models.Model):
-    """Quantity-based step pricing"""
+    """Volume-based pricing per location"""
 
-    location = models.ForeignKey(
-        'inventory.InventoryLocation',
+    # =====================
+    # GENERIC LOCATION RELATIONSHIP
+    # =====================
+    content_type = models.ForeignKey(
+        ContentType,
         on_delete=models.CASCADE,
-        related_name='step_prices',
-        verbose_name=_('Location')
+        verbose_name=_('Location Type')
     )
+    object_id = models.PositiveIntegerField(verbose_name=_('Location ID'))
+    priceable_location = GenericForeignKey('content_type', 'object_id')
+
+    # =====================
+    # RELATIONSHIPS
+    # =====================
     product = models.ForeignKey(
         'products.Product',
         on_delete=models.CASCADE,
@@ -44,7 +59,9 @@ class ProductStepPrice(models.Model):
         verbose_name=_('Product')
     )
 
-    # Step definition
+    # =====================
+    # STEP PRICING DATA
+    # =====================
     min_quantity = models.DecimalField(
         _('Minimum Quantity'),
         max_digits=10,
@@ -59,7 +76,6 @@ class ProductStepPrice(models.Model):
         help_text=_('Price for this quantity step')
     )
 
-    # Optional description for the step
     description = models.CharField(
         _('Description'),
         max_length=100,
@@ -67,54 +83,34 @@ class ProductStepPrice(models.Model):
         help_text=_('Optional description for this price step')
     )
 
-    # Status
+    # Status & Audit
     is_active = models.BooleanField(_('Is Active'), default=True)
-
-    # Audit
     created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
     updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
 
     objects = ProductStepPriceManager()
 
     class Meta:
-        unique_together = ('location', 'product', 'min_quantity')
         verbose_name = _('Product Step Price')
         verbose_name_plural = _('Product Step Prices')
-        ordering = ['location', 'product', 'min_quantity']
+        unique_together = [('content_type', 'object_id', 'product', 'min_quantity')]
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['product', 'min_quantity']),
+        ]
 
     def __str__(self):
-        return f"{self.product.code} @ {self.location.code} ≥ {self.min_quantity} = {self.price}"
+        location_str = str(self.priceable_location) if self.priceable_location else 'Unknown'
+        return f"{self.product.code} @ {location_str} (≥{self.min_quantity}): {self.price}"
 
-    def clean(self):
-        if self.min_quantity <= 0:
-            raise ValidationError({
-                'min_quantity': _('Minimum quantity must be positive')
-            })
-
-        if self.price < 0:
-            raise ValidationError({
-                'price': _('Price cannot be negative')
-            })
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
+    # =====================
+    # BACKWARD COMPATIBILITY
+    # =====================
     @property
-    def discount_from_base(self):
-        """Calculate discount percentage from base price"""
-        try:
-            from .base_prices import ProductPrice
-            base_price_obj = ProductPrice.objects.get(
-                location=self.location,
-                product=self.product,
-                is_active=True
-            )
-            base_price = base_price_obj.effective_price
+    def location(self) -> ILocation:
+        return self.priceable_location
 
-            if base_price > 0:
-                return ((base_price - self.price) / base_price) * 100
-        except ProductPrice.DoesNotExist:
-            pass
-
-        return Decimal('0')
+    @location.setter
+    def location(self, value: ILocation):
+        self.content_type = ContentType.objects.get_for_model(value.__class__)
+        self.object_id = value.pk
