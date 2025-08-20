@@ -1,6 +1,3 @@
-# =====================================================
-# ФАЙЛ 1: nomenclatures/models/base_document.py
-# =====================================================
 
 # nomenclatures/models/base_document.py - EXACT COPY ОТ purchases/models/base.py
 """
@@ -20,11 +17,8 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from decimal import Decimal
 import logging
 
-from core.models.company import Company
-from products.models import Product
 
 logger = logging.getLogger(__name__)
 

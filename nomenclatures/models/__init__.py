@@ -1,10 +1,6 @@
-# =====================================================
-# ФАЙЛ 6: nomenclatures/models/__init__.py - UPDATED
-# =====================================================
-
-# nomenclatures/models/__init__.py - UPDATED WITH BaseDocument
+# nomenclatures/models/__init__.py - COMPLETE FIXED VERSION
 """
-Nomenclatures models package - UPDATED WITH BaseDocument
+Nomenclatures models package - COMPLETE WITH BaseDocument
 
 НОВO: BaseDocument и mixins moved from purchases
 """
@@ -14,7 +10,7 @@ Nomenclatures models package - UPDATED WITH BaseDocument
 # =====================
 
 # Base imports
-from .base import BaseNomenclature, ActiveManager
+
 
 # NEW: Base document imports
 from .base_document import (
@@ -23,6 +19,7 @@ from .base_document import (
     DocumentManager,
     LineManager
 )
+from .base_nomenclature import BaseNomenclature, ActiveManager
 
 # Documents & Workflow
 from .documents import DocumentType, DocumentTypeManager, get_document_type_by_key
@@ -33,7 +30,6 @@ from .statuses import DocumentStatus, DocumentTypeStatus
 # Approvals - with error handling
 try:
     from .approvals import ApprovalRule, ApprovalLog, ApprovalRuleManager
-
     HAS_APPROVAL_MODELS = True
 except ImportError:
     ApprovalRule = None
@@ -51,7 +47,6 @@ try:
         generate_document_number,
         get_numbering_config_for_document
     )
-
     HAS_NUMBERING_MODELS = True
 except ImportError:
     NumberingConfiguration = None
@@ -85,7 +80,7 @@ from .operational import (
 )
 
 # =====================
-# EXPORT DEFINITION - UPDATED
+# EXPORT DEFINITION - COMPLETE
 # =====================
 __all__ = [
     # Base
@@ -134,54 +129,3 @@ if HAS_NUMBERING_MODELS:
         'LocationNumberingAssignment', 'UserNumberingPreference',
         'generate_document_number', 'get_numbering_config_for_document'
     ])
-
-# =====================================================
-# ФАЙЛ 7: nomenclatures/__init__.py - UPDATED
-# =====================================================
-
-# nomenclatures/__init__.py - UPDATED
-"""
-Nomenclatures package - UPDATED WITH BaseDocument & MIXINS
-
-НОВO: 
-- BaseDocument moved from purchases
-- Mixins package added
-"""
-
-# Re-export key classes for convenience
-from .models import (
-    BaseDocument,
-    BaseDocumentLine,
-    DocumentType,
-    DocumentStatus,
-    DocumentTypeStatus,
-)
-
-# NEW: Export mixins
-from .mixins import (
-    FinancialMixin,
-    PaymentMixin,
-    DeliveryMixin,
-    FinancialLineMixin,
-)
-
-__all__ = [
-    # Base Document classes
-    'BaseDocument',
-    'BaseDocumentLine',
-
-    # Document configuration
-    'DocumentType',
-    'DocumentStatus',
-    'DocumentTypeStatus',
-
-    # Mixins
-    'FinancialMixin',
-    'PaymentMixin',
-    'DeliveryMixin',
-    'FinancialLineMixin',
-]
-
-# Version info
-__version__ = '2.0.0'  # UPDATED для BaseDocument integration
-__author__ = 'Your Company'

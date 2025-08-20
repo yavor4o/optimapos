@@ -15,22 +15,18 @@ Purchases models package - Clean organized structure
 # =====================
 # BASE CLASSES & MIXINS
 # =====================
-from .base import (
-    # Managers
-    DocumentManager,
-    LineManager,
-
-    # Base models
+from nomenclatures.models import (
     BaseDocument,
     BaseDocumentLine,
-
-    # Mixins за различни функционалности
-    FinancialMixin,  # За документи с финансови данни
-    PaymentMixin,  # За документи с плащания
-    DeliveryMixin,  # За документи с доставки
-    FinancialLineMixin  # За редове с финансови данни
+    DocumentManager,
+    LineManager,
 )
-
+from nomenclatures.mixins import (
+    FinancialMixin,
+    PaymentMixin,
+    DeliveryMixin,
+    FinancialLineMixin,
+)
 # =====================
 # REQUEST MODELS (БЕЗ финансови данни)
 # =====================
