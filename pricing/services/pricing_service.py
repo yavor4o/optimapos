@@ -1,4 +1,4 @@
-# pricing/services/pricing_service.py - FINAL REFACTORED VERSION
+# pricing/services/pricing_service.py - FIXED VERSION
 
 from django.utils import timezone
 from django.db import models
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PricingService:
     """
     Centralized pricing logic - FULLY REFACTORED for new inventory system
-    NO MORE Product dependencies - uses InventoryItem.avg_cost as single source of truth
+    FIXED: All location field references to use manager.for_location() or GenericForeignKey
     """
 
     # =====================================================
@@ -76,34 +76,31 @@ class PricingService:
 
     @staticmethod
     def get_base_price(location, product) -> Decimal:
-        """Get base price for product at location"""
+        """Get base price for product at location - FIXED"""
         try:
-            price_record = ProductPrice.objects.get(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            price_record = ProductPrice.objects.for_location(location).filter(
                 product=product,
                 is_active=True
-            )
-            return price_record.effective_price or Decimal('0')
-        except ProductPrice.DoesNotExist:
-            return Decimal('0')
+            ).first()
+
+            return price_record.effective_price if price_record else Decimal('0')
         except Exception as e:
             logger.error(f"Error getting base price: {e}")
             return Decimal('0')
 
     @staticmethod
     def get_step_price(location, product, quantity: Decimal) -> Optional[Decimal]:
-        """Get step price based on quantity"""
+        """Get step price based on quantity - FIXED"""
         try:
-            step_prices = ProductStepPrice.objects.filter(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            step_prices = ProductStepPrice.objects.for_location(location).filter(
                 product=product,
                 is_active=True,
-                minimum_quantity__lte=quantity
-            ).order_by('-minimum_quantity')
+                min_quantity__lte=quantity  # ✅ FIXED: correct field name
+            ).order_by('-min_quantity')
 
-            if step_prices.exists():
-                return step_prices.first().price
-            return None
+            return step_prices.first().price if step_prices.exists() else None
 
         except Exception as e:
             logger.error(f"Error getting step price: {e}")
@@ -111,17 +108,16 @@ class PricingService:
 
     @staticmethod
     def get_group_price(location, product, customer_group, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
-        """Get price for customer group"""
+        """Get price for customer group - FIXED"""
         try:
-            group_price = ProductPriceByGroup.objects.get(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            group_price = ProductPriceByGroup.objects.for_location(location).filter(
                 product=product,
                 customer_group=customer_group,
                 is_active=True
-            )
-            return group_price.price
-        except ProductPriceByGroup.DoesNotExist:
-            return None
+            ).first()
+
+            return group_price.price if group_price else None
         except Exception as e:
             logger.error(f"Error getting group price: {e}")
             return None
@@ -249,14 +245,13 @@ class PricingService:
     def update_pricing_after_inventory_change(location, product, new_avg_cost: Decimal) -> int:
         """
         Called by InventoryItem.refresh_for_combination()
-        Updates markup-based prices when inventory cost changes
+        Updates markup-based prices when inventory cost changes - FIXED
         """
         try:
             updated_count = 0
 
-            # Update markup-based prices
-            markup_prices = ProductPrice.objects.filter(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            markup_prices = ProductPrice.objects.for_location(location).filter(
                 product=product,
                 pricing_method='MARKUP',
                 is_active=True
@@ -282,15 +277,15 @@ class PricingService:
             return 0
 
     # =====================================================
-    # PROMOTIONAL PRICING
+    # PROMOTIONAL PRICING - FIXED
     # =====================================================
 
     @staticmethod
     def _get_promotional_price(location, product, quantity, date, customer=None) -> Optional[Decimal]:
-        """Get promotional price if active"""
+        """Get promotional price if active - FIXED"""
         try:
-            promotions = PromotionalPrice.objects.filter(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            promotions = PromotionalPrice.objects.for_location(location).filter(
                 product=product,
                 is_active=True,
                 start_date__lte=date,
@@ -306,8 +301,8 @@ class PricingService:
 
             # Filter by minimum quantity
             promotions = promotions.filter(
-                models.Q(minimum_quantity__isnull=True) |
-                models.Q(minimum_quantity__lte=quantity)
+                models.Q(min_quantity__isnull=True) |
+                models.Q(min_quantity__lte=quantity)
             )
 
             # Get the best (lowest) promotional price
@@ -338,10 +333,10 @@ class PricingService:
 
     @staticmethod
     def bulk_update_location_prices(location, markup_change_percentage: Decimal) -> int:
-        """Bulk update all prices at location by percentage"""
+        """Bulk update all prices at location by percentage - FIXED"""
         try:
-            updated_count = ProductPrice.objects.filter(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            updated_count = ProductPrice.objects.for_location(location).filter(
                 is_active=True
             ).update(
                 effective_price=models.F('effective_price') * (1 + markup_change_percentage / 100),
@@ -356,21 +351,20 @@ class PricingService:
             return 0
 
     # =====================================================
-    # PACKAGING PRICING INTEGRATION
+    # PACKAGING PRICING INTEGRATION - FIXED
     # =====================================================
 
     @staticmethod
     def get_packaging_price(location, packaging, customer=None, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
-        """Get price for specific packaging"""
+        """Get price for specific packaging - FIXED"""
         try:
-            packaging_price = PackagingPrice.objects.get(
-                location=location,
+            # ✅ FIXED: Use manager.for_location() instead of location=location
+            packaging_price = PackagingPrice.objects.for_location(location).filter(
                 packaging=packaging,
                 is_active=True
-            )
-            return packaging_price.price
-        except PackagingPrice.DoesNotExist:
-            return None
+            ).first()
+
+            return packaging_price.price if packaging_price else None
         except Exception as e:
             logger.error(f"Error getting packaging price: {e}")
             return None
@@ -432,12 +426,12 @@ class PricingService:
             }
 
     # =====================================================
-    # REPORTING & ANALYTICS
+    # REPORTING & ANALYTICS - FIXED
     # =====================================================
 
     @staticmethod
     def get_all_prices_for_product(location, product, customer=None) -> Dict:
-        """Get all available prices for a product"""
+        """Get all available prices for a product - FIXED"""
         try:
             result = {
                 'base_price': PricingService.get_base_price(location, product),
@@ -449,36 +443,33 @@ class PricingService:
                 'packaging_prices': []
             }
 
-            # Step prices
-            step_prices = ProductStepPrice.objects.filter(
-                location=location,
+            # ✅ FIXED: Step prices
+            step_prices = ProductStepPrice.objects.for_location(location).filter(
                 product=product,
                 is_active=True
-            ).order_by('minimum_quantity')
+            ).order_by('min_quantity')
 
             for step_price in step_prices:
                 result['step_prices'].append({
-                    'minimum_quantity': step_price.minimum_quantity,
+                    'min_quantity': step_price.min_quantity,
                     'price': step_price.price
                 })
 
-            # Group prices
-            group_prices = ProductPriceByGroup.objects.filter(
-                location=location,
+            # ✅ FIXED: Group prices
+            group_prices = ProductPriceByGroup.objects.for_location(location).filter(
                 product=product,
                 is_active=True
-            ).select_related('customer_group')
+            ).select_related('price_group')  # ✅ FIXED: correct field name
 
             for group_price in group_prices:
                 result['group_prices'].append({
-                    'customer_group': group_price.customer_group.name,
+                    'customer_group': group_price.price_group.name,  # ✅ FIXED: correct field name
                     'price': group_price.price
                 })
 
-            # Active promotions
+            # ✅ FIXED: Active promotions
             today = timezone.now().date()
-            promotions = PromotionalPrice.objects.filter(
-                location=location,
+            promotions = PromotionalPrice.objects.for_location(location).filter(
                 product=product,
                 is_active=True,
                 start_date__lte=today,
@@ -491,7 +482,7 @@ class PricingService:
                     'promotional_price': promotion.promotional_price,
                     'start_date': promotion.start_date,
                     'end_date': promotion.end_date,
-                    'minimum_quantity': promotion.minimum_quantity
+                    'min_quantity': getattr(promotion, 'min_quantity', None)
                 })
 
             return result
