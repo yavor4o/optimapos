@@ -166,26 +166,62 @@ if HAS_NUMBERING_MODELS:
 
         def current_number_display(self, obj):
             """Показва текущия номер и следващия"""
-            next_num = obj.current_number + 1
-            formatted_next = obj.format_number(next_num)
+            # ✅ ИЗПОЛЗВАЙ СЕРВИСА ДИРЕКТНО!
+            try:
+                from ..services.numbering_service import NumberingService
+                next_preview = NumberingService.get_next_preview_number(
+                    document_type=obj.document_type,
+                    location=None,
+                    user=None
+                )
+            except Exception:
+                # Simple fallback
+                next_num = obj.current_number + 1
+                if obj.prefix:
+                    next_preview = f"{obj.prefix}{str(next_num).zfill(obj.digits_count)}"
+                else:
+                    next_preview = str(next_num).zfill(obj.digits_count)
 
             return format_html(
                 'Current: <strong>{}</strong><br/>Next: <span style="color: #28a745;">{}</span>',
                 obj.current_number,
-                formatted_next
+                next_preview
             )
 
-        current_number_display.short_description = _('Numbers')
+        current_number_display.short_description = _('Current/Next')
+        current_number_display.admin_order_field = 'current_number'
 
         def fiscal_compliance(self, obj):
             """Проверява дали конфигурацията е фискално съобразена"""
             if obj.numbering_type != 'fiscal':
                 return format_html('<span style="color: #6c757d;">N/A</span>')
 
-            if obj.is_fiscal_compliant():
-                return format_html('<span style="color: #28a745;">✅ Compliant</span>')
-            else:
-                return format_html('<span style="color: #dc3545;">❌ Non-compliant</span>')
+            # ✅ ПОПРАВЕНО: Използвай NumberingService за валидация
+            try:
+                from ..services.numbering_service import NumberingService
+                validation = NumberingService.validate_numbering_configuration(obj)
+
+                if validation['valid']:
+                    return format_html('<span style="color: #28a745;">✅ Compliant</span>')
+                else:
+                    issues = validation.get('issues', [])
+                    first_issue = issues[0] if issues else 'Unknown issue'
+                    return format_html(
+                        '<span style="color: #dc3545;" title="{}">❌ Non-compliant</span>',
+                        first_issue
+                    )
+            except Exception:
+                # Simple fallback validation
+                is_compliant = (
+                        obj.numbering_type == 'fiscal' and
+                        not obj.prefix and  # No prefix for fiscal
+                        obj.digits_count >= 10  # At least 10 digits
+                )
+
+                if is_compliant:
+                    return format_html('<span style="color: #28a745;">✅ Compliant</span>')
+                else:
+                    return format_html('<span style="color: #dc3545;">❌ Non-compliant</span>')
 
         fiscal_compliance.short_description = _('Fiscal')
 

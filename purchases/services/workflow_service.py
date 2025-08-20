@@ -340,107 +340,94 @@ class PurchaseWorkflowService:
     # =====================
     # DELIVERY CREATION
     # =====================
-
     @classmethod
     @transaction.atomic
-    def create_delivery_from_order(cls, order, delivery_data=None, user=None) -> Result:
+    def create_delivery_from_order(cls, order, user=None, **delivery_overrides) -> Result:
         """
-        Create delivery receipt from confirmed order.
+        Create DeliveryReceipt from confirmed PurchaseOrder
 
-        НОВА ЦЕНТРАЛИЗИРАНА ЛОГИКА (беше разпръсната в admin)
-        ПОДОБРЕНИЯ:
-        - Full validation
-        - Flexible delivery data
-        - Quality control integration
-        - Movement automation
+        ✅ РЕШАВА: Document type, Status, Totals, Lines, Source tracking
         """
         try:
-            # Validation
-            if order.status != 'confirmed':
-                return Result.error(
-                    'ORDER_NOT_CONFIRMED',
-                    f'Order {order.document_number} is not confirmed (current: {order.status})',
-                    {'current_status': order.status}
-                )
-
-            if not order.supplier_confirmed:
-                return Result.error(
-                    'ORDER_NOT_SUPPLIER_CONFIRMED',
-                    f'Order {order.document_number} not confirmed by supplier',
-                    {'supplier_confirmed': False}
-                )
-
-            # Import models
             from purchases.models import DeliveryReceipt, DeliveryLine
+            from nomenclatures.models import DocumentType
 
-            # Prepare delivery data
-            delivery_defaults = {
+            # Validation
+            if order.status not in ['confirmed', 'sent']:
+                return Result.error(
+                    'INVALID_ORDER_STATUS',
+                    'Cannot create delivery from order with status: {}'.format(order.status)
+                )
+
+            # Get or create DocumentType for delivery
+            delivery_doc_type = None
+            try:
+                delivery_doc_type = DocumentType.objects.filter(
+                    name__icontains='delivery'
+                ).first()
+
+                if not delivery_doc_type:
+                    delivery_doc_type = DocumentType.objects.create(
+                        name='Delivery Receipt',
+                        code='DR',
+                        is_active=True
+                    )
+            except Exception:
+                pass  # Continue without document_type
+
+            # Create delivery
+            delivery_data = {
                 'supplier': order.supplier,
                 'location': order.location,
-                'source_order': order,
+                'document_type': delivery_doc_type,
                 'delivery_date': timezone.now().date(),
                 'received_by': user,
+                'received_at': timezone.now(),
+                'status': 'received',
+                'source_order': order,
+                'notes': "Created from order {}".format(order.document_number),
                 'created_by': user,
                 'updated_by': user,
             }
+            delivery_data.update(delivery_overrides)
 
-            if delivery_data:
-                delivery_defaults.update(delivery_data)
+            delivery = DeliveryReceipt.objects.create(**delivery_data)
 
-            # Create delivery
-            delivery = DeliveryReceipt.objects.create(**delivery_defaults)
-
-            # Create delivery lines based on order lines
+            # Copy lines with source tracking
             lines_created = 0
-            for order_line in order.lines.select_related('product').all():
-                delivery_line = DeliveryLine.objects.create(
+            for order_line in order.lines.all():
+                DeliveryLine.objects.create(
                     document=delivery,
                     line_number=order_line.line_number,
                     product=order_line.product,
-                    quantity=order_line.ordered_quantity,  # Default: deliver all ordered
+                    quantity=order_line.ordered_quantity,  # Copy ordered quantity
                     unit=order_line.unit,
                     unit_price=order_line.unit_price,
-                    source_order_line=order_line,
-                    quality_approved=True,  # Default: approved
+                    source_order_line=order_line,  # ✅ IMPORTANT for Expected/Variance
+                    quality_approved=None,  # Pending quality control
                 )
                 lines_created += 1
 
-            # Auto-create inventory movements
-            movements_created = 0
-            try:
-                from inventory.services.movement_service import MovementService
-                movement_result = MovementService.create_from_document(delivery)
-
-                if movement_result.ок:
-                    movements_created = movement_result.data.get('movements_count', 0)
-                else:
-                    logger.warning(f"Movement creation failed: {movement_result.msg}")
-
-            except ImportError:
-                logger.warning("MovementService not available")
-            except Exception as e:
-                logger.error(f"Movement creation error: {str(e)}")
-
-            # Update order delivery status
-            order.update_delivery_status()  # Model method за aggregation
+            # Recalculate totals (uses FinancialMixin method)
+            delivery.recalculate_totals()
 
             return Result.success(
                 {
                     'delivery': delivery,
-                    'lines_created': lines_created,
-                    'movements_created': movements_created,
                     'delivery_number': delivery.document_number,
-                    'order_delivery_status': order.delivery_status
+                    'lines_created': lines_created,
+                    'total_amount': float(delivery.total) if delivery.total else 0,
                 },
-                f'Delivery {delivery.document_number} created from order {order.document_number}'
+                'Created delivery {} from order {}'.format(
+                    delivery.document_number, order.document_number
+                )
             )
 
         except Exception as e:
-            logger.error(f"Delivery creation failed: {str(e)}")
+            logger.error("Failed to create delivery: {}".format(str(e)))
             return Result.error(
                 'DELIVERY_CREATION_ERROR',
-                f'Failed to create delivery: {str(e)}',
-                {'exception': str(e)}
+                'Failed to create delivery: {}'.format(str(e))
             )
 
     # =====================

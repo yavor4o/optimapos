@@ -14,6 +14,9 @@ UNIFIED VAT CALCULATION SERVICE - REFACTORED WITH RESULT PATTERN
 import logging
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Optional, List, Tuple, Any, Union
+
+from django.db.models import Sum
+
 from core.utils.result import Result
 
 logger = logging.getLogger(__name__)
@@ -353,21 +356,27 @@ class VATCalculationService:
         # This is the existing recalculate_document_totals method, unchanged
 
         totals = {
-            'subtotal_without_vat': Decimal('0'),
-            'total_vat_amount': Decimal('0'),
-            'total_with_vat': Decimal('0'),
+            'subtotal': Decimal('0'),  # <-- Променено
+            'vat_total': Decimal('0'),  # <-- Променено
+            'total': Decimal('0'),  # <-- Променено
+            'discount_total': Decimal('0'),  # <-- Добавено
             'lines_count': 0
         }
 
         if hasattr(document, 'lines'):
-            for line in document.lines.all():
-                if hasattr(line, 'line_total_without_vat'):
-                    totals['subtotal_without_vat'] += line.line_total_without_vat or Decimal('0')
-                if hasattr(line, 'line_vat_amount'):
-                    totals['total_vat_amount'] += line.line_vat_amount or Decimal('0')
-                if hasattr(line, 'line_total_with_vat'):
-                    totals['total_with_vat'] += line.line_total_with_vat or Decimal('0')
-                totals['lines_count'] += 1
+            # Тази логика трябва да се обнови, за да попълва правилните полета
+            # от FinancialLineMixin
+            lines_data = document.lines.aggregate(
+                sum_subtotal=Sum('net_amount'),
+                sum_vat=Sum('vat_amount'),
+                sum_discount=Sum('discount_amount')
+            )
+
+            totals['subtotal'] = lines_data['sum_subtotal'] or Decimal('0')
+            totals['vat_total'] = lines_data['sum_vat'] or Decimal('0')
+            totals['discount_total'] = lines_data['sum_discount'] or Decimal('0')
+            totals['total'] = totals['subtotal'] + totals['vat_total']
+            totals['lines_count'] = document.lines.count()
 
         return totals
 

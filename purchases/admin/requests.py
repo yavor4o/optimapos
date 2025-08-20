@@ -42,7 +42,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('General Information', {
-            'fields': ('document_number', 'document_date', 'status', 'supplier', 'location')
+            'fields': ('document_number', 'document_date', 'status', 'supplier', 'location','document_type')
         }),
         ('Request Details', {
             'fields': ('priority', 'required_by_date', 'notes')

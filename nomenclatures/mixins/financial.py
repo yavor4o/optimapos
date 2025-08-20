@@ -2,13 +2,14 @@
 """
 Financial Mixins - EXTRACTED FROM purchases.models.base
 """
+import logging
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
-
+logger = logging.getLogger(__name__)
 
 class FinancialMixin(models.Model):
     """
@@ -62,26 +63,69 @@ class FinancialMixin(models.Model):
     class Meta:
         abstract = True
 
-    def recalculate_totals(self, save=True):
+    def recalculate_totals(self, save=True) -> dict:
         """
-        Преизчислява всички totals от линиите
-        Делегира на VATCalculationService
+        Преизчислява всички суми на документа, като делегира на VATCalculationService.
+
+        Този метод е "мостът" между модела и услугата. Той:
+        1. Извиква специализираната услуга, за да извърши изчислението.
+        2. Обработва резултата (Result обект), който услугата връща.
+        3. Актуализира собствените си полета с получените данни.
+        4. Опционално записва промените в базата данни.
+
+        Args:
+            save (bool): Ако е True, ще запише промените в базата данни.
+
+        Returns:
+            dict: Речник с изчислените суми или празен речник при грешка.
         """
-        from nomenclatures.services.vat_calculation_service import VATCalculationService
+        try:
+            # Импортваме услугата ВЪТРЕ в метода, за да избегнем циклични зависимости
+            from nomenclatures.services.vat_calculation_service import VATCalculationService
 
-        # Делегира изчислението
-        totals = VATCalculationService.recalculate_document_totals(self)
+            # 1. Делегираме изчислението на услугата.
+            # Подаваме save=False, защото този метод контролира кога се записва.
+            result = VATCalculationService.calculate_document_vat(self, save=False)
 
-        # Update полетата
-        self.subtotal = totals['subtotal']
-        self.vat_total = totals['vat_total']
-        self.discount_total = totals['discount_total']
-        self.total = totals['total']
+            # 2. Проверяваме дали услугата е върнала успешен резултат.
+            if not result.ok:
+                # Ако има грешка, записваме я в лога, но не "счупваме" програмата.
+                logger.error(
+                    f"Failed to recalculate totals for document pk={self.pk} "
+                    f"(number={getattr(self, 'document_number', 'N/A')}): "
+                    f"[{result.code}] {result.msg}"
+                )
+                # Връщаме празен речник, за да не се счупи кодът, който извиква този метод.
+                return {}
 
-        if save:
-            self.save(update_fields=['subtotal', 'vat_total', 'discount_total', 'total'])
+            # 3. "Разопаковаме" данните от успешния резултат.
+            totals_data = result.get_data()
 
-        return totals
+            # 4. Актуализираме полетата на модела по БЕЗОПАСЕН начин.
+            # Използваме .get(key, default_value), за да избегнем KeyError,
+            # ако услугата по някаква причина не върне някой от ключовете.
+            self.subtotal = totals_data.get('subtotal', Decimal('0.00'))
+            self.vat_total = totals_data.get('vat_total', Decimal('0.00'))
+            self.discount_total = totals_data.get('discount_total', Decimal('0.00'))
+            self.total = totals_data.get('total', Decimal('0.00'))
+
+            # 5. Записваме промените, ако е поискано.
+            # Използваме update_fields за по-добра производителност и за да избегнем
+            # задействането на нежелани странични ефекти от други полета.
+            if save:
+                self.save(update_fields=['subtotal', 'vat_total', 'discount_total', 'total'])
+
+            # Връщаме речника с изчислените суми.
+            return totals_data
+
+        except ImportError:
+            logger.exception("VATCalculationService not found. Cannot recalculate totals.")
+            # Ако услугата изобщо не може да бъде импортната, връщаме празен речник.
+            return {}
+        except Exception:
+            logger.exception(f"An unexpected error occurred during recalculate_totals for document pk={self.pk}")
+            # Хващаме и всякакви други неочаквани грешки.
+            return {}
 
     def get_price_entry_mode(self) -> bool:
         """

@@ -103,11 +103,65 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 
     @admin.action(description='Create Delivery Receipts from selected orders')
     def create_delivery_action(self, request, queryset):
+        """
+        ✅ ПОПРАВЕН ACTION - използва service правилно
+        """
+        success_count = 0
+        error_count = 0
+
         for order in queryset:
             try:
-                delivery = order.create_delivery(user=request.user)
-                self.message_user(request,
-                                  f"Created Delivery {delivery.document_number} from Order {order.document_number}.",
-                                  messages.SUCCESS)
-            except ValidationError as e:
-                self.message_user(request, f"Error creating delivery for {order.document_number}: {e}", messages.ERROR)
+                # ✅ ИЗПОЛЗВАЙ SERVICE ДИРЕКТНО
+                from purchases.services.workflow_service import PurchaseWorkflowService
+                result = PurchaseWorkflowService.create_delivery_from_order(
+                    order, user=request.user
+                )
+
+                if result.ok:
+                    delivery = result.data['delivery']
+                    lines_count = result.data['lines_created']
+
+                    self.message_user(
+                        request,
+                        "✅ Created delivery {} from order {} ({} lines)".format(
+                            delivery.document_number,
+                            order.document_number,
+                            lines_count
+                        ),
+                        messages.SUCCESS
+                    )
+                    success_count += 1
+                else:
+                    self.message_user(
+                        request,
+                        "❌ Failed to create delivery from {}: {}".format(
+                            order.document_number, result.msg
+                        ),
+                        messages.ERROR
+                    )
+                    error_count += 1
+
+            except Exception as e:
+                self.message_user(
+                    request,
+                    "❌ Error creating delivery from {}: {}".format(
+                        order.document_number, str(e)
+                    ),
+                    messages.ERROR
+                )
+                error_count += 1
+
+        # ✅ ОБОБЩИТЕЛНИ СЪОБЩЕНИЯ
+        if success_count > 0:
+            self.message_user(
+                request,
+                "🎉 Successfully created {} deliveries".format(success_count),
+                messages.SUCCESS
+            )
+
+        if error_count > 0:
+            self.message_user(
+                request,
+                "⚠️ {} deliveries failed to create".format(error_count),
+                messages.WARNING
+            )

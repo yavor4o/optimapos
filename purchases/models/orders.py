@@ -406,26 +406,27 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         except ImportError:
             raise ValidationError("PurchaseWorkflowService is not available")
 
-    def create_delivery(self, user=None, delivery_data=None):
+    def create_delivery(self, user=None, **delivery_overrides):
         """
-        NEW WRAPPER METHOD - Delegates to PurchaseWorkflowService
+        Create delivery from this order - delegates to service
 
-        This method didn't exist before but follows the same pattern
+        Returns: DeliveryReceipt object for backward compatibility
         """
         try:
             from purchases.services.workflow_service import PurchaseWorkflowService
-
             result = PurchaseWorkflowService.create_delivery_from_order(
-                self, delivery_data, user
+                self, user, **delivery_overrides
             )
 
             if result.ok:
                 return result.data['delivery']  # Return delivery object
             else:
+                from django.core.exceptions import ValidationError
                 raise ValidationError(result.msg)
 
         except ImportError:
-            raise ValidationError("PurchaseWorkflowService is not available")
+            from django.core.exceptions import ValidationError
+            raise ValidationError("PurchaseWorkflowService not available")
 
     # =====================
     # ENHANCED ANALYSIS METHODS - Delegate to Services
@@ -739,22 +740,27 @@ class PurchaseOrderLine(models.Model):
 
     @property
     def line_total(self):
-        """Simple calculation - stays in model"""
-        if self.ordered_quantity and self.unit_price:
-            return self.ordered_quantity * self.unit_price
-        return Decimal('0')
+        """Simple calculation - stays in model - NULL-SAFE"""
+        ordered = self.ordered_quantity or Decimal('0')
+        price = self.unit_price or Decimal('0')
+        return ordered * price
 
     @property
     def delivery_progress(self):
-        """Simple calculation - stays in model"""
-        if self.ordered_quantity > 0:
-            return float(self.delivered_quantity / self.ordered_quantity * 100)
+        """Simple calculation - stays in model - NULL-SAFE"""
+        ordered = self.ordered_quantity or Decimal('0')
+        delivered = self.delivered_quantity or Decimal('0')
+
+        if ordered > 0:
+            return float(delivered / ordered * 100)
         return 0.0
 
     @property
     def remaining_quantity(self):
-        """Simple calculation - stays in model"""
-        return max(Decimal('0'), self.ordered_quantity - self.delivered_quantity)
+        """Simple calculation - stays in model - NULL-SAFE"""
+        ordered = self.ordered_quantity or Decimal('0')
+        delivered = self.delivered_quantity or Decimal('0')
+        return max(Decimal('0'), ordered - delivered)
 
     def clean(self):
         """Model-level validation"""
