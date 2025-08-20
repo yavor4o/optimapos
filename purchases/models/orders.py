@@ -223,14 +223,14 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # SOURCE TRACKING
     # =====================
 
-    source_request = models.OneToOneField(
+    source_request = models.ForeignKey(
         'purchases.PurchaseRequest',
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='converted_to_order',
-        verbose_name=_('Source Request')
-    )
+        related_name='sourced_orders',  # ✅ ДОБАВИ ТОВА
+        verbose_name=_('Source Request'),
+        help_text=_('Request this order was created from (if any)'))
 
     # =====================
     # MANAGER AND META

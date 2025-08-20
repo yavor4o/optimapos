@@ -187,12 +187,14 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
     # CONVERSION TRACKING FIELDS
     # =====================
 
-    converted_to_order = models.OneToOneField(
+    # В purchases/models/requests.py - променй САМО тази линия:
+    # В purchases/models/requests.py - променй САМО тази линия:
+    converted_to_order = models.ForeignKey(
         'purchases.PurchaseOrder',
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='source_request',
+        related_name='originating_request',  # ✅ ДОБАВИ ТОВА
         verbose_name=_('Converted to Order')
     )
 
