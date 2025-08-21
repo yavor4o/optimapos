@@ -44,15 +44,15 @@ class NumberingConfigurationManager(BaseNomenclatureManager):
         try:
             content_type = ContentType.objects.get_for_model(location.__class__)
             return self.active().filter(
-                locationnumberingassignment__location_content_type=content_type,
-                locationnumberingassignment__location_object_id=location.pk,
-                locationnumberingassignment__is_active=True
+                location_assignments__location_content_type=content_type,  # <- ПРОМЕНИ ТУК
+                location_assignments__location_object_id=location.pk,  # <- ПРОМЕНИ ТУК
+                location_assignments__is_active=True  # <- ПРОМЕНИ ТУК
             )
         except:
             # FALLBACK: Use legacy location field
             return self.active().filter(
-                locationnumberingassignment__location=location,
-                locationnumberingassignment__is_active=True
+                location_assignments__location=location,  # <- ПРОМЕНИ ТУК СЪЩО
+                location_assignments__is_active=True  # <- ПРОМЕНИ ТУК СЪЩО
             )
 
     def fiscal_configs(self):
