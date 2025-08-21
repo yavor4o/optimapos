@@ -571,6 +571,8 @@ class MovementService:
         logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
         return movement
 
+    # inventory/services/movement_service.py
+
     @staticmethod
     @transaction.atomic
     def _create_outgoing_movement_internal(
@@ -590,11 +592,16 @@ class MovementService:
             sale_price: Optional[Decimal] = None,
             customer=None
     ) -> List[InventoryMovement]:
-        """Internal outgoing movement creation with WORKING RACE CONDITION PROTECTION"""
+        """
+        Internal outgoing movement creation with RACE CONDITION PROTECTION.
+        Uses atomic database operations to ensure thread safety.
+        """
 
+        # Set defaults
         if movement_date is None:
             movement_date = timezone.now().date()
 
+        # Determine negative stock policy
         if allow_negative_stock is None:
             allow_negative_stock = getattr(location, 'allow_negative_stock', False)
 
@@ -602,19 +609,29 @@ class MovementService:
         if sale_price is None and source_document_type in ['SALE', 'DELIVERY']:
             sale_price = MovementService._detect_sale_price(location, product, customer, quantity)
 
-        # 🔒 CRITICAL FIX: Lock AND update atomically
-        if not allow_negative_stock:
-            # Try to update atomically with F() expression
-            updated = InventoryItem.objects.filter(
-                location=location,
-                product=product,
-                current_qty__gte=quantity + F('reserved_qty')  # Check available
-            ).update(
-                current_qty=F('current_qty') - quantity  # Decrease atomically
-            )
+        # 🔒 ATOMIC STOCK UPDATE - Thread-safe quantity decrease
+        # This MUST happen first, before creating any movements
+        updated = InventoryItem.objects.filter(
+            location=location,
+            product=product,
+            current_qty__gte=quantity + F('reserved_qty')  # Check available quantity
+        ).update(
+            current_qty=F('current_qty') - quantity  # Atomic decrease
+        )
 
-            if updated == 0:
-                # No rows updated = insufficient stock
+        # Check if update succeeded
+        if updated == 0:
+            # No rows updated means insufficient stock
+            if allow_negative_stock:
+                # Force update even if it goes negative
+                InventoryItem.objects.filter(
+                    location=location,
+                    product=product
+                ).update(
+                    current_qty=F('current_qty') - quantity
+                )
+            else:
+                # Don't allow negative - raise error with details
                 try:
                     item = InventoryItem.objects.get(location=location, product=product)
                     available = item.current_qty - item.reserved_qty
@@ -622,27 +639,23 @@ class MovementService:
                         f"Insufficient stock. Available: {available}, Required: {quantity}"
                     )
                 except InventoryItem.DoesNotExist:
-                    raise ValidationError("No inventory record found for this product at this location")
+                    raise ValidationError(
+                        f"No inventory record found for {product.code} at {location.code}"
+                    )
 
-        else:
-            # If negative allowed, just decrease without checking
-            from django.db.models import F
-            InventoryItem.objects.filter(
-                location=location,
-                product=product
-            ).update(
-                current_qty=F('current_qty') - quantity
-            )
-
+        # Now create the movement records
         movements = []
         should_track_batches = MovementService._should_track_batches(location, product)
 
         if should_track_batches and use_fifo and manual_batch_number is None:
+            # FIFO batch movements
             movements = MovementService._create_fifo_outgoing_movements(
                 location, product, quantity, movement_date, source_document_type,
                 source_document_number, source_document_line_id, reason, created_by, sale_price
             )
         else:
+            # Simple single movement
+            # Get cost price
             cost_price = manual_cost_price or MovementService._get_smart_cost_price(
                 location=location,
                 product=product,
@@ -650,14 +663,16 @@ class MovementService:
                 movement_type='OUT'
             )
 
+            # Ensure proper decimal precision
             cost_price = cost_price.quantize(Decimal('0.01'))
 
-            # Calculate and round profit
+            # Calculate profit if sale price provided
             profit_amount = Decimal('0.00')
-            sale_price = sale_price.quantize(Decimal('0.01'))
             if sale_price:
+                sale_price = sale_price.quantize(Decimal('0.01'))
                 profit_amount = ((sale_price - cost_price) * quantity).quantize(Decimal('0.01'))
 
+            # Create the movement record
             movement = InventoryMovement.objects.create(
                 location=location,
                 product=product,
@@ -676,24 +691,35 @@ class MovementService:
             )
             movements.append(movement)
 
-        # Cache refresh AFTER movement is created
-        try:
-            InventoryItem.refresh_for_combination(location, product)
+        # ⚠️ CRITICAL: NO refresh_for_combination here!
+        # The atomic update already handled the stock correctly.
+        # Calling refresh would break thread safety by recalculating from movements.
 
-            if should_track_batches and movements:
-                for movement in movements:
-                    if movement.batch_number:
-                        InventoryBatch.refresh_for_combination(
-                            location, product, movement.batch_number
-                        )
+        # Optional: Update only non-critical cached fields
+        try:
+            # These updates don't affect stock quantity
+            InventoryItem.objects.filter(
+                location=location,
+                product=product
+            ).update(
+                last_movement_date=timezone.now(),
+                last_sale_date=movement_date if source_document_type in ['SALE', 'DELIVERY'] else F('last_sale_date'),
+                last_sale_price=sale_price if sale_price else F('last_sale_price')
+            )
         except Exception as e:
-            logger.error(f"Error refreshing cache after outgoing movement: {e}")
+            # Non-critical - just log and continue
+            logger.debug(f"Could not update cache fields: {e}")
 
         # Log success
-        total_profit = sum(getattr(m, 'total_profit', 0) or Decimal('0') for m in movements)
+        total_quantity = sum(m.quantity for m in movements)
+        total_profit = sum(
+            ((m.sale_price or Decimal('0')) - m.cost_price) * m.quantity
+            for m in movements
+        )
+
         logger.info(
-            f"✅ Created outgoing movement: {product.code} -{quantity} at {location.code}, "
-            f"movements: {len(movements)}, total_profit: {total_profit}"
+            f"✅ Outgoing movement: {product.code} -{total_quantity} at {location.code}, "
+            f"movements: {len(movements)}, profit: {total_profit:.2f}"
         )
 
         return movements
@@ -746,7 +772,7 @@ class MovementService:
             movements.append(movement)
 
             # Update batch atomically
-            from django.db.models import F
+
             InventoryBatch.objects.filter(pk=batch.pk).update(
                 current_qty=F('current_qty') - qty_from_batch
             )
