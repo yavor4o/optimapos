@@ -4,14 +4,14 @@
 import logging
 from datetime import timedelta
 from django.db import transaction
-from django.db.models import Sum
+
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 from core.utils.result import Result
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
-
+from django.db.models import Sum, F
 logger = logging.getLogger(__name__)
 
 
@@ -590,7 +590,7 @@ class MovementService:
             sale_price: Optional[Decimal] = None,
             customer=None
     ) -> List[InventoryMovement]:
-        """Internal outgoing movement creation with full FIFO logic"""
+        """Internal outgoing movement creation with WORKING RACE CONDITION PROTECTION"""
 
         if movement_date is None:
             movement_date = timezone.now().date()
@@ -602,34 +602,61 @@ class MovementService:
         if sale_price is None and source_document_type in ['SALE', 'DELIVERY']:
             sale_price = MovementService._detect_sale_price(location, product, customer, quantity)
 
-        # Check availability
+        # 🔒 CRITICAL FIX: Lock AND update atomically
         if not allow_negative_stock:
-            try:
-                item = InventoryItem.objects.get(location=location, product=product)
-                if item.available_qty < quantity:
+            # Try to update atomically with F() expression
+            updated = InventoryItem.objects.filter(
+                location=location,
+                product=product,
+                current_qty__gte=quantity + F('reserved_qty')  # Check available
+            ).update(
+                current_qty=F('current_qty') - quantity  # Decrease atomically
+            )
+
+            if updated == 0:
+                # No rows updated = insufficient stock
+                try:
+                    item = InventoryItem.objects.get(location=location, product=product)
+                    available = item.current_qty - item.reserved_qty
                     raise ValidationError(
-                        f"Insufficient stock. Available: {item.available_qty}, Required: {quantity}"
+                        f"Insufficient stock. Available: {available}, Required: {quantity}"
                     )
-            except InventoryItem.DoesNotExist:
-                raise ValidationError("No inventory record found for this product at this location")
+                except InventoryItem.DoesNotExist:
+                    raise ValidationError("No inventory record found for this product at this location")
+
+        else:
+            # If negative allowed, just decrease without checking
+            from django.db.models import F
+            InventoryItem.objects.filter(
+                location=location,
+                product=product
+            ).update(
+                current_qty=F('current_qty') - quantity
+            )
 
         movements = []
         should_track_batches = MovementService._should_track_batches(location, product)
 
         if should_track_batches and use_fifo and manual_batch_number is None:
-            # ✅ FIFO BATCH MOVEMENTS - FULL IMPLEMENTATION
             movements = MovementService._create_fifo_outgoing_movements(
                 location, product, quantity, movement_date, source_document_type,
                 source_document_number, source_document_line_id, reason, created_by, sale_price
             )
         else:
-            # ✅ SIMPLE STOCK MOVEMENT
             cost_price = manual_cost_price or MovementService._get_smart_cost_price(
                 location=location,
                 product=product,
                 batch_number=manual_batch_number,
                 movement_type='OUT'
             )
+
+            cost_price = cost_price.quantize(Decimal('0.01'))
+
+            # Calculate and round profit
+            profit_amount = Decimal('0.00')
+            sale_price = sale_price.quantize(Decimal('0.01'))
+            if sale_price:
+                profit_amount = ((sale_price - cost_price) * quantity).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -638,6 +665,7 @@ class MovementService:
                 quantity=quantity,
                 cost_price=cost_price,
                 sale_price=sale_price,
+                profit_amount=profit_amount,
                 batch_number=manual_batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
@@ -648,7 +676,7 @@ class MovementService:
             )
             movements.append(movement)
 
-        # ✅ CACHE REFRESH
+        # Cache refresh AFTER movement is created
         try:
             InventoryItem.refresh_for_combination(location, product)
 
@@ -658,11 +686,10 @@ class MovementService:
                         InventoryBatch.refresh_for_combination(
                             location, product, movement.batch_number
                         )
-
         except Exception as e:
             logger.error(f"Error refreshing cache after outgoing movement: {e}")
 
-        # ✅ LOG SUCCESS WITH PROFIT INFO
+        # Log success
         total_profit = sum(getattr(m, 'total_profit', 0) or Decimal('0') for m in movements)
         logger.info(
             f"✅ Created outgoing movement: {product.code} -{quantity} at {location.code}, "
@@ -676,48 +703,67 @@ class MovementService:
             location, product, quantity, movement_date, source_document_type,
             source_document_number, source_document_line_id, reason, created_by, sale_price
     ) -> List[InventoryMovement]:
-        """COMPLETE FIFO implementation from original code"""
+        """FIFO implementation with BATCH LOCKING and PROFIT ROUNDING"""
 
         movements = []
         remaining_qty = quantity
 
-        # Get available batches ordered by FIFO (oldest first)
-        available_batches = MovementService._get_available_batches(location, product)
+        # 🔒 Lock batches with select_for_update()
+        available_batches = InventoryBatch.objects.select_for_update().filter(
+            location=location,
+            product=product,
+            current_qty__gt=0
+        ).order_by('created_at')
 
-        for batch_info in available_batches:
+        for batch in available_batches:
             if remaining_qty <= 0:
                 break
 
-            batch_number = batch_info['batch_number']
-            available_in_batch = batch_info['available_qty']
-            batch_avg_cost = batch_info['avg_cost']
+            qty_from_batch = min(remaining_qty, batch.current_qty)
 
-            # Determine quantity to take from this batch
-            qty_from_batch = min(remaining_qty, available_in_batch)
+            # 🔧 FIX: Calculate and round profit_amount
+            batch_cost = batch.avg_cost or Decimal('0.00')
+            profit_amount = Decimal('0.00')
+            if sale_price:
+                profit_amount = ((sale_price - batch_cost) * qty_from_batch).quantize(Decimal('0.01'))
 
-            # Create movement for this batch
             movement = InventoryMovement.objects.create(
                 location=location,
                 product=product,
                 movement_type=InventoryMovement.OUT,
                 quantity=qty_from_batch,
-                cost_price=batch_avg_cost,
+                cost_price=batch_cost,
                 sale_price=sale_price,
-                batch_number=batch_number,
+                profit_amount=profit_amount,  # ← ДОБАВЕНО С ЗАКРЪГЛЯНЕ
+                batch_number=batch.batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
                 source_document_line_id=source_document_line_id,
                 movement_date=movement_date,
-                reason=reason,
+                reason=reason or f'FIFO from batch {batch.batch_number}',
                 created_by=created_by
             )
             movements.append(movement)
 
+            # Update batch atomically
+            from django.db.models import F
+            InventoryBatch.objects.filter(pk=batch.pk).update(
+                current_qty=F('current_qty') - qty_from_batch
+            )
+
             remaining_qty -= qty_from_batch
 
-        # If we still have remaining quantity, create movement with default batch
+        # Handle remaining if no batches
         if remaining_qty > 0:
+            if not getattr(location, 'allow_negative_stock', False):
+                raise ValidationError(f"Insufficient batch quantities. Need {remaining_qty} more units")
+
             default_cost = MovementService._get_smart_cost_price(location, product, None, 'OUT')
+
+            # 🔧 FIX: Round profit for non-batch movement too
+            profit_amount = Decimal('0.00')
+            if sale_price:
+                profit_amount = ((sale_price - default_cost) * remaining_qty).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -726,6 +772,7 @@ class MovementService:
                 quantity=remaining_qty,
                 cost_price=default_cost,
                 sale_price=sale_price,
+                profit_amount=profit_amount,  # ← ДОБАВЕНО
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
                 source_document_line_id=source_document_line_id,
@@ -776,10 +823,23 @@ class MovementService:
             reason: str = '',
             created_by=None
     ) -> Tuple[List[InventoryMovement], List[InventoryMovement]]:
-        """Internal transfer movement creation - full original logic"""
+        """Internal transfer movement creation with LOCKING"""
 
         if movement_date is None:
             movement_date = timezone.now().date()
+
+        # 🔒 LOCK source location inventory first
+        try:
+            source_item = InventoryItem.objects.select_for_update().get(
+                location=from_location,
+                product=product
+            )
+            if source_item.available_qty < quantity:
+                raise ValidationError(
+                    f"Insufficient stock at source. Available: {source_item.available_qty}, Required: {quantity}"
+                )
+        except InventoryItem.DoesNotExist:
+            raise ValidationError(f"No inventory at source location {from_location.code}")
 
         # Create outgoing movements from source location
         outbound_movements = MovementService._create_outgoing_movement_internal(
@@ -1373,16 +1433,21 @@ class MovementService:
 
     @staticmethod
     def _should_track_batches(location, product) -> bool:
-        """Determine if batch tracking should be used"""
+        """
+        Determine if batch tracking should be used
+        SIMPLE VERSION - based on what EXISTS in the code
+        """
+        # Check if location has the method (currently doesn't exist)
         if hasattr(location, 'should_track_batches'):
             return location.should_track_batches(product)
 
-            # Fallback за locations без should_track_batches method
+        # Check product settings that ACTUALLY EXIST
         if hasattr(product, 'track_batches'):
             return product.track_batches
         elif hasattr(product, 'requires_batch_tracking'):
             return product.requires_batch_tracking
 
+        # Default - no batch tracking
         return False
 
     @staticmethod
