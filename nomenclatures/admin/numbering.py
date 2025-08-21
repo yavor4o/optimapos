@@ -28,7 +28,7 @@ if HAS_NUMBERING_MODELS:
         """Професионален админ за numbering configurations"""
 
         list_display = [
-            'name',
+            'code',
             'document_type',
             'numbering_type_badge',
             'series_info',
@@ -65,6 +65,7 @@ if HAS_NUMBERING_MODELS:
         fieldsets = (
             (_('Basic Information'), {
                 'fields': (
+                    'code',
                     'name',
                     'document_type',
                     'numbering_type',

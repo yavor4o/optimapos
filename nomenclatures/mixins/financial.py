@@ -99,7 +99,7 @@ class FinancialMixin(models.Model):
                 return {}
 
             # 3. "Разопаковаме" данните от успешния резултат.
-            totals_data = result.get_data()
+            totals_data = result.data
 
             # 4. Актуализираме полетата на модела по БЕЗОПАСЕН начин.
             # Използваме .get(key, default_value), за да избегнем KeyError,

@@ -357,6 +357,26 @@ class PurchaseWorkflowService:
             from nomenclatures.services.document.creator import DocumentCreator
             from nomenclatures.services.vat_calculation_service import VATCalculationService
 
+            # ===================================================================
+            # СТЪПКА 0: ENSURE WE HAVE A VALID USER
+            # ===================================================================
+            if user is None:
+                try:
+                    from django.contrib.auth import get_user_model
+                    User = get_user_model()
+                    user = User.objects.filter(is_active=True).first()
+                    if user is None:
+                        return Result.error(
+                            'NO_USER_AVAILABLE',
+                            'No active user found for delivery creation'
+                        )
+                    logger.warning(f"No user provided, using fallback user: {user.username}")
+                except Exception as e:
+                    return Result.error(
+                        'USER_RESOLUTION_ERROR',
+                        f'Failed to resolve user: {str(e)}'
+                    )
+
             # Validate order
             if order.status not in ['confirmed', 'sent']:
                 return Result.error(
@@ -370,7 +390,7 @@ class PurchaseWorkflowService:
             delivery_data_final = {
                 'supplier': order.supplier,
                 'location': order.location,
-                'delivery_date': timezone.now().date(),
+                'delivery_date': timezone.now().date(),  # ИЗПОЛЗВАЙ DATE ОБЕКТ, НЕ STRING
                 'source_order': order,
                 'external_reference': getattr(order, 'external_reference', ''),
                 'notes': f"Created from order {order.document_number}",
@@ -391,22 +411,43 @@ class PurchaseWorkflowService:
             delivery.updated_by = user
 
             # ===================================================================
+            # ВАЖНО: СЕТНИ DOCUMENT_TYPE ПРЕДИ DocumentCreator
+            # ===================================================================
+            try:
+                from nomenclatures.models import DocumentType
+                doc_type = DocumentType.objects.filter(
+                    type_key=delivery.get_document_type_key()
+                ).first()
+                if doc_type:
+                    delivery.document_type = doc_type
+                    logger.debug(f"Set document_type: {doc_type}")
+                else:
+                    logger.warning(f"DocumentType not found for key: {delivery.get_document_type_key()}")
+            except Exception as e:
+                logger.warning(f"Could not set document_type: {e}")
+
+            # ===================================================================
             # СТЪПКА 2: ИЗПОЛЗВАЙ DocumentCreator ПРАВИЛНО
             # ===================================================================
             try:
-                # DocumentCreator.create_document(instance, user) - правилната сигнатура
+                # DocumentCreator трябва да handle всичко - document_type, numbering, etc.
                 DocumentCreator.create_document(delivery, user)
             except Exception as e:
-                logger.warning(f"DocumentCreator failed: {e}, using manual save")
-                # Fallback: manual save
+                logger.error(f"DocumentCreator failed: {e}")
+                # Fallback: basic save
                 delivery.save()
+                return Result.error(
+                    'DOCUMENT_CREATION_ERROR',
+                    f'Document creation failed: {str(e)}'
+                )
 
             # ===================================================================
-            # СТЪПКА 3: КОПИРАЙ LINES
+            # СТЪПКА 3: КОПИРАЙ LINES И ИЗЧИСЛИ ФИНАНСОВИ ДАННИ
             # ===================================================================
             lines_created = 0
             for order_line in order.lines.all():
-                DeliveryLine.objects.create(
+                # Създай line
+                delivery_line = DeliveryLine.objects.create(
                     document=delivery,
                     line_number=order_line.line_number,
                     product=order_line.product,
@@ -421,25 +462,53 @@ class PurchaseWorkflowService:
                     expiry_date=None,
                     notes=getattr(order_line, 'notes', ''),
                 )
+
+                # ИЗЧИСЛИ ФИНАНСОВИ ДАННИ ЗА ТОЗИ RED
+                try:
+                    vat_result = VATCalculationService.calculate_line_vat(
+                        delivery_line,
+                        entered_price=delivery_line.unit_price,
+                        save=False
+                    )
+                    if vat_result.ok and vat_result.data:
+                        # ПРАВИЛЕН MAPPING от VATCalculationService към DeliveryLine полета
+                        data = vat_result.data
+                        delivery_line.subtotal = data.get('line_total_without_vat', Decimal('0.00'))
+                        delivery_line.vat_total = data.get('line_vat_amount', Decimal('0.00'))
+                        delivery_line.total = data.get('line_total_with_vat', Decimal('0.00'))
+                        delivery_line.discount_total = Decimal('0.00')  # За сега няма discount
+                        delivery_line.save(update_fields=['subtotal', 'vat_total', 'total', 'discount_total'])
+                        logger.debug(f"Line {delivery_line.line_number}: calculated totals={delivery_line.total}")
+                    else:
+                        logger.warning(
+                            f"Line VAT calculation failed for line {delivery_line.line_number}: {vat_result.msg}")
+                except Exception as e:
+                    logger.warning(f"Line VAT calculation error for line {delivery_line.line_number}: {e}")
+
                 lines_created += 1
 
             # ===================================================================
             # СТЪПКА 4: ИЗЧИСЛИ TOTALS
             # ===================================================================
             try:
-                totals_result = VATCalculationService.recalculate_document_totals(delivery)
+                totals_result = VATCalculationService.calculate_document_vat(delivery)
                 if not totals_result.ok:
                     logger.warning(f"VAT service failed: {totals_result.msg}")
-                    delivery.recalculate_totals()  # Fallback
+                    return Result.error(
+                        'VAT_CALCULATION_ERROR',
+                        f'VAT calculation failed: {totals_result.msg}'
+                    )
             except Exception as e:
-                logger.warning(f"Totals calculation failed: {e}")
-                # Manual fallback
-                delivery.recalculate_totals()
+                logger.error(f"Totals calculation failed: {e}")
+                return Result.error(
+                    'TOTALS_CALCULATION_ERROR',
+                    f'Failed to calculate totals: {str(e)}'
+                )
 
             return Result.success(
                 {
                     'delivery': delivery,
-                    'lines_count': lines_created,
+                    'lines_created': lines_created,
                     'order_status': order.status,
                     'delivery_status': delivery.status,
                     'document_number': delivery.document_number,
@@ -450,13 +519,6 @@ class PurchaseWorkflowService:
                     }
                 },
                 f'Successfully created delivery {delivery.document_number} from order {order.document_number}'
-            )
-
-        except Exception as e:
-            logger.error(f"Delivery creation failed: {str(e)}")
-            return Result.error(
-                'DELIVERY_CREATION_ERROR',
-                f'Failed to create delivery: {str(e)}'
             )
 
         except Exception as e:
