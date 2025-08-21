@@ -60,6 +60,7 @@ class PurchaseWorkflowService:
         - Enhanced validation
         - Result pattern
         - Service integration
+        - ФИКС: Не променя статус на request - използва само tracking полета
 
         Args:
             request: PurchaseRequest instance
@@ -97,7 +98,7 @@ class PurchaseWorkflowService:
 
             # Prepare order data
             order_data = {
-                'supplier': request.supplier,
+                'partner': request.partner,
                 'location': request.location,
                 'document_type': request.document_type,  # Same workflow
                 'expected_delivery_date': timezone.now().date() + timedelta(days=7),
@@ -130,13 +131,14 @@ class PurchaseWorkflowService:
                 )
                 lines_created += 1
 
-            # Update request status - ATOMIC
-            request.status = 'converted'
+            # ФИКС: Update tracking fields БЕЗ промяна на статус
+            # Request остава 'approved' - статусът НЕ се променя!
+            # Conversion се проследява чрез специализираните полета:
             request.converted_to_order = order
             request.converted_at = timezone.now()
             request.converted_by = user
             request.save(update_fields=[
-                'status', 'converted_to_order', 'converted_at', 'converted_by'
+                'converted_to_order', 'converted_at', 'converted_by'
             ])
 
             # Recalculate order totals using service
@@ -152,8 +154,10 @@ class PurchaseWorkflowService:
                 {
                     'order': order,
                     'lines_count': lines_created,
-                    'request_status': request.status,
-                    'order_total': float(order.total_amount)
+                    'request_status': request.status,  # Остава 'approved'
+                    'order_total': float(order.total),
+                    'conversion_tracked': True,
+                    'converted_at': request.converted_at.isoformat()
                 },
                 f'Successfully converted request {request.document_number} to order {order.document_number}'
             )
@@ -389,7 +393,7 @@ class PurchaseWorkflowService:
             # СТЪПКА 1: СЪЗДАЙ DELIVERY INSTANCE (БЕЗ SAVE)
             # ===================================================================
             delivery_data_final = {
-                'supplier': order.supplier,
+                'partner': order.partner,
                 'location': order.location,
                 'delivery_date': timezone.now().date(),  # ИЗПОЛЗВАЙ DATE ОБЕКТ, НЕ STRING
                 'source_order': order,

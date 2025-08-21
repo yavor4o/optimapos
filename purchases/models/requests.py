@@ -19,7 +19,7 @@ class PurchaseRequestManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'supplier', 'location', 'document_type', 'created_by'
+            'partner_content_type', 'location_content_type', 'document_type', 'created_by'
         )
 
     # =====================

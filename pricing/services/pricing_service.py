@@ -689,8 +689,8 @@ class PricingService:
                         models.Q(customer_groups__isnull=True) | models.Q(customer_groups=customer_group)
                     )
 
-            promo = promotions.order_by('-price').first()  # Highest promotion wins
-            return promo.price if promo else None
+            promo = promotions.order_by('-promotional_price').first()
+            return promo.promotional_price if promo else None
 
         except Exception as e:
             logger.error(f"Error getting promotional price: {e}")
