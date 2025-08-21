@@ -178,8 +178,7 @@ class ProductService:
     def get_products_needing_attention() -> Dict:
         """Get products that need manual attention"""
 
-        # Import here to avoid circular dependency
-        from inventory.models import InventoryItem
+
 
         # Products with lifecycle issues
         attention_needed = {
