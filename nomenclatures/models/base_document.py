@@ -205,15 +205,7 @@ class BaseDocument(models.Model):
         'partner_object_id'
     )
 
-    # СТАРО: За backward compatibility - ще ги премахнем в следваща миграция
-    supplier = models.ForeignKey(
-        'partners.Supplier',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        verbose_name=_('Supplier (Legacy)'),
-        help_text=_('DEPRECATED: Use partner field instead')
-    )
+
 
     location_content_type = models.ForeignKey(
         ContentType,
@@ -318,70 +310,6 @@ class BaseDocument(models.Model):
             models.Index(fields=['partner_content_type', 'partner_object_id']),
             models.Index(fields=['created_at']),
         ]
-
-    # =====================
-    # BACKWARD COMPATIBILITY PROPERTIES
-    # =====================
-
-    def get_supplier(self):
-        """Връща partner ако е Supplier, иначе legacy supplier"""
-        if self.partner and self.partner.__class__.__name__ == 'Supplier':
-            return self.partner
-        return self.supplier
-
-    def set_supplier(self, supplier_obj):
-        """Сетва supplier през новия partner field"""
-        if supplier_obj is None:
-            self.partner = None
-            self.supplier = None  # Почисти и legacy полето
-        else:
-            # Валидирай че е наистина Supplier
-            from core.interfaces.partner_interface import validate_partner
-            validate_partner(supplier_obj)
-
-            if supplier_obj.__class__.__name__ != 'Supplier':
-                raise ValidationError("Partner must be a Supplier instance")
-
-            self.partner = supplier_obj
-            self.supplier = supplier_obj  # Синхронизирай legacy полето
-
-    # Property за legacy код
-    @property
-    def supplier_property(self):
-        return self.get_supplier()
-
-    @supplier_property.setter
-    def supplier_property(self, value):
-        self.set_supplier(value)
-
-    def get_customer(self):
-        """Връща partner ако е Customer"""
-        if self.partner and self.partner.__class__.__name__ == 'Customer':
-            return self.partner
-        return None
-
-    def set_customer(self, customer_obj):
-        """Сетва customer през новия partner field"""
-        if customer_obj is None:
-            self.partner = None
-        else:
-            # Валидирай че е наистина Customer
-            from core.interfaces.partner_interface import validate_partner
-            validate_partner(customer_obj)
-
-            if customer_obj.__class__.__name__ != 'Customer':
-                raise ValidationError("Partner must be a Customer instance")
-
-            self.partner = customer_obj
-
-    # Property за sales app
-    @property
-    def customer(self):
-        return self.get_customer()
-
-    @customer.setter
-    def customer(self, value):
-        self.set_customer(value)
 
     # =====================
     # UNIVERSAL PARTNER METHODS
@@ -557,9 +485,6 @@ class BaseDocument(models.Model):
         partner_info = ""
         if self.partner:
             partner_info = f" ({self.get_partner_display()})"
-        elif self.supplier:  # Fallback за legacy
-            partner_info = f" ({self.supplier.name})"
-
         return f"{self.document_number or 'Draft'}{partner_info}"
 
 
