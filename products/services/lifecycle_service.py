@@ -1,24 +1,9 @@
-# products/services/lifecycle_service.py - COMPLETE RESULT PATTERN REFACTORING
-"""
-PRODUCT LIFECYCLE SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
-
-Централизирана product lifecycle логика с Result pattern за консистентност.
-Управлява lifecycle transitions и автоматизира related операции.
-
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy методи запазени за backward compatibility
-- Enhanced error handling и validation
-- Automatic side effects management
-- Integration готовност с останалите services
-"""
+# products/services/lifecycle_service.py
 
 from typing import List, Dict, Optional
 from django.db import transaction, models
 from django.utils import timezone
-from decimal import Decimal
 import logging
-
 from core.utils.result import Result
 from ..models import Product, ProductLifecycleChoices
 
@@ -26,13 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProductLifecycleService:
-    """
-    PRODUCT LIFECYCLE SERVICE - REFACTORED WITH RESULT PATTERN
 
-    CHANGES: All public methods now return Result objects
-    Legacy methods available for backward compatibility
-    Enhanced lifecycle management with automatic side effects
-    """
 
     # =====================================================
     # NEW: RESULT-BASED PUBLIC API
@@ -733,43 +712,6 @@ class ProductLifecycleService:
         # e.g., NEW -> ACTIVE is normal, NEW -> DISCONTINUED might be unusual
 
         return issues
-
-    # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY
-    # =====================================================
-
-    @staticmethod
-    @transaction.atomic
-    def change_lifecycle_status(
-            product: Product,
-            new_status: str,
-            user=None,
-            reason: str = ""
-    ) -> Dict:
-        """
-        LEGACY METHOD: Use change_product_lifecycle() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ProductLifecycleService.change_product_lifecycle(product, new_status, user, reason)
-
-        if result.ok:
-            data = result.data
-            return {
-                'success': True,
-                'message': result.msg,
-                'product': product,
-                'old_status': data.get('old_status'),
-                'new_status': data.get('new_status')
-            }
-        else:
-            return {
-                'success': False,
-                'message': result.msg,
-                'product': product,
-                'error_code': result.code
-            }
-
 
 
 # =====================================================

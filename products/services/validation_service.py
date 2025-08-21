@@ -268,52 +268,6 @@ class ProductValidationService:
         )
 
     # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY
-    # =====================================================
-
-    @staticmethod
-    def can_sell_product(
-            product: Product,
-            quantity: Decimal = Decimal('1'),
-            location=None
-    ) -> Tuple[bool, str, Dict]:
-        """
-        LEGACY METHOD: Use validate_sale() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ProductValidationService.validate_sale(product, quantity, location)
-        return result.ok, result.msg, result.data
-
-    @staticmethod
-    def can_purchase_product(
-            product: Product,
-            quantity: Decimal = Decimal('1'),
-            supplier=None
-    ) -> Tuple[bool, str, Dict]:
-        """
-        LEGACY METHOD: Use validate_purchase() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ProductValidationService.validate_purchase(product, quantity, supplier)
-        return result.ok, result.msg, result.data
-
-    @staticmethod
-    def validate_lifecycle_change(
-            product: Product,
-            new_status: str,
-            user=None
-    ) -> Tuple[bool, str]:
-        """
-        LEGACY METHOD: Use validate_lifecycle_transition() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ProductValidationService.validate_lifecycle_transition(product, new_status, user)
-        return result.ok, result.msg
-
-    # =====================================================
     # UTILITY METHODS
     # =====================================================
 

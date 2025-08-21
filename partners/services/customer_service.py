@@ -1,10 +1,10 @@
 # partners/services/customer_service.py - REFACTORED WITH RESULT PATTERN
+from typing import Dict, Any
 
-from django.db.models import Sum, Count, Q, Avg, Max
 from django.utils import timezone
 from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import  timedelta
+
 
 from core.utils.result import Result
 
@@ -335,7 +335,7 @@ class CustomerService:
     def get_customer_discount(customer, product=None, site=None) -> Result:
         """Връща отстъпка за клиент - NEW Result-based method"""
         try:
-            discount_info = {
+            discount_info: Dict[str, Any] = {  # ← ДОБАВИ Any за mixed types
                 'base_discount': Decimal('0'),
                 'site_discount': Decimal('0'),
                 'product_discount': Decimal('0'),
@@ -345,12 +345,15 @@ class CustomerService:
 
             # Price group discount
             if customer.price_group:
+                price_group_discount = getattr(customer.price_group, 'discount_percent', Decimal('0'))
+
                 discount_info['price_group'] = {
                     'id': customer.price_group.id,
                     'name': customer.price_group.name,
-                    'discount_percent': getattr(customer.price_group, 'discount_percent', Decimal('0'))
+                    'discount_percent': price_group_discount
                 }
-                discount_info['base_discount'] = discount_info['price_group']['discount_percent']
+                # ПОПРАВКА: използвай price_group_discount, не цялия dict
+                discount_info['base_discount'] = price_group_discount
 
             # Site-specific discount
             if site and hasattr(site, 'special_discount') and site.special_discount:
@@ -374,47 +377,3 @@ class CustomerService:
                 data={'customer_id': customer.id}
             )
 
-    # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY
-    # =====================================================
-
-    @staticmethod
-    def get_customer_dashboard(customer_id: int) -> Dict:
-        """
-        LEGACY METHOD: Use get_dashboard_data() for new code
-
-        Maintained for backward compatibility
-        """
-        result = CustomerService.get_dashboard_data(customer_id)
-        if result.ok:
-            return result.data
-        else:
-            return {'error': result.msg, 'code': result.code}
-
-    @staticmethod
-    def can_make_sale(customer, amount: Decimal, site=None) -> Tuple[bool, str]:
-        """
-        LEGACY METHOD: Use validate_sale() for new code
-
-        Maintained for backward compatibility
-        """
-        result = CustomerService.validate_sale(customer, amount, site)
-        return result.ok, result.msg
-
-    @staticmethod
-    def get_customer_sites(customer) -> List[Dict]:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = CustomerService.get_sites_data(customer)
-        return result.data if result.ok else []
-
-    @staticmethod
-    def get_customer_schedule(customer) -> Dict:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = CustomerService.get_schedule_data(customer)
-        return result.data if result.ok else {}
-
-    @staticmethod
-    def get_credit_status(customer) -> Dict:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = CustomerService.get_credit_data(customer)
-        return result.data if result.ok else {}

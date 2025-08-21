@@ -358,51 +358,6 @@ class SupplierService:
         )
 
     # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY
-    # =====================================================
-
-    @staticmethod
-    def get_supplier_dashboard(supplier_id: int) -> Dict:
-        """
-        LEGACY METHOD: Use get_dashboard_data() for new code
-
-        Maintained for backward compatibility
-        """
-        result = SupplierService.get_dashboard_data(supplier_id)
-        if result.ok:
-            return result.data
-        else:
-            return {'error': result.msg, 'code': result.code}
-
-    @staticmethod
-    def can_place_order(supplier, amount: Decimal) -> Tuple[bool, str]:
-        """
-        LEGACY METHOD: Use validate_order_placement() for new code
-
-        Maintained for backward compatibility
-        """
-        result = SupplierService.validate_order_placement(supplier, amount)
-        return result.ok, result.msg
-
-    @staticmethod
-    def get_supplier_divisions(supplier) -> List[Dict]:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = SupplierService.get_divisions_data(supplier)
-        return result.data if result.ok else []
-
-    @staticmethod
-    def get_supplier_schedule(supplier) -> Dict:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = SupplierService.get_schedule_data(supplier)
-        return result.data if result.ok else {}
-
-    @staticmethod
-    def get_financial_summary(supplier) -> Dict:
-        """LEGACY METHOD: Maintained for backward compatibility"""
-        result = SupplierService.get_financial_data(supplier)
-        return result.data if result.ok else {}
-
-    # =====================================================
     # UTILITY METHODS
     # =====================================================
 
