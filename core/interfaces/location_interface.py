@@ -1,146 +1,237 @@
-# core/interfaces/location_interface.py - PROFESSIONAL PROTOCOL
+# core/interfaces/location_interface.py - ENHANCED VERSION
 """
-Location interface using modern Python Protocol pattern.
+Enhanced Location Interface for Document Numbering Support
 
-Following PEP 544 structural subtyping for maximum compatibility and maintainability.
-Used by pricing models for location-agnostic operations.
+НОВО: Разширен за да поддържа document-related операции
+- Numbering assignments
+- Document-specific settings
+- Business rules per location
 """
 
 from typing import Protocol, runtime_checkable, TYPE_CHECKING
 from decimal import Decimal
 
 if TYPE_CHECKING:
-    # Import types only for type checking to avoid circular imports
     from django.db import models
 
 
 @runtime_checkable
 class ILocation(Protocol):
     """
-    Location protocol for pricing and inventory systems.
+    Enhanced Location Protocol for complete document support
 
-    Modern structural typing approach following PEP 544.
-    Any object with these attributes automatically implements this protocol.
+    РАЗШИРЕНИЯ:
+    - Document numbering support
+    - VAT calculation settings
+    - Inventory behavior settings
+    - Business rules per location
 
-    Used by:
-    - All pricing models (ProductPrice, ProductPriceByGroup, etc.)
-    - PricingService for location-agnostic operations
-    - Future location types (OnlineStore, CustomerSite, etc.)
-
-    Example implementations:
-    - inventory.InventoryLocation (physical warehouses)
-    - sales.OnlineStore (future - online stores)
-    - partners.CustomerSite (future - customer locations)
+    IMPLEMENTATIONS:
+    - inventory.InventoryLocation ✅ (existing)
+    - sales.OnlineStore (future)
+    - partners.CustomerSite (future)
+    - hr.Office (future)
     """
 
-    # Core identity (required by Django models and pricing)
+    # =====================
+    # CORE IDENTITY (unchanged)
+    # =====================
     pk: int
     code: str
     name: str
     is_active: bool
 
-    # Pricing integration (required by pricing calculations)
+    # =====================
+    # PRICING INTEGRATION (unchanged)
+    # =====================
     default_markup_percentage: Decimal
 
-    # String representation (required by admin and debugging)
+    # =====================
+    # NEW: DOCUMENT SETTINGS
+    # =====================
+    # VAT calculation behavior
+    purchase_prices_include_vat: bool
+    sale_prices_include_vat: bool
+
+    # Inventory behavior (if applicable)
+    allow_negative_stock: bool
+
+    # =====================
+    # BASIC METHODS (unchanged)
+    # =====================
     def __str__(self) -> str: ...
 
 
-# Type aliases for better code readability
-LocationType = ILocation
-AnyLocation = ILocation
-
+# =====================
+# ENHANCED VALIDATION
+# =====================
 
 def validate_location(obj) -> bool:
     """
-    Runtime validation that object implements ILocation protocol.
+    Enhanced validation for document-capable locations
 
-    Args:
-        obj: Object to validate
-
-    Returns:
-        bool: True if object has all required ILocation attributes
-
-    Example:
-        >>> location = InventoryLocation.objects.first()
-        >>> validate_location(location)
-        True
+    НОВО: Проверява и document-related полета
     """
-    required_attrs = ['pk', 'code', 'name', 'is_active', 'default_markup_percentage']
-    return all(hasattr(obj, attr) for attr in required_attrs)
+    # Core fields (same as before)
+    core_attrs = ['pk', 'code', 'name', 'is_active', 'default_markup_percentage']
+
+    # NEW: Document-related fields
+    document_attrs = ['purchase_prices_include_vat', 'sale_prices_include_vat', 'allow_negative_stock']
+
+    all_attrs = core_attrs + document_attrs
+
+    return all(hasattr(obj, attr) for attr in all_attrs)
 
 
 def assert_location(obj) -> None:
     """
-    Assert that object implements ILocation protocol.
-
-    Args:
-        obj: Object to validate
+    Enhanced assertion for document operations
 
     Raises:
-        TypeError: If object doesn't implement ILocation protocol
-
-    Example:
-        >>> assert_location(some_object)  # Raises TypeError if invalid
+        TypeError: If object doesn't implement enhanced ILocation
     """
     if not isinstance(obj, ILocation):
         raise TypeError(f"{type(obj).__name__} doesn't implement ILocation protocol")
 
     if not validate_location(obj):
-        missing_attrs = [attr for attr in ['pk', 'code', 'name', 'is_active', 'default_markup_percentage']
-                         if not hasattr(obj, attr)]
-        raise TypeError(f"{type(obj).__name__} missing required attributes: {missing_attrs}")
+        missing_attrs = []
+
+        # Check core attributes
+        core_attrs = ['pk', 'code', 'name', 'is_active', 'default_markup_percentage']
+        for attr in core_attrs:
+            if not hasattr(obj, attr):
+                missing_attrs.append(f"{attr} (core)")
+
+        # Check document attributes
+        doc_attrs = ['purchase_prices_include_vat', 'sale_prices_include_vat', 'allow_negative_stock']
+        for attr in doc_attrs:
+            if not hasattr(obj, attr):
+                missing_attrs.append(f"{attr} (document)")
+
+        if missing_attrs:
+            raise TypeError(f"{type(obj).__name__} missing required attributes: {missing_attrs}")
 
 
-def is_location_compatible(obj) -> bool:
+# =====================
+# LOCATION CAPABILITY DETECTION
+# =====================
+
+def supports_documents(obj: ILocation) -> bool:
     """
-    Check if object is compatible with ILocation protocol (duck typing).
-
-    More lenient than isinstance check - just checks for required attributes.
-
-    Args:
-        obj: Object to check
+    Check if location supports document operations
 
     Returns:
-        bool: True if object can be used as ILocation
+        bool: True if location can be used for documents
     """
-    return validate_location(obj)
+    try:
+        assert_location(obj)
+        return True
+    except TypeError:
+        return False
 
 
-# Development and debugging helpers
+def supports_numbering(obj: ILocation) -> bool:
+    """
+    Check if location supports custom numbering
+
+    Returns:
+        bool: True if location can have numbering assignments
+    """
+    # All ILocation implementations should support numbering
+    return supports_documents(obj)
+
+
+def supports_inventory(obj: ILocation) -> bool:
+    """
+    Check if location supports inventory operations
+
+    Returns:
+        bool: True if location can hold stock
+    """
+    # Check if it has inventory-specific attributes
+    inventory_attrs = ['allow_negative_stock']
+    return all(hasattr(obj, attr) for attr in inventory_attrs)
+
+
+# =====================
+# LOCATION HELPERS
+# =====================
+
 def get_location_info(obj: ILocation) -> dict:
     """
-    Get diagnostic information about a location object.
+    Enhanced location information for debugging
 
-    Args:
-        obj: Location object implementing ILocation
-
-    Returns:
-        dict: Location information for debugging
+    НОВО: Включва document capabilities
     """
-    return {
+    base_info = {
         'type': type(obj).__name__,
         'pk': getattr(obj, 'pk', None),
         'code': getattr(obj, 'code', None),
         'name': getattr(obj, 'name', None),
         'is_active': getattr(obj, 'is_active', None),
         'default_markup_percentage': getattr(obj, 'default_markup_percentage', None),
+    }
+
+    # NEW: Document capabilities
+    document_info = {
+        'purchase_prices_include_vat': getattr(obj, 'purchase_prices_include_vat', None),
+        'sale_prices_include_vat': getattr(obj, 'sale_prices_include_vat', None),
+        'allow_negative_stock': getattr(obj, 'allow_negative_stock', None),
+    }
+
+    # Validation results
+    validation_info = {
         'validates': validate_location(obj),
         'isinstance_check': isinstance(obj, ILocation),
+        'supports_documents': supports_documents(obj),
+        'supports_numbering': supports_numbering(obj),
+        'supports_inventory': supports_inventory(obj),
+    }
+
+    return {
+        **base_info,
+        'document_settings': document_info,
+        'capabilities': validation_info
     }
 
 
-# Version and metadata
-__version__ = '2.0.0'  # Protocol version
+def format_location_display(obj: ILocation) -> str:
+    """
+    Format location for UI display
+
+    Returns:
+        str: Human-readable location description
+    """
+    assert_location(obj)
+
+    base = f"{obj.name} ({obj.code})"
+    status = "Active" if obj.is_active else "Inactive"
+    return f"{base} - {status}"
+
+
+# =====================
+# BACKWARD COMPATIBILITY
+# =====================
+
+# Keep old function names for compatibility
+is_location_compatible = supports_documents
+LocationType = ILocation
+AnyLocation = ILocation
+
+# Version and exports
+__version__ = '2.1.0'  # Enhanced for document support
 __author__ = 'Your Company'
 
-# Export all public API
 __all__ = [
     'ILocation',
     'LocationType',
     'AnyLocation',
     'validate_location',
     'assert_location',
-    'is_location_compatible',
+    'supports_documents',
+    'supports_numbering',
+    'supports_inventory',
     'get_location_info',
+    'format_location_display',
+    'is_location_compatible',  # backward compatibility
 ]

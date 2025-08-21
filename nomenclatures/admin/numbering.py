@@ -2,9 +2,7 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
-from django.db.models import Count
-from django.utils.safestring import mark_safe
+
 
 # Try to import models
 try:
@@ -419,7 +417,7 @@ if HAS_NUMBERING_MODELS:
             'assigned_at'
         ]
 
-        raw_id_fields = ['location', 'numbering_config', 'assigned_by']
+        raw_id_fields = ['location_content_type', 'numbering_config', 'assigned_by']
 
         date_hierarchy = 'assigned_at'
 

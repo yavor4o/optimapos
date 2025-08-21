@@ -14,7 +14,8 @@ PRINCIPII СЛЕД РЕФАКТОРИРАНЕ:
 - NumberingService управлява business logic
 - НЕ дублираме formatting logic
 """
-
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
@@ -38,11 +39,21 @@ class NumberingConfigurationManager(BaseNomenclatureManager):
         return self.active().filter(document_type=document_type)
 
     def for_location(self, location):
-        """Get configs for specific location"""
-        return self.active().filter(
-            locationnumberingassignment__location=location,
-            locationnumberingassignment__is_active=True
-        )
+        """Get configs for specific location - ENHANCED"""
+        # NEW: Try GenericForeignKey first
+        try:
+            content_type = ContentType.objects.get_for_model(location.__class__)
+            return self.active().filter(
+                locationnumberingassignment__location_content_type=content_type,
+                locationnumberingassignment__location_object_id=location.pk,
+                locationnumberingassignment__is_active=True
+            )
+        except:
+            # FALLBACK: Use legacy location field
+            return self.active().filter(
+                locationnumberingassignment__location=location,
+                locationnumberingassignment__is_active=True
+            )
 
     def fiscal_configs(self):
         """Get fiscal numbering configurations"""
@@ -330,18 +341,34 @@ class LocationNumberingAssignment(models.Model):
     # CORE RELATIONS
     # =====================
 
-    location = models.ForeignKey(
-        'inventory.InventoryLocation',
-        on_delete=models.CASCADE,
-        related_name='numbering_assignments',
-        verbose_name=_('Location')
-    )
-
     numbering_config = models.ForeignKey(
         NumberingConfiguration,
         on_delete=models.CASCADE,
         related_name='location_assignments',
         verbose_name=_('Numbering Configuration')
+    )
+
+    location_content_type = models.ForeignKey(
+        ContentType,
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        verbose_name=_('Location Type'),
+        limit_choices_to=models.Q(
+            app_label='inventory', model='inventorylocation'
+        ) | models.Q(
+            app_label='sales', model='onlinestore'
+        ) | models.Q(
+            app_label='partners', model='customersite'
+        )
+    )
+
+    location_object_id = models.PositiveIntegerField(
+        null=True, blank=True,
+        verbose_name=_('Location ID')
+    )
+
+    location = GenericForeignKey(
+        'location_content_type', 'location_object_id'
     )
 
     # =====================
@@ -368,6 +395,8 @@ class LocationNumberingAssignment(models.Model):
         blank=True
     )
 
+
+
     # =====================
     # META
     # =====================
@@ -375,14 +404,18 @@ class LocationNumberingAssignment(models.Model):
     class Meta:
         verbose_name = _('Location Numbering Assignment')
         verbose_name_plural = _('Location Numbering Assignments')
-        ordering = ['location', 'numbering_config']
+        ordering = ['location_content_type', 'location_object_id', 'numbering_config']
+
+        # ПРОМЕНИ indexes:
         indexes = [
-            models.Index(fields=['location', 'is_active']),
+            models.Index(fields=['location_content_type', 'location_object_id', 'is_active']),
             models.Index(fields=['numbering_config', 'is_active']),
         ]
+
+        # ПРОМЕНИ constraints:
         constraints = [
             models.UniqueConstraint(
-                fields=['location', 'numbering_config'],
+                fields=['location_content_type', 'location_object_id', 'numbering_config'],
                 name='unique_location_numbering'
             )
         ]
@@ -485,6 +518,22 @@ def get_numbering_config_for_document(document_type, location=None, user=None):
 
     # Priority 2: Location assignment
     if location:
+        # NEW: Try GenericForeignKey first
+        try:
+            content_type = ContentType.objects.get_for_model(location.__class__)
+            assignment = LocationNumberingAssignment.objects.filter(
+                location_content_type=content_type,
+                location_object_id=location.pk,
+                numbering_config__document_type=document_type,
+                is_active=True
+            ).select_related('numbering_config').first()
+
+            if assignment:
+                return assignment.numbering_config
+        except:
+            pass
+
+        # FALLBACK: Use legacy location field
         assignment = LocationNumberingAssignment.objects.filter(
             location=location,
             numbering_config__document_type=document_type,
