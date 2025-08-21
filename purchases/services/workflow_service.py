@@ -100,7 +100,7 @@ class PurchaseWorkflowService:
             order_data = {
                 'partner': request.partner,
                 'location': request.location,
-                'document_type': request.document_type,  # Same workflow
+                'document_type': cls._get_order_document_type(request.document_type),
                 'expected_delivery_date': timezone.now().date() + timedelta(days=7),
                 'external_reference': request.external_reference,
                 'notes': f"Created from request {request.document_number}\n{request.notes}".strip(),
@@ -113,7 +113,24 @@ class PurchaseWorkflowService:
             order_data.update(order_overrides)
 
             # Create order
-            order = PurchaseOrder.objects.create(**order_data)
+            # НОВ КОД:
+            from nomenclatures.services import DocumentService
+
+            # Използвай DocumentService за правилно създаване
+            create_result = DocumentService.create_document(
+                model_class=PurchaseOrder,
+                data=order_data,
+                user=user,
+                location=request.location
+            )
+
+            if not create_result.ok:
+                return Result.error(
+                    'ORDER_CREATION_FAILED',
+                    f'Failed to create order: {create_result.msg}'
+                )
+
+            order = create_result.data['document']
 
             # Copy lines with enhanced logic
             lines_created = 0
@@ -749,6 +766,34 @@ class PurchaseWorkflowService:
                 f'Workflow analysis failed: {str(e)}',
                 {'exception': str(e)}
             )
+
+    @staticmethod
+    def _get_order_document_type(request_document_type):
+        """
+        Convert request document type to order document type using convention
+
+        Convention:
+        - purchase_request → purchase_order
+        - sales_request → sales_order
+        - etc.
+        """
+        from nomenclatures.models import DocumentType
+
+        if request_document_type.app_name == 'purchases':
+            if request_document_type.type_key == 'purchase_request':
+                # Търси purchase_order в същия app
+                order_type = DocumentType.objects.filter(
+                    app_name='purchases',
+                    type_key='purchase_order',
+                    is_active=True
+                ).first()
+
+                if order_type:
+                    return order_type
+
+        # Fallback към същия type ако няма convention mapping
+        logger.warning(f"No convention mapping found for {request_document_type.type_key}, using same type")
+        return request_document_type
 
     @staticmethod
     def _get_workflow_recommendations(request_stats, order_stats):
