@@ -1,18 +1,5 @@
 # inventory/services/movement_service.py - COMPLETE RESULT PATTERN REFACTORING
-"""
-INVENTORY MOVEMENT SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 
-Включва ВСИЧКИ методи от оригиналния MovementService + Result pattern.
-Пълна функционалност без премахване на каквото и да е.
-
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy методи запазени за backward compatibility
-- Всички advanced features включени (FIFO, batch tracking, profit tracking)
-- Пълна document automation
-- Bulk operations и reverse movements
-- Enhanced error handling и transaction safety
-"""
 
 import logging
 from datetime import timedelta
@@ -22,7 +9,6 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
-
 from core.utils.result import Result
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
 
@@ -1374,8 +1360,13 @@ class MovementService:
         """Auto-detect sale price using PricingService"""
         try:
             from pricing.services import PricingService
-            price_result = PricingService.get_price(location, product, quantity, customer)
-            return price_result.get('final_price')
+
+            price_result = PricingService.get_product_pricing(location, product, customer, quantity)
+            if price_result.ok:
+                return price_result.data.get('final_price')
+            else:
+                logger.warning(f"Pricing failed: {price_result.msg}")
+                return None
         except Exception as e:
             logger.warning(f"Could not detect sale price: {e}")
             return None
@@ -1468,80 +1459,6 @@ class MovementService:
         stats['net_quantity'] = stats['total_quantity_in'] - stats['total_quantity_out']
 
         return stats
-
-    # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY (COMPLETE)
-    # =====================================================
-
-    @staticmethod
-    def create_incoming_movement(*args, **kwargs) -> InventoryMovement:
-        """LEGACY METHOD: Use create_incoming_stock() for new code"""
-        return MovementService._create_incoming_movement_internal(*args, **kwargs)
-
-    @staticmethod
-    def create_outgoing_movement(*args, **kwargs) -> List[InventoryMovement]:
-        """LEGACY METHOD: Use create_outgoing_stock() for new code"""
-        return MovementService._create_outgoing_movement_internal(*args, **kwargs)
-
-    @staticmethod
-    def create_transfer_movement(*args, **kwargs) -> Tuple[List[InventoryMovement], List[InventoryMovement]]:
-        """LEGACY METHOD: Use create_stock_transfer() for new code"""
-        return MovementService._create_transfer_movement_internal(*args, **kwargs)
-
-    @staticmethod
-    def create_adjustment_movement(*args, **kwargs) -> InventoryMovement:
-        """LEGACY METHOD: Use create_stock_adjustment() for new code"""
-        return MovementService._create_adjustment_movement_internal(*args, **kwargs)
-
-    @staticmethod
-    def reverse_movement(*args, **kwargs) -> InventoryMovement:
-        """LEGACY METHOD: Use reverse_stock_movement() for new code"""
-        return MovementService._reverse_movement_internal(*args, **kwargs)
-
-    @staticmethod
-    def create_from_document(document) -> List[InventoryMovement]:
-        """LEGACY METHOD: Use process_document_movements() for new code"""
-        return MovementService._create_from_document_internal(document)
-
-    @staticmethod
-    def sync_movements_with_document(document) -> Dict:
-        """LEGACY METHOD: Use sync_movements_with_document() Result version for new code"""
-        return MovementService._sync_movements_with_document_internal(document)
-
-    @staticmethod
-    def bulk_create_movements(movement_data_list: List[Dict]) -> List[InventoryMovement]:
-        """LEGACY METHOD: Use bulk_create_movements() Result version for new code"""
-        return MovementService._bulk_create_movements_internal(movement_data_list)
-
-    @staticmethod
-    def bulk_reverse_movements(movement_ids: List[int], reason: str = '', created_by=None) -> Tuple[int, List[str]]:
-        """Bulk reverse multiple movements - LEGACY"""
-        success_count = 0
-        errors = []
-
-        movements = InventoryMovement.objects.filter(id__in=movement_ids)
-
-        for movement in movements:
-            try:
-                MovementService._reverse_movement_internal(movement, reason, created_by)
-                success_count += 1
-            except Exception as e:
-                errors.append(f"Movement {movement.id}: {str(e)}")
-
-        return success_count, errors
-
-    @staticmethod
-    def get_movement_history(
-            location=None,
-            product=None,
-            days_back: int = 30,
-            movement_types: List[str] = None,
-            include_profit_data: bool = True
-    ) -> List[Dict]:
-        """LEGACY METHOD: Use get_movement_analysis() for new code"""
-        return MovementService._get_movement_history_internal(
-            location, product, days_back, movement_types, include_profit_data
-        )
 
 
 # =====================================================

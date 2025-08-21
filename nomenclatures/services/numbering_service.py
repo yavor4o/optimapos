@@ -1,17 +1,4 @@
 # nomenclatures/services/numbering_service.py
-"""
-NumberingService - Централизирано управление на номериране
-
-ЦЕЛИ:
-1. Абстрахира numbering логиката от DocumentService
-2. Избягва circular imports
-3. Предоставя единен интерфейс за номериране
-4. Поддържа фискални и вътрешни документи
-
-BULGARIAN FISCAL COMPLIANCE:
-- Фискални документи: точно 10 цифри БЕЗ префикс
-- Вътрешни документи: гъвкави формати
-"""
 
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -23,14 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class NumberingService:
-    """
-    Централизиран service за номериране на документи
 
-    АРХИТЕКТУРА:
-    - НЕ импортва models директно в топ-ниво (избягва circular imports)
-    - Lazy loading на models при нужда
-    - Fallback strategies за всеки случай
-    """
 
     @staticmethod
     def generate_document_number(document_type, location=None, user=None) -> str:

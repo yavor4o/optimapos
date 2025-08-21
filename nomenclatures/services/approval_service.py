@@ -14,23 +14,15 @@ Centralized approval и workflow logic с Result pattern за консистен
 """
 
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-from django.db import models
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import logging
-
 from core.utils.result import Result
-
-# FIXED: Unified imports from models
 from ..models import (
-    DocumentType,
-    DocumentStatus,
     DocumentTypeStatus
 )
 
-# FIXED: Conditional import for ApprovalRule
 try:
     from ..models import ApprovalRule, ApprovalLog
 
@@ -42,48 +34,6 @@ except ImportError:
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
-
-
-# =====================
-# LEGACY RESULT TYPES - PRESERVED FOR BACKWARD COMPATIBILITY
-# =====================
-
-@dataclass
-class Decision:
-    """Резултат от authorization проверка - LEGACY CLASS"""
-    allowed: bool
-    reason: str
-    rule_id: Optional[int] = None
-    level: Optional[int] = None
-    next_status: Optional[str] = None
-    data: Dict = field(default_factory=dict)
-
-    @classmethod
-    def allow(cls, rule, reason: str = "Authorization granted") -> 'Decision':
-        if not rule:
-            return cls.deny("No rule provided")
-
-        return cls(
-            allowed=True,
-            reason=reason,
-            rule_id=rule.id,
-            level=rule.approval_level,
-            next_status=rule.to_status_obj.code if rule.to_status_obj else None
-        )
-
-    @classmethod
-    def deny(cls, reason: str, **kwargs) -> 'Decision':
-        return cls(allowed=False, reason=reason, **kwargs)
-
-
-@dataclass
-class WorkflowInfo:
-    """Информация за workflow статус - LEGACY CLASS"""
-    current_status: str
-    available_transitions: List[Dict]
-    configured_statuses: List[Dict]
-    approval_history: List[Dict]
-    workflow_progress: Dict
 
 
 class ApprovalService:
@@ -721,86 +671,7 @@ class ApprovalService:
         except Exception as e:
             return {'error': str(e)}
 
-    # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY
-    # =====================================================
 
-    @staticmethod
-    def authorize_transition(document, to_status: str, user: User, comments: str = '') -> Decision:
-        """
-        LEGACY METHOD: Use authorize_document_transition() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ApprovalService.authorize_document_transition(document, to_status, user, comments)
-
-        if result.ok:
-            data = result.data
-            return Decision.allow(
-                rule=type('Rule', (), {
-                    'id': data.get('rule_id'),
-                    'approval_level': data.get('approval_level'),
-                    'to_status_obj': type('Status', (), {'code': data.get('to_status')})()
-                })(),
-                reason=result.msg
-            )
-        else:
-            return Decision.deny(result.msg, data=result.data)
-
-    @staticmethod
-    def get_available_transitions(document, user: User) -> List[Dict]:
-        """
-        LEGACY METHOD: Use get_available_transitions() Result version for new code
-
-        Maintained for backward compatibility
-        """
-        result = ApprovalService.get_available_transitions(document, user)
-        if result.ok:
-            return result.data.get('transitions', [])
-        else:
-            logger.error(f"Error getting transitions: {result.msg}")
-            return []
-
-    @staticmethod
-    def get_workflow_info(document) -> WorkflowInfo:
-        """
-        LEGACY METHOD: Use get_workflow_information() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ApprovalService.get_workflow_information(document)
-
-        if result.ok:
-            data = result.data
-            return WorkflowInfo(
-                current_status=data.get('current_status', 'unknown'),
-                available_transitions=data.get('configured_statuses', []),
-                configured_statuses=data.get('configured_statuses', []),
-                approval_history=data.get('approval_history', []),
-                workflow_progress=data.get('workflow_progress', {})
-            )
-        else:
-            return WorkflowInfo(
-                current_status=getattr(document, 'status', 'unknown'),
-                available_transitions=[],
-                configured_statuses=[],
-                approval_history=[],
-                workflow_progress={'error': result.msg}
-            )
-
-    @staticmethod
-    def get_approval_history(document) -> List[Dict]:
-        """
-        LEGACY METHOD: Use get_approval_history_data() for new code
-
-        Maintained for backward compatibility
-        """
-        result = ApprovalService.get_approval_history_data(document)
-        if result.ok:
-            return result.data.get('history', [])
-        else:
-            logger.error(f"Error getting approval history: {result.msg}")
-            return []
 
     # =====================================================
     # UTILITY METHODS FOR INTERNAL USE

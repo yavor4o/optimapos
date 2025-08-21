@@ -13,7 +13,7 @@ Model = Data + Simple Operations
 Services = Business Logic + Complex Operations
 """
 
-import warnings
+
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -258,7 +258,10 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         ]
 
     def __str__(self):
-        return f"Order {self.document_number} - {self.supplier.name}"
+        if self.partner:
+            return f"Order {self.document_number} - {self.partner.name}"
+        else:
+            return f"Order {self.document_number}"
 
     # =====================
     # MODEL VALIDATION - Keep in Model
@@ -288,9 +291,9 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
                     'source_request': _('Source request must be approved')
                 })
 
-            if self.supplier != self.source_request.supplier:
+            if self.partner != self.source_request.partner:
                 raise ValidationError({
-                    'supplier': _('Supplier must match source request supplier')
+                    'partner': _('Partner must match source request partner')
                 })
 
     def save(self, *args, **kwargs):
@@ -345,87 +348,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         delta = self.expected_delivery_date - timezone.now().date()
         return delta.days
 
-    # =====================
-    # SERVICE DELEGATION METHODS - Wrapper Methods for Backward Compatibility
-    # =====================
 
-    def send_to_supplier(self, user=None):
-        """
-        WRAPPER METHOD - Delegates to PurchaseWorkflowService
-
-        DEPRECATED: Use PurchaseWorkflowService.send_order_to_supplier() directly
-        LEGACY: Kept for backward compatibility
-        """
-        warnings.warn(
-            "PurchaseOrder.send_to_supplier() is deprecated. "
-            "Use PurchaseWorkflowService.send_order_to_supplier() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-
-            result = PurchaseWorkflowService.send_order_to_supplier(self, user)
-
-            if result.ok:
-                return True  # Legacy behavior
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            raise ValidationError("PurchaseWorkflowService is not available")
-
-    def confirm_order(self, user=None, supplier_reference=''):
-        """
-        WRAPPER METHOD - Delegates to PurchaseWorkflowService
-
-        DEPRECATED: Use PurchaseWorkflowService.confirm_purchase_order() directly
-        LEGACY: Kept for backward compatibility
-        """
-        warnings.warn(
-            "PurchaseOrder.confirm_order() is deprecated. "
-            "Use PurchaseWorkflowService.confirm_purchase_order() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-
-            result = PurchaseWorkflowService.confirm_purchase_order(
-                self, user, supplier_reference
-            )
-
-            if result.ok:
-                return True  # Legacy behavior
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            raise ValidationError("PurchaseWorkflowService is not available")
-
-    def create_delivery(self, user=None, **delivery_overrides):
-        """
-        Create delivery from this order - delegates to service
-
-        Returns: DeliveryReceipt object for backward compatibility
-        """
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-            result = PurchaseWorkflowService.create_delivery_from_order(
-                self, user, **delivery_overrides
-            )
-
-            if result.ok:
-                return result.data['delivery']  # Return delivery object
-            else:
-                from django.core.exceptions import ValidationError
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            from django.core.exceptions import ValidationError
-            raise ValidationError("PurchaseWorkflowService not available")
 
     # =====================
     # ENHANCED ANALYSIS METHODS - Delegate to Services
@@ -812,7 +735,7 @@ class PurchaseOrderLine(FinancialMixin):
             return ProductValidationService.validate_purchase(
                 self.product,
                 self.ordered_quantity,
-                self.document.supplier
+                self.document.partner
             )
 
         except ImportError:
@@ -820,54 +743,3 @@ class PurchaseOrderLine(FinancialMixin):
             return Result.success({}, 'ProductValidationService not available')
 
 
-# =====================
-# MIGRATION NOTES
-# =====================
-
-"""
-MIGRATION GUIDE за PurchaseOrder:
-
-ПРЕДИ (Fat Model):
-    def confirm_order(self, user=None, supplier_reference=''):
-        # 30+ lines of business logic in model
-        if self.status != 'sent':
-            raise ValidationError("Can only confirm sent orders")
-        # Complex confirmation logic
-        # Auto-receive logic
-        # Related object updates
-        return True
-
-СЕГА (Service Delegation):
-    def confirm_order(self, user=None, supplier_reference=''):
-        # Thin wrapper - delegates to service
-        result = PurchaseWorkflowService.confirm_purchase_order(self, user, supplier_reference)
-        return True if result.ok else raise ValidationError(result.msg)
-
-BENEFITS:
-✅ Model stays focused on data persistence
-✅ Business logic centralized in services  
-✅ Better testing - services are easier to test
-✅ Reusability - services can be used by API, admin, etc.
-✅ Backward compatibility - old code continues to work
-✅ Enhanced functionality - services provide richer results
-
-NEW CODE SHOULD USE:
-    from purchases.services.workflow_service import PurchaseWorkflowService
-    result = PurchaseWorkflowService.confirm_purchase_order(order, user, supplier_ref)
-
-    if result.ok:
-        print(f"Order confirmed. Movements created: {result.data['movements_created']}")
-    else:
-        print(f"Confirmation failed: {result.code} - {result.msg}")
-
-DENORMALIZATION DECISION NEEDED:
-    delivered_quantity field - keep as cached field with sync or convert to @property?
-
-    OPTION A (Property):
-        @property
-        def delivered_quantity(self):
-            return self.delivery_lines.aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
-
-    OPTION B (Cached + Sync):
-        Keep field + use PurchaseWorkflowService.synchronize_order_delivery_status()
-"""

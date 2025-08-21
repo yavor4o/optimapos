@@ -15,7 +15,6 @@ PRICING SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 
 from django.utils import timezone
 from django.db import models
-from django.core.exceptions import ObjectDoesNotExist
 from decimal import Decimal
 from typing import Optional, Dict, List
 import logging
@@ -483,7 +482,9 @@ class PricingService:
                             'name': product.name
                         },
                         'packaging': {
-                            'name': packaging.name,
+                            'display_name': f"{packaging.unit.name} (x{packaging.conversion_factor})",
+                            'unit_name': packaging.unit.name,
+                            'unit_code': packaging.unit.code,
                             'conversion_factor': packaging.conversion_factor
                         },
                         'price': price,
@@ -738,113 +739,6 @@ class PricingService:
             # Silent fallback to zero - this is expected when no inventory exists
             return Decimal('0')
 
-    # =====================================================
-    # LEGACY METHODS - BACKWARD COMPATIBILITY (COMPLETE)
-    # =====================================================
-
-    @staticmethod
-    def get_sale_price(location, product, customer=None, quantity: Decimal = Decimal('1'), date=None) -> Decimal:
-        """
-        LEGACY METHOD: Use get_product_pricing() for new code
-
-        Maintained for backward compatibility
-        """
-        result = PricingService.get_product_pricing(location, product, customer, quantity, date)
-        if result.ok:
-            return result.data.get('final_price', Decimal('0'))
-        else:
-            logger.error(f"Pricing failed: {result.msg}")
-            return PricingService._get_fallback_price_internal(location, product)
-
-    @staticmethod
-    def get_base_price(location, product) -> Decimal:
-        """LEGACY METHOD: Use get_product_pricing() for new code"""
-        return PricingService._get_base_price_internal(location, product)
-
-    @staticmethod
-    def get_step_price(location, product, quantity: Decimal) -> Optional[Decimal]:
-        """LEGACY METHOD: Use get_product_pricing() for new code"""
-        return PricingService._get_step_price_internal(location, product, quantity)
-
-    @staticmethod
-    def get_group_price(location, product, customer_group, quantity: Decimal = Decimal('1')) -> Optional[Decimal]:
-        """LEGACY METHOD: Use get_product_pricing() for new code"""
-        return PricingService._get_group_price_internal(location, product, customer_group, quantity)
-
-    @staticmethod
-    def get_fallback_price(location, product) -> Decimal:
-        """LEGACY METHOD: Use get_product_pricing() for new code"""
-        return PricingService._get_fallback_price_internal(location, product)
-
-    @staticmethod
-    def get_pricing_analysis(location, product, customer=None, quantity: Decimal = Decimal('1')) -> Dict:
-        """
-        LEGACY METHOD: Use get_pricing_analysis() Result version for new code
-
-        Maintained for backward compatibility
-        """
-        result = PricingService.get_pricing_analysis(location, product, customer, quantity)
-        if result.ok:
-            return result.data
-        else:
-            return {'error': result.msg, 'code': result.code}
-
-    @staticmethod
-    def get_all_prices_for_product(location, product, customer=None) -> Dict:
-        """
-        LEGACY METHOD: Use get_all_pricing_options() for new code
-
-        Maintained for backward compatibility
-        """
-        result = PricingService.get_all_pricing_options(location, product, customer)
-        if result.ok:
-            return result.data
-        else:
-            return {'error': result.msg, 'code': result.code}
-
-    @staticmethod
-    def get_barcode_pricing(barcode: str, location, customer=None) -> Dict:
-        """
-        LEGACY METHOD: Use get_barcode_pricing() Result version for new code
-
-        Maintained for backward compatibility
-        """
-        result = PricingService.get_barcode_pricing(barcode, location, customer)
-        if result.ok:
-            return {'success': True, **result.data}
-        else:
-            return {'success': False, 'error': result.msg, 'barcode': barcode}
-
-    # =====================================================
-    # UTILITY METHODS (PRESERVED ORIGINAL FUNCTIONALITY)
-    # =====================================================
-
-    @staticmethod
-    def calculate_markup_percentage(cost_price: Decimal, sale_price: Decimal) -> Decimal:
-        """Calculate markup percentage"""
-        if cost_price <= 0:
-            return Decimal('0')
-        return (sale_price - cost_price) / cost_price * 100
-
-    @staticmethod
-    def calculate_margin_percentage(cost_price: Decimal, sale_price: Decimal) -> Decimal:
-        """Calculate margin percentage"""
-        if sale_price <= 0:
-            return Decimal('0')
-        return (sale_price - cost_price) / sale_price * 100
-
-    @staticmethod
-    def get_applied_pricing_rule(location, product, customer=None, quantity=Decimal('1')) -> str:
-        """
-        LEGACY METHOD: Determine which pricing rule was applied
-
-        Maintained for backward compatibility
-        """
-        result = PricingService.get_product_pricing(location, product, customer, quantity)
-        if result.ok:
-            return result.data.get('pricing_rule', 'UNKNOWN')
-        else:
-            return 'ERROR'
 
 
 # =====================================================
