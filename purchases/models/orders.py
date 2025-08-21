@@ -244,7 +244,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['status', 'created_at']),
-            models.Index(fields=['supplier', 'status']),
             models.Index(fields=['supplier_confirmed', 'supplier_confirmed_date']),
             models.Index(fields=['expected_delivery_date']),
             models.Index(fields=['delivery_status']),

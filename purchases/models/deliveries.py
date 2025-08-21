@@ -248,7 +248,6 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         verbose_name_plural = _('Delivery Receipts')
         ordering = ['-delivery_date', '-received_at']
         indexes = [
-            models.Index(fields=['delivery_date', 'supplier']),
             models.Index(fields=['quality_status', 'quality_checked_at']),
             models.Index(fields=['source_order']),
             models.Index(fields=['received_by', 'received_at']),

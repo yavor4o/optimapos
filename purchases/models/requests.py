@@ -225,7 +225,6 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['status', 'created_at']),
-            models.Index(fields=['supplier', 'status']),
             models.Index(fields=['approved_by', 'approved_at']),
             models.Index(fields=['required_by_date']),
         ]
