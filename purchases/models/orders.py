@@ -34,7 +34,7 @@ class PurchaseOrderManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'supplier', 'location', 'document_type', 'created_by'
+            'partner_content_type', 'location_content_type', 'document_type', 'created_by'
         )
 
     # =====================
@@ -72,9 +72,8 @@ class PurchaseOrderManager(models.Manager):
             status='confirmed'
         )
 
-    def by_supplier(self, supplier):
-        """Orders for specific supplier"""
-        return self.filter(supplier=supplier)
+    def by_partner(self, partner):
+        return self.filter(partner=partner)
 
     def from_requests(self):
         """Orders created from requests"""

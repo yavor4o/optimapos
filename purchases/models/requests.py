@@ -43,9 +43,8 @@ class PurchaseRequestManager(models.Manager):
             lines__isnull=True
         ).distinct()
 
-    def by_supplier(self, supplier):
-        """Requests for specific supplier"""
-        return self.filter(supplier=supplier)
+    def by_partner(self, partner):
+        return self.filter(partner=partner)
 
     def this_month(self):
         """Requests created this month"""

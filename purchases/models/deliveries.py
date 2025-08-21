@@ -20,7 +20,7 @@ class DeliveryReceiptManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'supplier', 'location', 'source_order', 'received_by'
+            'partner_content_type', 'location', 'source_order', 'received_by'
         )
 
     # =====================
@@ -47,9 +47,8 @@ class DeliveryReceiptManager(models.Manager):
         """Deliveries ready for inventory processing"""
         return self.quality_approved()
 
-    def by_supplier(self, supplier):
-        """Deliveries from specific supplier"""
-        return self.filter(supplier=supplier)
+    def by_partner(self, partner):
+        return self.filter(partner=partner)
 
     def from_orders(self):
         """Deliveries created from orders"""
