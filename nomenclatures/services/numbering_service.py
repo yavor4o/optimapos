@@ -3,7 +3,7 @@
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db import transaction
-from typing import Optional, Dict, Any
+from typing import  Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)

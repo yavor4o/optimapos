@@ -1374,10 +1374,15 @@ class MovementService:
     @staticmethod
     def _should_track_batches(location, product) -> bool:
         """Determine if batch tracking should be used"""
-        if hasattr(product, 'requires_batch_tracking') and product.requires_batch_tracking:
-            return True
-        if hasattr(location, 'default_batch_tracking') and location.default_batch_tracking:
-            return True
+        if hasattr(location, 'should_track_batches'):
+            return location.should_track_batches(product)
+
+            # Fallback за locations без should_track_batches method
+        if hasattr(product, 'track_batches'):
+            return product.track_batches
+        elif hasattr(product, 'requires_batch_tracking'):
+            return product.requires_batch_tracking
+
         return False
 
     @staticmethod

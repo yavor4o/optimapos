@@ -6,7 +6,6 @@ import logging
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)
@@ -139,10 +138,20 @@ class FinancialMixin(models.Model):
         Валидира че totals са правилни
         """
         from nomenclatures.services.vat_calculation_service import VATCalculationService
-        is_valid, error = VATCalculationService.validate_vat_consistency(self)
-        if not is_valid:
-            raise ValueError(f"VAT calculation error: {error}")
-        return is_valid
+
+        validation_result = VATCalculationService.validate_vat_setup(self)
+
+        if not validation_result.ok:
+            raise ValueError(f"VAT calculation error: {validation_result.msg}")
+
+        # Проверяваме дали има критични проблеми в validation data
+        validation_data = validation_result.data or {}
+        critical_issues = validation_data.get('critical_issues', [])
+
+        if critical_issues:
+            raise ValueError(f"VAT validation failed: {'; '.join(critical_issues)}")
+
+        return True
 
 
 class FinancialLineMixin(models.Model):
@@ -277,24 +286,33 @@ class FinancialLineMixin(models.Model):
             return
 
         try:
-            calc_result = VATCalculationService.calculate_line_totals(
+            # ПРЕДИ: calculate_line_totals() - не съществува
+            # СЕГА: calculate_line_vat() - правилният Result-based метод
+            calc_result = VATCalculationService.calculate_line_vat(
                 line=self,
                 entered_price=entered_price,
-                quantity=quantity,
-                document=getattr(self, 'document', None)
+                save=False  # Не записваме автоматично, правим го ръчно
             )
 
-            # Apply results
+            # Проверяваме дали изчислението е успешно
+            if not calc_result.ok:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"VAT calculation failed: {calc_result.msg}")
+                return
+
+            # Apply results от Result data
+            calc_data = calc_result.data
             if hasattr(self, 'unit_price'):
-                self.unit_price = calc_result['unit_price']
+                self.unit_price = calc_data.get('unit_price')
             if hasattr(self, 'vat_rate'):
-                self.vat_rate = calc_result['vat_rate']
+                self.vat_rate = calc_data.get('vat_rate')
             if hasattr(self, 'vat_amount'):
-                self.vat_amount = calc_result['vat_amount']
+                self.vat_amount = calc_data.get('vat_amount_per_unit')
             if hasattr(self, 'net_amount'):
-                self.net_amount = calc_result['net_amount']
+                self.net_amount = calc_data.get('line_total_without_vat')
             if hasattr(self, 'gross_amount'):
-                self.gross_amount = calc_result['gross_amount']
+                self.gross_amount = calc_data.get('line_total_with_vat')
 
         except Exception as e:
             import logging

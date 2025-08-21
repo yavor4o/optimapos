@@ -1,19 +1,9 @@
 # nomenclatures/services/vat_calculation_service.py - RESULT PATTERN REFACTORING
-"""
-UNIFIED VAT CALCULATION SERVICE - REFACTORED WITH RESULT PATTERN
 
-Обединява всички VAT/Tax операции и преминава към Result pattern
-за консистентност с останалите services.
-
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy методи запазени за backward compatibility
-- Подобрено error handling и validation
-"""
 
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, Optional, List, Tuple, Any, Union
+from typing import Dict, List
 
 from django.db.models import Sum
 

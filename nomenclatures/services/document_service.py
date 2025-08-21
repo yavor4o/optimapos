@@ -1,23 +1,11 @@
 # nomenclatures/services/document_service_refactored.py
-"""
-Document Service - REFACTORED FACADE VERSION
 
-Вместо 916+ lines, сега е само facade който делегира на специализирани services:
-- DocumentCreator: създаване
-- StatusManager: status transitions
-- DocumentValidator: валидации
-- DocumentQuery: queries
-
-ПУБЛИЧНИЯТ API ОСТАВА СЪЩИЯТ!
-"""
 from django.db import transaction
 from django.db.models import Sum
-from django.utils import timezone
 from decimal import Decimal
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from django.contrib.auth import get_user_model
 import logging
-
 from core.utils.result import Result
 from .document.creator import DocumentCreator
 from .document.status_manager import StatusManager
@@ -42,8 +30,33 @@ class DocumentService:
 
     @staticmethod
     def create_document(model_class, data: Dict[str, Any], user: User, location=None) -> Result:
-        """Create document - делегира на DocumentCreator"""
-        return DocumentCreator.create_document(model_class, data, user, location)
+        try:
+            instance = model_class(**data)
+            if location and hasattr(instance, 'location'):
+                instance.location = location
+
+            success = DocumentCreator.create_document(instance, user)
+
+            if success:
+                return Result.success(
+                    msg=f'Document {instance.document_number} created successfully',
+                    data={
+                        'document': instance,
+                        'document_id': instance.pk,
+                        'document_number': instance.document_number,
+                        'status': instance.status
+                    }
+                )
+            else:
+                return Result.error(
+                    code='DOCUMENT_CREATION_FAILED',
+                    msg='Failed to create document'
+                )
+        except Exception as e:
+            return Result.error(
+                code='DOCUMENT_CREATION_ERROR',
+                msg=f'Document creation failed: {str(e)}'
+            )
 
     # =====================
     # STATUS MANAGEMENT (делегира на StatusManager)
@@ -162,25 +175,29 @@ class DocumentService:
     @staticmethod
     def approve_document(document, user: User, notes: str = '') -> Result:
         """
-        Approve document - convenience wrapper
+        Approve document - convenience wrapper (simplified version)
         """
         try:
             from .approval_service import ApprovalService
-            target_status = ApprovalService.find_next_approval_status(document)
 
-            if not target_status:
-                # Default approval status
-                target_status = 'approved'
+            # Опитай се да намериш intelligent approval статус
+            transitions_result = ApprovalService.get_available_transitions(document, user)
 
-            return StatusManager.transition_document(
-                document, target_status, user, notes
-            )
+            if transitions_result.ok:
+                # Има достъпни преходи, използвай approval logic
+                return ApprovalService.authorize_document_transition(
+                    document, 'approved', user, notes
+                )
+            else:
+                # Няма approval система, използвай direct transition
+                return StatusManager.transition_document(
+                    document, 'approved', user, notes
+                )
 
         except ImportError:
             return StatusManager.transition_document(
                 document, 'approved', user, notes
             )
-
     @staticmethod
     def reject_document(document, user: User, reason: str) -> Result:
         """
@@ -309,6 +326,8 @@ class DocumentService:
         except Exception as e:
             return Result.error('VALIDATION_ERROR', f'Validation failed: {str(e)}')
 
+
+
     @classmethod
     def analyze_document_financial_impact(cls, document, compare_to_budget=True) -> Result:
         """Universal financial analysis"""
@@ -324,9 +343,13 @@ class DocumentService:
             for line in document.lines.select_related('product').all():
                 try:
                     from pricing.services import PricingService
+
+                    # ПРЕДИ: include_cost=True - unexpected argument
+                    # СЕГА: без допълнителни параметри
                     cost_result = PricingService.get_product_pricing(
-                        document.location, line.product, include_cost=True
+                        document.location, line.product
                     )
+
                     if cost_result.ok:
                         cost_price = cost_result.data.get('cost_price', Decimal('0'))
                         total_cost += cost_price * getattr(line, 'quantity', Decimal('0'))
@@ -336,10 +359,16 @@ class DocumentService:
             analysis['total_cost'] = float(total_cost)
             analysis['total_profit'] = analysis['total_amount'] - float(total_cost)
 
-            return Result.success(analysis, f'Financial analysis completed for {document.document_number}')
+            return Result.success(
+                msg=f'Financial analysis completed for {document.document_number}',
+                data=analysis
+            )
 
         except Exception as e:
-            return Result.error('FINANCIAL_ANALYSIS_ERROR', f'Analysis failed: {str(e)}')
+            return Result.error(
+                code='FINANCIAL_ANALYSIS_ERROR',
+                msg=f'Analysis failed: {str(e)}'
+            )
 
     # =====================
     # LEGACY COMPATIBILITY WRAPPERS

@@ -1,19 +1,13 @@
 # products/models/products.py
 
-from django.conf import settings
+
 from django.db import models
-from django.db.models import Sum, Avg, F
+from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from django.urls import reverse
 from decimal import Decimal
-from typing import Tuple, Optional, Dict, List
-
-from nomenclatures.models import (
-    Brand, ProductGroup, ProductType,
-    UnitOfMeasure, TaxGroup
-)
+from typing import Tuple, Dict, List
 
 
 # === CHOICES ===
@@ -450,11 +444,11 @@ class Product(models.Model):
     def lifecycle_badge_class(self) -> str:
         """CSS class for lifecycle status badge"""
         classes = {
-            ProductLifecycleChoices.NEW: 'badge-info',
-            ProductLifecycleChoices.ACTIVE: 'badge-success',
-            ProductLifecycleChoices.PHASE_OUT: 'badge-warning',
-            ProductLifecycleChoices.DISCONTINUED: 'badge-danger',
-            ProductLifecycleChoices.ARCHIVED: 'badge-secondary',
+            'new': 'badge-info',
+            'active': 'badge-success',
+            'phase_out': 'badge-warning',
+            'discontinued': 'badge-danger',
+            'archived': 'badge-secondary',
         }
         return classes.get(self.lifecycle_status, 'badge-secondary')
 

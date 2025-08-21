@@ -4,7 +4,6 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from decimal import Decimal
 
 from core.interfaces import ILocation
@@ -18,7 +17,12 @@ class ProductPriceManager(models.Manager):
 
     def for_location(self, location: ILocation):
         """Get prices for any ILocation"""
-        content_type = ContentType.objects.get_for_model(location.__class__)
+        from django.db import models
+
+        if not isinstance(location, models.Model):
+            raise ValueError(f"Location must be a Django Model, got {type(location)}")
+
+        content_type = ContentType.objects.get_for_model(location)
         return self.filter(
             content_type=content_type,
             object_id=location.pk,
@@ -41,14 +45,19 @@ class ProductPriceManager(models.Manager):
 
     def create_for_location(self, location: ILocation, product, **kwargs):
         """Create price for any ILocation"""
-        content_type = ContentType.objects.get_for_model(location.__class__)
+        from django.db import models
+
+        # Валидирай че location е Django model
+        if not isinstance(location, models.Model):
+            raise ValueError(f"Location must be a Django Model instance, got {type(location)}")
+
+        content_type = ContentType.objects.get_for_model(location)
         return self.create(
             content_type=content_type,
             object_id=location.pk,
             product=product,
             **kwargs
         )
-
 
 class ProductPrice(models.Model):
     """Base selling prices for products per location"""
@@ -180,34 +189,6 @@ class ProductPrice(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-    # =====================
-    # BACKWARD COMPATIBILITY PROPERTIES
-    # =====================
-    @property
-    def location(self) -> ILocation:
-        """Backward compatibility property"""
-        return self.priceable_location
-
-    @location.setter
-    def location(self, value: ILocation):
-        """Backward compatibility setter"""
-        self.content_type = ContentType.objects.get_for_model(value.__class__)
-        self.object_id = value.pk
-        self.priceable_location = value
-
-    def set_location(self, location: ILocation) -> None:
-        """Type-safe location setter"""
-        from core.interfaces.location_interface import validate_location
-
-        if not validate_location(location):
-            raise ValueError(f"Object {location} doesn't implement ILocation interface")
-
-        self.content_type = ContentType.objects.get_for_model(location.__class__)
-        self.object_id = location.pk
-
-    def get_location(self) -> ILocation:
-        """Type-safe location getter"""
-        return self.priceable_location
 
     # =====================
     # PRICE CALCULATION METHODS
@@ -228,8 +209,9 @@ class ProductPrice(models.Model):
         elif self.pricing_method == 'AUTO':
             # Use location's default markup
             cost_price = self.get_current_cost_price()
-            if cost_price > 0 and hasattr(self.location, 'default_markup_percentage'):
-                default_markup = getattr(self.location, 'default_markup_percentage', 30)
+            location_obj = self.priceable_location  # ✅ Use GenericForeignKey
+            if cost_price > 0 and location_obj and hasattr(location_obj, 'default_markup_percentage'):
+                default_markup = getattr(location_obj, 'default_markup_percentage', 30)
                 self.effective_price = cost_price * (1 + default_markup / 100)
             else:
                 self.effective_price = Decimal('0')
@@ -241,14 +223,20 @@ class ProductPrice(models.Model):
         """Get current cost price from inventory"""
         try:
             from inventory.models import InventoryItem
+            location_obj = self.priceable_location  # ✅ Use GenericForeignKey
+
+            if not location_obj:
+                # No location, use product fallback
+                return self.product.weighted_avg_cost or Decimal('0')
+
             item = InventoryItem.objects.get(
-                location=self.location,
+                location=location_obj,
                 product=self.product
             )
             return item.avg_cost
         except:
             # Fallback to product's average cost
-            return self.product.current_avg_cost or Decimal('0')
+            return self.product.weighted_avg_cost or Decimal('0')
 
     def get_profit_margin(self):
         """Calculate profit margin percentage"""

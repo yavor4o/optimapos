@@ -1,15 +1,12 @@
 # products/models/packaging.py
+from typing import Optional, Any, Dict
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 
-"""
-ВАЖНО: Този файл НЕ се променя при рефакторинга!
-Packaging и Barcode модели не пазят динамични данни.
-Те са само дефиниции на опаковки и баркодове.
-"""
+
 
 
 class ProductPackaging(models.Model):
@@ -327,7 +324,7 @@ class ProductBarcode(models.Model):
             return self.packaging.unit
         return self.product.base_unit
 
-    def decode_weight_barcode(self) -> dict:
+    def decode_weight_barcode(self) -> Optional[Dict[str, Any]]:
         """
         Декодира везни баркод (28xxxxx)
 

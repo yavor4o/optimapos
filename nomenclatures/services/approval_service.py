@@ -1,19 +1,7 @@
 # nomenclatures/services/approval_service.py - COMPLETE RESULT PATTERN REFACTORING
-"""
-APPROVAL SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 
-Centralized approval и workflow logic с Result pattern за консистентност.
-Запазена пълна функционалност от оригиналния service.
 
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy Decision/WorkflowInfo classes запазени за backward compatibility
-- Enhanced error handling и validation
-- Structured approval data в responses
-- Integration готовност с DocumentService
-"""
-
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -243,7 +231,15 @@ class ApprovalService:
 
             # Get approval history
             history_result = ApprovalService.get_approval_history_data(document)
-            approval_history = history_result.data.get('history', []) if history_result.ok else []
+            approval_history = []
+            if history_result.ok:
+                if hasattr(history_result, 'data') and history_result.data:
+                    approval_history = history_result.data.get('history', [])
+                else:
+                    logger.warning("History result OK but no data available")
+            else:
+                logger.warning(
+                    f"Failed to get approval history: {history_result.msg if hasattr(history_result, 'msg') else 'Unknown error'}")
 
             # Calculate workflow progress
             workflow_progress = ApprovalService._calculate_workflow_progress(document, configured_statuses)
@@ -752,9 +748,3 @@ class ApprovalService:
             logger.error(f"Error finding submission status: {e}")
             return None
 
-
-# =====================================================
-# MODULE EXPORTS
-# =====================================================
-
-__all__ = ['ApprovalService', 'Decision', 'WorkflowInfo']

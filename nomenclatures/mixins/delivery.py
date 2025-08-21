@@ -5,8 +5,7 @@ Delivery Mixin - EXTRACTED FROM purchases.models.base
 
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
-from django.utils import timezone
+
 
 
 class DeliveryMixin(models.Model):
@@ -34,4 +33,3 @@ class DeliveryMixin(models.Model):
     def clean(self):
         """Delivery validation"""
         super().clean()
-        # Delivery date може да е във всякакво време - това е реалната дата

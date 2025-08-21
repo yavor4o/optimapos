@@ -1,14 +1,12 @@
 # inventory/services/inventory_service.py - FULL REFACTORED WITH RESULT PATTERN
 
-from django.db.models import Sum, Count, F, Q, Avg, Max, Min
+from django.db.models import Sum, F
 from django.utils import timezone
 from django.db import transaction
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 from decimal import Decimal
-from datetime import date, timedelta
-
 from core.utils.result import Result
-from ..models import InventoryLocation, InventoryItem, InventoryBatch, InventoryMovement
+from ..models import InventoryLocation, InventoryItem, InventoryBatch
 
 
 class InventoryService:

@@ -1,22 +1,11 @@
 # pricing/services/promotion_service.py - COMPLETE RESULT PATTERN REFACTORING
-"""
-PROMOTION SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
 
-Централизирана promotional pricing логика с Result pattern за консистентност.
-Управлява promotional campaigns и discounts.
 
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy методи запазени за backward compatibility
-- Enhanced error handling и validation
-- Bulk operations за promotional campaigns
-- Integration готовност с PricingService
-"""
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 from django.db.models import Q
 from decimal import Decimal
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from datetime import timedelta
 import logging
 
@@ -276,12 +265,14 @@ class PromotionService:
                     from .pricing_service import PricingService
                     location = promotion_data.get('location')
                     if location:
-                        base_price = PricingService.get_base_price(location, product)
-                        if base_price > 0 and promo_price >= base_price:
-                            validation_data['validation_warnings'].append(
-                                'Promotional price is not lower than base price')
-                            validation_data['recommendations'].append(
-                                'Consider lowering promotional price for meaningful discount')
+                        pricing_result = PricingService.get_product_pricing(location, product)
+                        if pricing_result.ok:
+                            base_price = pricing_result.data.get('base_price', 0)
+                            if base_price > 0 and promo_price >= base_price:
+                                validation_data['validation_warnings'].append(
+                                    'Promotional price is not lower than base price')
+                                validation_data['recommendations'].append(
+                                    'Consider lowering promotional price for meaningful discount')
                 except ImportError:
                     pass
 
@@ -552,9 +543,15 @@ class PromotionService:
             # FIXED: Use PricingService get_base_price instead of get_price
             from .pricing_service import PricingService
 
-            # FIXED: Get location from promotion's GenericForeignKey
-            promotion_location = promotion.priceable_location  # or however it's named
-            base_price = PricingService.get_base_price(promotion_location, promotion.product)
+            promotion_location = promotion.priceable_location
+            if promotion_location:
+                pricing_result = PricingService.get_product_pricing(promotion_location, promotion.product)
+                if pricing_result.ok:
+                    base_price = pricing_result.data.get('base_price', 0)
+                else:
+                    base_price = 0
+            else:
+                base_price = 0
 
             if base_price > promotion.promotional_price:
                 return base_price - promotion.promotional_price
@@ -574,11 +571,14 @@ class PromotionService:
 
             # Fallback calculation
             from .pricing_service import PricingService
-            base_price = PricingService.get_base_price(promotion.location, promotion.product)
-            if base_price > 0 and base_price > promotion.promotional_price:
-                return (base_price - promotion.promotional_price) / base_price * 100
-
-            return Decimal('0')
+            promotion_location = promotion.priceable_location  # ✅ Правилното GenericForeignKey поле
+            if promotion_location:
+                pricing_result = PricingService.get_product_pricing(promotion_location, promotion.product)
+                if pricing_result.ok:
+                    base_price = pricing_result.data.get('base_price', 0)
+                    if base_price > 0 and base_price > promotion.promotional_price:
+                        return (base_price - promotion.promotional_price) / base_price * 100
+            return Decimal('0')  # Fallback ако няма данни
 
         except Exception:
             return None

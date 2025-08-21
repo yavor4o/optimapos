@@ -1,7 +1,7 @@
 # products/services/lifecycle_service.py
 
 from typing import List, Dict, Optional
-from django.db import transaction, models
+from django.db import transaction
 from django.utils import timezone
 import logging
 from core.utils.result import Result

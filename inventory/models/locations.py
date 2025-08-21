@@ -1,11 +1,10 @@
 # inventory/models/locations.py - REFACTORED
-from typing import Optional
+
 
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 
@@ -235,28 +234,36 @@ class InventoryLocation(models.Model):
             from .items import InventoryItem
             from products.services import ProductValidationService
 
-            # Use Products app validation service
-            can_sell, message, details = ProductValidationService.can_sell_product(
+            # ПРЕДИ: can_sell_product() - не съществува
+            # СЕГА: validate_sale() - правилният Result-based метод
+            validation_result = ProductValidationService.validate_sale(
                 product=product,
                 quantity=quantity,
                 location=self
             )
 
-            return can_sell
+            # Return bool based on Result
+            return validation_result.ok
 
         except ImportError:
-            # Fallback to simple check if Products app not available
+            # Fallback ако ProductValidationService не е достъпен
             try:
-                item = self.inventory_items.get(product=product)
-                return item.available_qty >= quantity or self.allow_negative_stock
-            except:
-                return self.allow_negative_stock
+                from .items import InventoryItem
+                item = InventoryItem.objects.get(location=self, product=product)
+                return item.available_qty >= quantity
+            except InventoryItem.DoesNotExist:
+                return False
+        except Exception as e:
+            # Log error and return False for safety
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error in can_sell validation: {e}")
+            return False
 
     # === ANALYTICS METHODS ===
 
     def get_total_stock_value(self):
         """Calculate total inventory value for this location"""
-        from .items import InventoryItem
         from django.db.models import Sum, F
 
         total = self.inventory_items.aggregate(
@@ -269,11 +276,6 @@ class InventoryLocation(models.Model):
         return self.inventory_items.filter(current_qty__gt=0).count()
 
     def get_batch_statistics(self):
-        """
-        Get batch tracking statistics for this location
-        NEW METHOD: Provides insights into batch usage
-        """
-        from .items import InventoryBatch
 
         if not hasattr(self, '_batch_stats'):
             stats = {
@@ -315,26 +317,34 @@ class InventoryLocation(models.Model):
         return self._batch_stats
 
     def get_negative_stock_items(self):
-        """
-        Get products with negative stock at this location
-        ENHANCED: More detailed negative stock analysis
-        """
-        from .items import InventoryItem
+
+        from django.utils import timezone
 
         negative_items = self.inventory_items.filter(current_qty__lt=0)
 
-        return [
-            {
+        result = []
+        for item in negative_items:
+            # Safe calculation за days_negative
+            days_negative = 0
+            if item.last_movement_date:
+                try:
+                    last_date = item.last_movement_date
+                    if hasattr(last_date, 'date'):
+                        last_date = last_date.date()
+                    days_negative = (timezone.now().date() - last_date).days
+                except Exception:
+                    days_negative = 0
+
+            result.append({
                 'product_code': item.product.code,
                 'product_name': item.product.name,
                 'current_qty': item.current_qty,
                 'shortage': abs(item.current_qty),
                 'value_impact': abs(item.current_qty * item.avg_cost),
-                'days_negative': (
-                            timezone.now().date() - item.last_movement_date).days if item.last_movement_date else 0
-            }
-            for item in negative_items
-        ]
+                'days_negative': days_negative
+            })
+
+        return result
 
     def get_purchase_vat_mode(self) -> bool:
         """Get whether purchase prices include VAT for this location"""

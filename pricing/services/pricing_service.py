@@ -1,17 +1,4 @@
-# pricing/services/pricing_service.py - COMPLETE RESULT PATTERN REFACTORING
-"""
-PRICING SERVICE - COMPLETE REFACTORED WITH RESULT PATTERN
-
-Централизирана pricing логика с Result pattern за консистентност.
-Запазена пълна функционалност от оригиналния service.
-
-ПРОМЕНИ:
-- Всички публични методи връщат Result objects
-- Legacy методи запазени за backward compatibility
-- Enhanced error handling и validation
-- Structured pricing data в responses
-- Integration готовност с останалите services
-"""
+# pricing/services/pricing_service.py
 
 from django.utils import timezone
 from django.db import models

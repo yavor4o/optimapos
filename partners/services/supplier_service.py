@@ -1,11 +1,9 @@
 # partners/services/supplier_service.py - REFACTORED WITH RESULT PATTERN
 
-from django.db.models import Sum, Count, Q, Avg
+from django.db.models import Sum, Count, Avg
 from django.utils import timezone
 from decimal import Decimal
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-
+from datetime import timedelta
 from core.utils.result import Result
 
 

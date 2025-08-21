@@ -15,6 +15,7 @@ Purchase Workflow Service - ЦЕНТРАЛИЗИРАНА БИЗНЕС ЛОГИК
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from django.db import transaction
 from django.contrib.auth import get_user_model
@@ -99,7 +100,7 @@ class PurchaseWorkflowService:
                 'supplier': request.supplier,
                 'location': request.location,
                 'document_type': request.document_type,  # Same workflow
-                'expected_delivery_date': timezone.now().date() + timezone.timedelta(days=7),
+                'expected_delivery_date': timezone.now().date() + timedelta(days=7),
                 'external_reference': request.external_reference,
                 'notes': f"Created from request {request.document_number}\n{request.notes}".strip(),
                 'source_request': request,
@@ -141,7 +142,7 @@ class PurchaseWorkflowService:
             # Recalculate order totals using service
             try:
                 from nomenclatures.services import VATCalculationService
-                calc_result = VATCalculationService.recalculate_document_totals(order)
+                calc_result = VATCalculationService.calculate_document_vat(order)
                 if not calc_result.ok:
                     logger.warning(f"VAT calculation warning: {calc_result.msg}")
             except ImportError:
@@ -302,7 +303,7 @@ class PurchaseWorkflowService:
             if should_auto_receive:
                 try:
                     from inventory.services.movement_service import MovementService
-                    movement_result = MovementService.create_from_document(order)
+                    movement_result = MovementService.process_document_movements(order)
 
                     if movement_result.ok:
                         auto_receive_triggered = True
@@ -991,7 +992,7 @@ class PurchaseWorkflowService:
                     'lines_processed': lines_processed,
                     'approved_quantity': float(approved_quantity),
                     'rejected_quantity': float(rejected_quantity),
-                    'approval_rate': round(approval_rate, 2),
+                    'approval_rate': round(float(approval_rate), 2),
                     'movements_created': movements_created,
                     'delivery_quality_status': delivery.quality_status
                 },

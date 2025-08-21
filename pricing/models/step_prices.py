@@ -13,7 +13,13 @@ class ProductStepPriceManager(models.Manager):
         return self.filter(is_active=True)
 
     def for_location(self, location: ILocation):
-        content_type = ContentType.objects.get_for_model(location.__class__)
+        """Get prices for any ILocation"""
+        from django.db import models
+
+        if not isinstance(location, models.Model):
+            raise ValueError(f"Location must be a Django Model, got {type(location)}")
+
+        content_type = ContentType.objects.get_for_model(location)
         return self.filter(
             content_type=content_type,
             object_id=location.pk,
@@ -103,14 +109,3 @@ class ProductStepPrice(models.Model):
         location_str = str(self.priceable_location) if self.priceable_location else 'Unknown'
         return f"{self.product.code} @ {location_str} (≥{self.min_quantity}): {self.price}"
 
-    # =====================
-    # BACKWARD COMPATIBILITY
-    # =====================
-    @property
-    def location(self) -> ILocation:
-        return self.priceable_location
-
-    @location.setter
-    def location(self, value: ILocation):
-        self.content_type = ContentType.objects.get_for_model(value.__class__)
-        self.object_id = value.pk
