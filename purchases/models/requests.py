@@ -1,26 +1,11 @@
 # purchases/models/requests.py - REFACTORED
-"""
-PurchaseRequest Model - Clean Architecture Implementation
 
-CHANGES:
-❌ REMOVED: Fat business logic methods from model
-✅ ADDED: Thin wrapper methods that delegate to services
-✅ PRESERVED: 100% backward compatibility
-✅ ENHANCED: Better error handling and logging
-
-PRINCIPLE:
-Model = Data + Simple Operations
-Services = Business Logic + Complex Operations
-"""
-
-import warnings
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-
 from nomenclatures.models import BaseDocument
 from nomenclatures.mixins import FinancialMixin
 import logging
@@ -236,7 +221,10 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
         ]
 
     def __str__(self):
-        return f"Request {self.document_number} - {self.supplier.name}"
+        if self.partner:
+            return f"Request {self.document_number} - {self.partner.name}"
+        else:
+            return f"Request {self.document_number}"
 
     # =====================
     # MODEL VALIDATION - Keep in Model
@@ -328,183 +316,6 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
             )
         )['total'] or Decimal('0')
 
-    # =====================
-    # SERVICE DELEGATION METHODS - Wrapper Methods for Backward Compatibility
-    # =====================
-
-    def submit_for_approval(self, user=None):
-        """
-        WRAPPER METHOD - Delegates to DocumentService
-
-        DEPRECATED: Use DocumentService.transition_document() directly
-        LEGACY: Kept for backward compatibility
-        """
-        warnings.warn(
-            "PurchaseRequest.submit_for_approval() is deprecated. "
-            "Use DocumentService.transition_document() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        if self.status != self.DRAFT:
-            raise ValidationError("Can only submit draft requests")
-
-        if not self.lines.exists():
-            raise ValidationError("Cannot submit request without lines")
-
-        try:
-            from nomenclatures.services import DocumentService
-
-            result = DocumentService.transition_document(
-                self, self.SUBMITTED, user, 'Request submitted for approval'
-            )
-
-            if result.ok:
-                return True  # Legacy behavior
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            # Fallback for when DocumentService not available
-            logger.warning("DocumentService not available, using fallback logic")
-
-            self.status = self.SUBMITTED
-            self.updated_by = user
-            self.save()
-            return True
-
-    def approve(self, user, notes=''):
-        """
-        WRAPPER METHOD - Delegates to DocumentService + ApprovalService
-
-        DEPRECATED: Use ApprovalService authorization flow
-        LEGACY: Kept for backward compatibility
-        """
-        warnings.warn(
-            "PurchaseRequest.approve() is deprecated. "
-            "Use ApprovalService authorization flow instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        if self.status != self.SUBMITTED:
-            raise ValidationError("Can only approve submitted requests")
-
-        try:
-            from nomenclatures.services import DocumentService
-
-            # Check if user is authorized (via ApprovalService)
-            try:
-                from nomenclatures.services import ApprovalService
-                auth_result = ApprovalService.authorize_document_transition(
-                    self, self.APPROVED, user
-                )
-                if not auth_result.ok:
-                    raise ValidationError(f"Not authorized: {auth_result.msg}")
-            except (ImportError, AttributeError):
-                # Skip authorization if ApprovalService not available or method missing
-                pass
-
-            # Perform transition
-            result = DocumentService.transition_document(
-                self, self.APPROVED, user, notes or 'Request approved'
-            )
-
-            if result.ok:
-                # Update approval fields
-                self.approved_by = user
-                self.approved_at = timezone.now()
-                if notes:
-                    self.notes = (self.notes + '\n' + notes).strip()
-                self.save(update_fields=['approved_by', 'approved_at', 'notes'])
-                return True
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            # Fallback logic
-            logger.warning("Services not available, using fallback logic")
-
-            self.status = self.APPROVED
-            self.approved_by = user
-            self.approved_at = timezone.now()
-            if notes:
-                self.notes = (self.notes + '\n' + notes).strip()
-            self.updated_by = user
-            self.save()
-            return True
-
-    def reject(self, user, reason):
-        """
-        WRAPPER METHOD - Delegates to DocumentService
-
-        DEPRECATED: Use DocumentService.transition_document()
-        LEGACY: Kept for backward compatibility
-        """
-        warnings.warn(
-            "PurchaseRequest.reject() is deprecated. "
-            "Use DocumentService.transition_document() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        if self.status != self.SUBMITTED:
-            raise ValidationError("Can only reject submitted requests")
-
-        try:
-            from nomenclatures.services import DocumentService
-
-            result = DocumentService.transition_document(
-                self, self.REJECTED, user, f'Request rejected: {reason}'
-            )
-
-            if result.ok:
-                self.rejection_reason = reason
-                self.save(update_fields=['rejection_reason'])
-                return True
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            # Fallback logic
-            self.status = self.REJECTED
-            self.rejection_reason = reason
-            self.updated_by = user
-            self.save()
-            return True
-
-    def convert_to_order(self, user=None):
-        """
-        WRAPPER METHOD - Delegates to PurchaseWorkflowService
-
-        DEPRECATED: Use PurchaseWorkflowService.convert_request_to_order()
-        LEGACY: Kept for backward compatibility
-
-        Returns:
-            PurchaseOrder instance (legacy behavior)
-
-        Raises:
-            ValidationError (legacy behavior)
-        """
-        warnings.warn(
-            "PurchaseRequest.convert_to_order() is deprecated. "
-            "Use PurchaseWorkflowService.convert_request_to_order() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-
-            result = PurchaseWorkflowService.convert_request_to_order(self, user)
-
-            if result.ok:
-                return result.data['order']  # Legacy behavior: return object
-            else:
-                raise ValidationError(result.msg)  # Legacy behavior: raise exception
-
-        except ImportError:
-            raise ValidationError("PurchaseWorkflowService is not available")
 
     # =====================
     # ENHANCED ANALYSIS METHODS - Delegate to Services
@@ -524,7 +335,7 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
                 {
                     'total_estimated_cost': float(self.total_estimated_cost),
                     'lines_count': self.lines.count(),
-                    'supplier': self.supplier.name,
+                    'partner': self.partner.name if self.partner else None,  # ← ПОПРАВИ
                     'status': self.status
                 },
                 'Basic financial analysis (enhanced version pending)'
@@ -597,14 +408,14 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
             from core.utils.result import Result
 
             # Basic recalculation - just call model's method
-            original_total = self.total_amount
+            original_total = self.total
             self.recalculate_totals()  # Existing model method
 
             return Result.success(
                 {
                     'lines_processed': self.lines.count(),
-                    'total_amount_change': float(self.total_amount - original_total),
-                    'new_total': float(self.total_amount)
+                    'total_amount_change': float(self.total - original_total),
+                    'new_total': float(self.total)
                 },
                 f'Recalculated {self.lines.count()} lines (basic version)'
             )
@@ -857,7 +668,7 @@ class PurchaseRequestLine(models.Model):
             return ProductValidationService.validate_purchase(
                 self.product,
                 self.requested_quantity,
-                self.document.supplier
+                self.document.partner  # ← ПРОМЕНИ supplier → partner
             )
 
         except ImportError:
@@ -865,43 +676,3 @@ class PurchaseRequestLine(models.Model):
             return Result.success({}, 'ProductValidationService not available')
 
 
-# =====================
-# MIGRATION NOTES
-# =====================
-
-"""
-MIGRATION GUIDE для PurchaseRequest:
-
-ПРЕДИ (Fat Model):
-    def convert_to_order(self, user=None):
-        # 50+ lines of business logic in model
-        order = PurchaseOrder.objects.create(...)
-        # Complex conversion logic
-        # Error handling
-        # Related object creation
-        return order
-
-СЕГА (Service Delegation):
-    def convert_to_order(self, user=None):
-        # Thin wrapper - delegates to service
-        result = PurchaseWorkflowService.convert_request_to_order(self, user)
-        return result.data['order'] if result.ok else raise ValidationError(result.msg)
-
-BENEFITS:
-✅ Model stays focused on data persistence
-✅ Business logic centralized in services  
-✅ Better testing - services are easier to test
-✅ Reusability - services can be used by API, admin, etc.
-✅ Backward compatibility - old code continues to work
-✅ Enhanced functionality - services provide richer results
-
-NEW CODE SHOULD USE:
-    from purchases.services.workflow_service import PurchaseWorkflowService
-    result = PurchaseWorkflowService.convert_request_to_order(request, user)
-
-    if result.ok:
-        order = result.data['order'] 
-        print(f"Created order with {result.data['lines_count']} lines")
-    else:
-        print(f"Conversion failed: {result.code} - {result.msg}")
-"""

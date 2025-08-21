@@ -1,20 +1,5 @@
 # purchases/models/delivery.py - REFACTORED WITH SERVICE DELEGATION
-"""
-DeliveryReceipt Model - Clean Architecture Implementation
 
-CHANGES:
-❌ REMOVED: Fat business logic methods from model
-✅ ADDED: Thin wrapper methods that delegate to services
-✅ PRESERVED: 100% backward compatibility
-✅ ENHANCED: Quality control workflow integration
-
-PRINCIPLE:
-Model = Data + Simple Operations
-Services = Business Logic + Complex Operations
-Focus = Quality Control + Inventory Integration
-"""
-
-import warnings
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -262,7 +247,10 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         ]
 
     def __str__(self):
-        return f"Delivery {self.document_number} - {self.supplier.name} ({self.delivery_date})"
+        if self.partner:
+            return f"Delivery {self.document_number} - {self.partner.name} ({self.delivery_date})"
+        else:
+            return f"Delivery {self.document_number} ({self.delivery_date})"
 
     # =====================
     # MODEL VALIDATION - Keep in Model
@@ -281,9 +269,9 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
 
         # Source order validation
         if self.source_order:
-            if self.supplier != self.source_order.supplier:
+            if self.partner != self.source_order.partner:
                 raise ValidationError({
-                    'supplier': _('Supplier must match source order supplier')
+                    'partner': _('Partner must match source order partner')
                 })
 
             if self.source_order.status != 'confirmed':
@@ -350,95 +338,6 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         if total > 0:
             return float(self.total_approved_quantity / total * 100)
         return 0.0
-
-    # =====================
-    # SERVICE DELEGATION METHODS - Wrapper Methods for Backward Compatibility
-    # =====================
-
-    def process_quality_control(self, quality_decisions=None, user=None):
-        """
-        WRAPPER METHOD - Delegates to PurchaseWorkflowService
-
-        DEPRECATED: Use PurchaseWorkflowService.process_quality_control() directly
-        LEGACY: Kept for backward compatibility
-
-        Args:
-            quality_decisions: Dict[line_id, {'approved': bool, 'issue_type': str}]
-            user: User performing quality control
-        """
-        warnings.warn(
-            "DeliveryReceipt.process_quality_control() is deprecated. "
-            "Use PurchaseWorkflowService.process_quality_control() instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-
-            result = PurchaseWorkflowService.process_quality_control(
-                self, quality_decisions, user
-            )
-
-            if result.ok:
-                return True  # Legacy behavior
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            raise ValidationError("PurchaseWorkflowService is not available")
-
-    def approve_all_quality(self, user=None):
-        """
-        NEW WRAPPER METHOD - Approve all lines quality
-
-        Convenience method for bulk quality approval
-        """
-        try:
-            quality_decisions = {}
-            for line in self.lines.all():
-                quality_decisions[str(line.id)] = {'approved': True}
-
-            return self.process_quality_control(quality_decisions, user)
-        except Exception as e:
-            raise ValidationError(f"Failed to approve all quality: {str(e)}")
-
-    def reject_all_quality(self, user=None, issue_type='damaged'):
-        """
-        NEW WRAPPER METHOD - Reject all lines quality
-
-        Convenience method for bulk quality rejection
-        """
-        try:
-            quality_decisions = {}
-            for line in self.lines.all():
-                quality_decisions[str(line.id)] = {
-                    'approved': False,
-                    'issue_type': issue_type
-                }
-
-            return self.process_quality_control(quality_decisions, user)
-        except Exception as e:
-            raise ValidationError(f"Failed to reject all quality: {str(e)}")
-
-    def create_inventory_movements(self, user=None):
-        """
-        NEW WRAPPER METHOD - Create inventory movements for approved items
-
-        Delegates to MovementService for movement creation
-        """
-        try:
-            from inventory.services.movement_service import MovementService
-
-            result = MovementService.create_from_document(self)
-
-            if result.ok:
-                return result.data.get('movements_count', 0)
-            else:
-                raise ValidationError(result.msg)
-
-        except ImportError:
-            raise ValidationError("MovementService is not available")
 
     # =====================
     # ENHANCED ANALYSIS METHODS - Delegate to Services
@@ -862,59 +761,3 @@ class DeliveryLine(FinancialMixin):
             return Result.success({}, 'ProductValidationService not available')
 
 
-# =====================
-# MIGRATION NOTES
-# =====================
-
-"""
-MIGRATION GUIDE за DeliveryReceipt:
-
-ПРЕДИ (Fat Model):
-    def process_quality_control(self, quality_decisions, user):
-        # 40+ lines of business logic in model
-        for line_id, decision in quality_decisions.items():
-            # Complex quality processing logic
-            # Inventory movement creation
-            # Source order updates
-            # Supplier performance tracking
-        return True
-
-СЕГА (Service Delegation):
-    def process_quality_control(self, quality_decisions, user):
-        # Thin wrapper - delegates to service
-        result = PurchaseWorkflowService.process_quality_control(self, quality_decisions, user)
-        return True if result.ok else raise ValidationError(result.msg)
-
-BENEFITS:
-✅ Model stays focused on data persistence and simple quality tracking
-✅ Complex quality workflows centralized in services  
-✅ Better integration with inventory and order management
-✅ Reusability - quality control can be used by API, admin, mobile apps
-✅ Backward compatibility - old code continues to work
-✅ Enhanced analytics - services provide detailed quality metrics
-
-NEW CODE SHOULD USE:
-    from purchases.services.workflow_service import PurchaseWorkflowService
-
-    quality_decisions = {
-        '1': {'approved': True},
-        '2': {'approved': False, 'issue_type': 'damaged'}
-    }
-
-    result = PurchaseWorkflowService.process_quality_control(delivery, quality_decisions, user)
-
-    if result.ok:
-        print(f"Quality processed. Approval rate: {result.data['approval_rate']}%")
-        print(f"Movements created: {result.data['movements_created']}")
-    else:
-        print(f"Quality control failed: {result.code} - {result.msg}")
-
-QUALITY CONTROL FEATURES:
-✅ Line-level quality approval/rejection
-✅ Quality issue type tracking
-✅ Batch and expiry date tracking
-✅ Automatic inventory movement creation for approved items only
-✅ Source order delivery status synchronization
-✅ Quality metrics and reporting
-✅ Supplier performance impact tracking
-"""
