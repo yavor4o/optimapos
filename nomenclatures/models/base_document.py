@@ -19,6 +19,8 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 import logging
 
+from core.interfaces.location_interface import validate_location
+
 logger = logging.getLogger(__name__)
 
 
@@ -180,13 +182,14 @@ class BaseDocument(models.Model):
         null=True,
         blank=True,
         verbose_name=_('Partner Type'),
+        related_name='%(class)s_as_partner',  # ← ДОБАВИ ТОВА
         help_text=_('Type of partner (Supplier, Customer, etc.)'),
         limit_choices_to=models.Q(
             app_label='partners',
             model__in=['supplier', 'customer']
         ) | models.Q(
             app_label='hr',
-            model='employee'  # За HR документи
+            model='employee'
         )
     )
 
@@ -212,11 +215,35 @@ class BaseDocument(models.Model):
         help_text=_('DEPRECATED: Use partner field instead')
     )
 
-    location = models.ForeignKey(
-        'inventory.InventoryLocation',
+    location_content_type = models.ForeignKey(
+        ContentType,
         on_delete=models.PROTECT,
-        verbose_name=_('Location'),
-        help_text=_('Business location')
+        null=True,
+        blank=True,
+        verbose_name=_('Location Type'),
+        related_name='%(class)s_as_location',  # ← ДОБАВИ ТОВА
+        help_text=_('Type of location (InventoryLocation, OnlineStore, etc.)'),
+        limit_choices_to=models.Q(
+            app_label='inventory', model='inventorylocation'
+        ) | models.Q(
+            app_label='sales', model='onlinestore'
+        ) | models.Q(
+            app_label='partners', model='customersite'
+        ) | models.Q(
+            app_label='hr', model='office'
+        )
+    )
+
+    location_object_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_('Location ID'),
+        help_text=_('ID of the location object')
+    )
+
+    location = GenericForeignKey(
+        'location_content_type',
+        'location_object_id'
     )
 
     # =====================
@@ -234,6 +261,28 @@ class BaseDocument(models.Model):
         blank=True,
         help_text=_('Additional notes and comments')
     )
+
+    # =====================
+    # LOCATION HELPER METHODS
+    # =====================
+
+    def get_inventory_location(self):
+        """Връща location ако е InventoryLocation, иначе None"""
+        if self.location and self.location.__class__.__name__ == 'InventoryLocation':
+            return self.location
+        return None
+
+    def get_online_store(self):
+        """Връща location ако е OnlineStore, иначе None"""
+        if self.location and self.location.__class__.__name__ == 'OnlineStore':
+            return self.location
+        return None
+
+    def get_customer_site(self):
+        """Връща location ако е CustomerSite, иначе None"""
+        if self.location and self.location.__class__.__name__ == 'CustomerSite':
+            return self.location
+        return None
 
     # =====================
     # SYSTEM FIELDS
@@ -259,12 +308,13 @@ class BaseDocument(models.Model):
 
     class Meta:
         abstract = True
-        ordering = ['-document_date', '-created_at']  # ДОБАВЕНО: ordering по document_date
-        indexes = [  # ДОБАВЕНО: важни индекси
+        ordering = ['-document_date', '-created_at']
+        indexes = [
             models.Index(fields=['document_number']),
             models.Index(fields=['status']),
             models.Index(fields=['document_date']),
-            models.Index(fields=['location']),
+            # ПРОМЕНЕН INDEX - generic location:
+            models.Index(fields=['location_content_type', 'location_object_id']),
             models.Index(fields=['partner_content_type', 'partner_object_id']),
             models.Index(fields=['created_at']),
         ]
@@ -358,22 +408,31 @@ class BaseDocument(models.Model):
     # =====================
 
     def clean(self):
+        """Enhanced validation with ILocation protocol"""
         super().clean()
 
-        # Валидация на partner
+        # Валидирай IPartner протокол
         if self.partner:
             from core.interfaces.partner_interface import validate_partner
             try:
                 validate_partner(self.partner)
-            except ValidationError as e:
-                raise ValidationError({'partner': str(e)})
+            except (AttributeError, TypeError) as e:
+                raise ValidationError({
+                    'partner': f'Partner must implement IPartner protocol: {e}'
+                })
 
-        # Синхронизация между partner и legacy полета
-        if self.partner and self.partner.__class__.__name__ == 'Supplier':
-            self.supplier = self.partner
-        elif not self.partner and self.supplier:
-            # Ако имаме само legacy supplier, копирай в partner
-            self.partner = self.supplier
+        # НОВО: Валидирай ILocation протокол
+        if self.location:
+            try:
+                validate_location(self.location)
+            except (AttributeError, TypeError) as e:
+                raise ValidationError({
+                    'location': f'Location must implement ILocation protocol: {e}'
+                })
+
+        # Валидирай че document_type съответства на location rules
+        if self.document_type and self.location:
+            self._validate_document_type_location_compatibility()
 
     def save(self, *args, **kwargs):
         # Auto-generate document number ако липсва
@@ -401,6 +460,15 @@ class BaseDocument(models.Model):
     # =====================
     # READ-ONLY HELPERS
     # =====================
+
+    def _validate_document_type_location_compatibility(self):
+        """Провери дали document_type е compatiblen с location type"""
+        # Пример: Purchase документи могат да използват само InventoryLocation
+        if hasattr(self, '_meta') and 'purchase' in self._meta.app_label.lower():
+            if not self.get_inventory_location():
+                raise ValidationError({
+                    'location': _('Purchase documents require InventoryLocation')
+                })
 
     def get_document_prefix(self):
         """Get document prefix from DocumentType or fallback"""

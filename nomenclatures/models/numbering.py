@@ -39,21 +39,13 @@ class NumberingConfigurationManager(BaseNomenclatureManager):
         return self.active().filter(document_type=document_type)
 
     def for_location(self, location):
-        """Get configs for specific location - ENHANCED"""
-        # NEW: Try GenericForeignKey first
-        try:
-            content_type = ContentType.objects.get_for_model(location.__class__)
-            return self.active().filter(
-                location_assignments__location_content_type=content_type,  # <- ПРОМЕНИ ТУК
-                location_assignments__location_object_id=location.pk,  # <- ПРОМЕНИ ТУК
-                location_assignments__is_active=True  # <- ПРОМЕНИ ТУК
-            )
-        except:
-            # FALLBACK: Use legacy location field
-            return self.active().filter(
-                location_assignments__location=location,  # <- ПРОМЕНИ ТУК СЪЩО
-                location_assignments__is_active=True  # <- ПРОМЕНИ ТУК СЪЩО
-            )
+        """Get configs for specific location - FIXED"""
+        content_type = ContentType.objects.get_for_model(location.__class__)
+        return self.active().filter(
+            location_assignments__location_content_type=content_type,
+            location_assignments__location_object_id=location.pk,
+            location_assignments__is_active=True
+        )
 
     def fiscal_configs(self):
         """Get fiscal numbering configurations"""
@@ -498,7 +490,7 @@ class UserNumberingPreference(models.Model):
 
 def get_numbering_config_for_document(document_type, location=None, user=None):
     """
-    Get appropriate numbering configuration - НЕ СЕ ПРОМЕНЯ
+    Get appropriate numbering configuration - FIXED FOR GENERIC LOCATION
 
     Priority:
     1. User preference (if specified)
@@ -518,24 +510,11 @@ def get_numbering_config_for_document(document_type, location=None, user=None):
 
     # Priority 2: Location assignment
     if location:
-        # NEW: Try GenericForeignKey first
-        try:
-            content_type = ContentType.objects.get_for_model(location.__class__)
-            assignment = LocationNumberingAssignment.objects.filter(
-                location_content_type=content_type,
-                location_object_id=location.pk,
-                numbering_config__document_type=document_type,
-                is_active=True
-            ).select_related('numbering_config').first()
-
-            if assignment:
-                return assignment.numbering_config
-        except:
-            pass
-
-        # FALLBACK: Use legacy location field
+        # NEW: САМО GenericForeignKey търсене (махаме fallback)
+        content_type = ContentType.objects.get_for_model(location.__class__)
         assignment = LocationNumberingAssignment.objects.filter(
-            location=location,
+            location_content_type=content_type,
+            location_object_id=location.pk,
             numbering_config__document_type=document_type,
             is_active=True
         ).select_related('numbering_config').first()
