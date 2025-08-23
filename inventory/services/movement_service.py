@@ -644,7 +644,6 @@ class MovementService:
         logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
         return movement
 
-
     @staticmethod
     @transaction.atomic
     def _create_outgoing_movement_internal(
@@ -664,7 +663,7 @@ class MovementService:
             sale_price: Optional[Decimal] = None,
             customer=None
     ) -> List[InventoryMovement]:
-        """Internal outgoing movement creation with WORKING RACE CONDITION PROTECTION"""
+        """Internal outgoing movement creation with COMPLETE DECIMAL PRECISION FIX"""
 
         if movement_date is None:
             movement_date = timezone.now().date()
@@ -677,9 +676,18 @@ class MovementService:
         # Ensure it's definitely a boolean
         allow_negative_stock = bool(allow_negative_stock)
 
+        # 🔧 CRITICAL FIX: Pre-quantize sale_price to avoid precision issues later
+        if sale_price is not None:
+            sale_price = sale_price.quantize(Decimal('0.01'))
+
+        if manual_cost_price is not None:
+            manual_cost_price = manual_cost_price.quantize(Decimal('0.0001'))
+
         # Auto-detect sale price if not provided
         if sale_price is None and source_document_type in ['SALE', 'DELIVERY']:
-            sale_price = MovementService._detect_sale_price(location, product, customer, quantity)
+            detected_price = MovementService._detect_sale_price(location, product, customer, quantity)
+            if detected_price is not None:
+                sale_price = detected_price.quantize(Decimal('0.01'))  # Ensure quantization
 
         # 🔒 CRITICAL FIX: Lock AND update atomically
         if not allow_negative_stock:
@@ -725,6 +733,7 @@ class MovementService:
         should_track_batches = MovementService._should_track_batches(location, product)
 
         if should_track_batches and use_fifo and manual_batch_number is None:
+            # 🔧 FIXED: Pass pre-quantized sale_price to FIFO method
             movements = MovementService._create_fifo_outgoing_movements(
                 location, product, quantity, movement_date, source_document_type,
                 source_document_number, source_document_line_id, reason, created_by, sale_price
@@ -740,10 +749,9 @@ class MovementService:
             # Round cost price
             cost_price = cost_price.quantize(Decimal('0.01'))
 
-            # Calculate and round profit
+            # 🔧 FIXED: Proper quantization with null check
             profit_amount = Decimal('0.00')
-            if sale_price:  # ← CHECK if sale_price exists
-                sale_price = sale_price.quantize(Decimal('0.01'))  # ← quantize ONLY if not None
+            if sale_price is not None:  # sale_price is already quantized above
                 profit_amount = ((sale_price - cost_price) * quantity).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
@@ -752,8 +760,8 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=quantity,
                 cost_price=cost_price,
-                sale_price=sale_price,  # Can be None - that's OK
-                profit_amount=profit_amount,
+                sale_price=sale_price,  # Already quantized
+                profit_amount=profit_amount,  # Already quantized
                 batch_number=manual_batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
@@ -764,9 +772,8 @@ class MovementService:
             )
             movements.append(movement)
 
-
         # Log success
-        total_profit = sum(getattr(m, 'total_profit', 0) or Decimal('0') for m in movements)
+        total_profit = sum(getattr(m, 'profit_amount', 0) or Decimal('0') for m in movements)
         logger.info(
             f"✅ Created outgoing movement: {product.code} -{quantity} at {location.code}, "
             f"movements: {len(movements)}, total_profit: {total_profit}"
@@ -779,10 +786,12 @@ class MovementService:
             location, product, quantity, movement_date, source_document_type,
             source_document_number, source_document_line_id, reason, created_by, sale_price
     ) -> List[InventoryMovement]:
-        """FIFO implementation with BATCH LOCKING and PROFIT ROUNDING"""
+        """FIFO implementation with COMPLETE DECIMAL PRECISION FIX"""
 
         movements = []
         remaining_qty = quantity
+
+        # Note: sale_price is already quantized by caller - do not re-quantize here
 
         # 🔒 Lock batches with select_for_update()
         available_batches = InventoryBatch.objects.select_for_update().filter(
@@ -797,18 +806,14 @@ class MovementService:
 
             qty_from_batch = min(remaining_qty, batch.remaining_qty)
 
-            # 🔧 FIX: Calculate and round profit_amount
+            # 🔧 COMPLETE FIX: Proper decimal handling
             batch_cost = (batch.cost_price or Decimal('0.00')).quantize(Decimal('0.01'))
             profit_amount = Decimal('0.00')
-            if sale_price:
-                # Ensure all components are properly quantized BEFORE calculation
-                sale_price_clean = (sale_price or Decimal('0.00')).quantize(Decimal('0.01'))
-                batch_cost_clean = (batch_cost or Decimal('0.00')).quantize(Decimal('0.01'))
-                qty_clean = qty_from_batch.quantize(Decimal('0.001'))
 
-                # Calculate profit with clean decimals
-                profit_per_unit = (sale_price_clean - batch_cost_clean).quantize(Decimal('0.01'))
-                profit_amount = (profit_per_unit * qty_clean).quantize(Decimal('0.01'))
+            if sale_price is not None:  # sale_price is already quantized
+                # Calculate profit with properly quantized components
+                profit_per_unit = (sale_price - batch_cost).quantize(Decimal('0.01'))
+                profit_amount = (profit_per_unit * qty_from_batch).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -816,8 +821,8 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=qty_from_batch,
                 cost_price=batch_cost,
-                sale_price=sale_price,
-                profit_amount=profit_amount,
+                sale_price=sale_price,  # Already quantized
+                profit_amount=profit_amount,  # Now properly quantized
                 batch_number=batch.batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
@@ -829,7 +834,6 @@ class MovementService:
             movements.append(movement)
 
             # Update batch atomically
-
             InventoryBatch.objects.filter(pk=batch.pk).update(
                 remaining_qty=F('remaining_qty') - qty_from_batch
             )
@@ -838,7 +842,6 @@ class MovementService:
 
         # Handle remaining if no batches
         if remaining_qty > 0:
-            # Check if we should fallback to non-batch mode
             should_fallback = (
                     remaining_qty == quantity or  # No batches were processed at all
                     getattr(location, 'allow_negative_stock', False)  # Or negative stock is allowed
@@ -850,11 +853,13 @@ class MovementService:
             logger.info(f"FIFO fallback: Creating non-batch movement for {remaining_qty} units")
 
             default_cost = MovementService._get_smart_cost_price(location, product, None, 'OUT')
+            default_cost = default_cost.quantize(Decimal('0.01'))
 
-            # 🔧 FIX: Round profit for non-batch movement too
+            # 🔧 FIXED: Proper quantization for fallback case
             profit_amount = Decimal('0.00')
-            if sale_price:
-                profit_amount = ((sale_price - default_cost) * remaining_qty).quantize(Decimal('0.01'))
+            if sale_price is not None:  # sale_price is already quantized
+                profit_per_unit = (sale_price - default_cost).quantize(Decimal('0.01'))
+                profit_amount = (profit_per_unit * remaining_qty).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -862,8 +867,8 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=remaining_qty,
                 cost_price=default_cost,
-                sale_price=sale_price,
-                profit_amount=profit_amount,  # ← ДОБАВЕНО
+                sale_price=sale_price,  # Already quantized
+                profit_amount=profit_amount,  # Now properly quantized
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
                 source_document_line_id=source_document_line_id,
