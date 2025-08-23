@@ -164,6 +164,12 @@ class DocumentType(BaseNomenclature):
         help_text=_('Can completed documents be edited?')
     )
 
+    auto_receive = models.BooleanField(
+        _('Auto Receive Inventory'),
+        default=False,
+        help_text=_('Automatically receive inventory when order is confirmed')
+    )
+
     # =====================
     # MANAGERS & META
     # =====================
@@ -219,6 +225,21 @@ class DocumentType(BaseNomenclature):
             raise ValidationError({
                 'auto_create_movements': _(
                     'Cannot auto-create movements if document does not affect inventory'
+                )
+            })
+
+        # NEW: Auto receive validation
+        if self.auto_receive and not self.affects_inventory:
+            raise ValidationError({
+                'auto_receive': _(
+                    'Cannot auto-receive inventory if document does not affect inventory'
+                )
+            })
+
+        if self.auto_receive and self.inventory_direction not in ['in', 'both']:
+            raise ValidationError({
+                'auto_receive': _(
+                    'Auto-receive only makes sense for incoming inventory documents'
                 )
             })
 
@@ -385,12 +406,7 @@ def get_document_type_by_key(app_name, type_key):
 
 
 def create_basic_document_types():
-    """
-    Create basic document types for standard POS system
-
-    Usage:
-        create_basic_document_types()  # Creates REQ, ORD, DEL, INV, etc.
-    """
+    """Create basic document types with proper auto_receive settings"""
     basic_types = [
         # PURCHASES
         {
@@ -402,16 +418,18 @@ def create_basic_document_types():
             'inventory_direction': 'none',
             'requires_approval': True,
             'is_fiscal': False,
+            'auto_receive': False,  # ← Requests don't auto-receive
         },
         {
             'code': 'ORD',
             'name': 'Purchase Order',
             'type_key': 'purchase_order',
             'app_name': 'purchases',
-            'affects_inventory': False,
+            'affects_inventory': False,  # Orders don't directly affect until received
             'inventory_direction': 'none',
             'requires_approval': True,
             'is_fiscal': False,
+            'auto_receive': False,  # ← Set based on business needs
         },
         {
             'code': 'DEL',
@@ -423,6 +441,7 @@ def create_basic_document_types():
             'requires_approval': False,
             'is_fiscal': False,
             'auto_create_movements': True,
+            'auto_receive': True,  # ← Delivery receipts auto-receive
         },
 
         # SALES
@@ -436,19 +455,7 @@ def create_basic_document_types():
             'requires_approval': False,
             'is_fiscal': True,
             'auto_create_movements': True,
-        },
-
-        # INVENTORY
-        {
-            'code': 'ADJ',
-            'name': 'Inventory Adjustment',
-            'type_key': 'inventory_adjustment',
-            'app_name': 'inventory',
-            'affects_inventory': True,
-            'inventory_direction': 'both',
-            'requires_approval': True,
-            'is_fiscal': False,
-            'auto_create_movements': True,
+            'auto_receive': False,  # ← Not applicable for outgoing
         },
     ]
 

@@ -1180,66 +1180,60 @@ class MovementService:
 
     @staticmethod
     def _sync_movements_with_document_internal(document) -> Dict:
-        """Internal movement synchronization - full original logic"""
+        """FIXED: Configuration-driven logic"""
 
         try:
-            # Delete existing movements for this document
             from inventory.models import InventoryMovement
+            from nomenclatures.models import DocumentTypeStatus
 
-            # Original movements
+            # 🎯 ПЪРВО: Провери конфигурацията
+            current_config = DocumentTypeStatus.objects.filter(
+                document_type=document.document_type,
+                status__code=document.status,
+                is_active=True
+            ).first()
+
+            # 🚫 Ако не позволява коригиране - СТОП
+            if not current_config or not current_config.can_correct_movements():
+                return {
+                    'success': False,
+                    'error': 'Movement correction not allowed in current status',
+                    'status': document.status,
+                    'allows_correction': False
+                }
+
+            # ✅ УНИВЕРСАЛЕН ФИЛТЪР - без hardcoded типове
             original_movements = InventoryMovement.objects.filter(
-                source_document_type__in=['PURCHASE_REQUEST', 'PURCHASEREQUEST'],
                 source_document_number=document.document_number
             )
 
-            # Reversal movements
             reversal_movements = InventoryMovement.objects.filter(
-                source_document_type='REVERSAL'
-            ).filter(
+                source_document_type='REVERSAL',
                 source_document_number__contains=document.document_number
             )
 
+            # Изтрий всичко (source type не играе роля)
             original_count = original_movements.count()
             reversal_count = reversal_movements.count()
 
             original_movements.delete()
             reversal_movements.delete()
 
-            logger.info(f"Deleted {original_count} original + {reversal_count} reversal movements")
-
-            # Create fresh movements if status requires
+            # Създай нови САМО ако конфигурацията позволява
             new_movements = []
-
-            try:
-                from nomenclatures.models import DocumentTypeStatus
-
-                current_config = DocumentTypeStatus.objects.filter(
-                    document_type=document.document_type,
-                    status__code=document.status,
-                    is_active=True
-                ).first()
-
-                if current_config and current_config.creates_inventory_movements:
-                    new_movements = MovementService._create_from_document_internal(document)
-                    logger.info(f"Created {len(new_movements)} fresh movements")
-
-            except Exception as e:
-                logger.warning(f"Could not check status config: {e}")
+            if current_config.creates_inventory_movements:
+                new_movements = MovementService._create_from_document_internal(document)
 
             return {
                 'success': True,
                 'deleted_original': original_count,
                 'deleted_reversal': reversal_count,
                 'created_movements': len(new_movements),
-                'total_corrections': original_count + reversal_count + len(new_movements)
+                'config_driven': True  # Показва че е configuration-driven
             }
 
         except Exception as e:
-            logger.error(f"Error syncing movements with document: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            return {'success': False, 'error': str(e)}
 
     @staticmethod
     def _bulk_create_movements_internal(movement_data_list: List[Dict]) -> List[InventoryMovement]:
