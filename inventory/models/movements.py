@@ -289,37 +289,36 @@ class InventoryMovement(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
-        # Update cached inventory data after saving
-        self.refresh_inventory_cache()
 
-    def refresh_inventory_cache(self):
-        """
-        Refresh InventoryItem and InventoryBatch caches
-        ENHANCED: Better error handling
-        """
-        try:
-            from .items import InventoryItem, InventoryBatch
 
-            # Refresh aggregate inventory
-            InventoryItem.refresh_for_combination(
-                location=self.location,
-                product=self.product
-            )
-
-            # Refresh batch inventory if applicable
-            if self.batch_number:
-                InventoryBatch.refresh_for_combination(
-                    location=self.location,
-                    product=self.product,
-                    batch_number=self.batch_number,
-                    expiry_date=self.expiry_date
-                )
-
-        except Exception as e:
-            # Log error but don't break the movement creation
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error refreshing cache for movement {self.id}: {e}")
+    # def refresh_inventory_cache(self):
+    #     """
+    #     Refresh InventoryItem and InventoryBatch caches
+    #     ENHANCED: Better error handling
+    #     """
+    #     try:
+    #         from .items import InventoryItem, InventoryBatch
+    #
+    #         # Refresh aggregate inventory
+    #         InventoryItem.refresh_for_combination(
+    #             location=self.location,
+    #             product=self.product
+    #         )
+    #
+    #         # Refresh batch inventory if applicable
+    #         if self.batch_number:
+    #             InventoryBatch.refresh_for_combination(
+    #                 location=self.location,
+    #                 product=self.product,
+    #                 batch_number=self.batch_number,
+    #                 expiry_date=self.expiry_date
+    #             )
+    #
+    #     except Exception as e:
+    #         # Log error but don't break the movement creation
+    #         import logging
+    #         logger = logging.getLogger(__name__)
+    #         logger.error(f"Error refreshing cache for movement {self.id}: {e}")
 
     # === PROPERTIES ===
 

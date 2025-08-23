@@ -589,15 +589,53 @@ class MovementService:
                 )
                 logger.debug(f"Created new inventory: {product.code} qty={quantity} avg_cost={cost_price}")
 
+
         except Exception as e:
-            # При грешка, fallback към старата логика
-            logger.warning(f"Incremental update failed, using refresh_for_combination: {e}")
-            InventoryItem.refresh_for_combination(location, product)
+            logger.error(f"Critical error in incremental inventory update: {e}")
+            raise
 
+        logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
+        # CREATE BATCH RECORD if needed (replacement for removed refresh_for_combination)
+        if batch_number and MovementService._should_track_batches(location, product):
+            try:
+                # Check if batch already exists
+                existing_batch = InventoryBatch.objects.filter(
+                    location=location,
+                    product=product,
+                    batch_number=batch_number,
+                    expiry_date=expiry_date
+                ).first()
 
+                if existing_batch:
+                    # Update existing batch - add quantity
+                    InventoryBatch.objects.filter(pk=existing_batch.pk).update(
+                        received_qty=F('received_qty') + quantity,
+                        remaining_qty=F('remaining_qty') + quantity,
+                        updated_at=timezone.now()
+                    )
+                    logger.debug(f"Updated existing batch {batch_number}: +{quantity}")
+                else:
+                    # Create new batch
+                    InventoryBatch.objects.create(
+                        location=location,
+                        product=product,
+                        batch_number=batch_number,
+                        expiry_date=expiry_date,
+                        received_qty=quantity,
+                        remaining_qty=quantity,
+                        cost_price=cost_price,
+                        received_date=movement_date or timezone.now().date(),
+                        is_unknown_batch=batch_number.startswith('AUTO_') or batch_number.startswith('UNKNOWN_'),
+                    )
+                    logger.debug(f"Created new batch {batch_number}: {quantity} @ {cost_price}")
+
+            except Exception as batch_e:
+                logger.warning(f"Batch creation failed: {batch_e}")
+                # Don't fail the whole movement if batch creation fails
 
         logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
         return movement
+
 
     @staticmethod
     @transaction.atomic
@@ -704,16 +742,6 @@ class MovementService:
             )
             movements.append(movement)
 
-        # Cache refresh AFTER movement is created
-        try:
-            if should_track_batches and movements:
-                for movement in movements:
-                    if movement.batch_number:
-                        InventoryBatch.refresh_for_combination(
-                            location, product, movement.batch_number
-                        )
-        except Exception as e:
-            logger.error(f"Error refreshing batch cache: {e}")
 
         # Log success
         total_profit = sum(getattr(m, 'total_profit', 0) or Decimal('0') for m in movements)
@@ -953,13 +981,46 @@ class MovementService:
 
         # Cache refresh
         try:
-            InventoryItem.refresh_for_combination(location, product)
+            existing_item = InventoryItem.objects.select_for_update().filter(
+                location=location, product=product
+            ).first()
 
-            if batch_number and MovementService._should_track_batches(location, product):
-                InventoryBatch.refresh_for_combination(location, product, batch_number)
+            if existing_item:
+                if movement_type == InventoryMovement.IN:
+                    # Positive adjustment - add quantity
+                    new_total_value = (existing_item.current_qty * existing_item.avg_cost) + (quantity * cost_price)
+                    new_qty = existing_item.current_qty + quantity
+                    new_avg_cost = new_total_value / new_qty if new_qty > 0 else existing_item.avg_cost
+
+                    InventoryItem.objects.filter(pk=existing_item.pk).update(
+                        current_qty=new_qty,
+                        avg_cost=new_avg_cost,
+                        last_movement_date=timezone.now()
+                    )
+                else:
+                    # Negative adjustment - subtract quantity
+                    new_qty = existing_item.current_qty - quantity
+                    InventoryItem.objects.filter(pk=existing_item.pk).update(
+                        current_qty=new_qty,
+                        last_movement_date=timezone.now()
+                        # Keep same avg_cost for outgoing adjustments
+                    )
+            else:
+                # Create new item for positive adjustment
+                if movement_type == InventoryMovement.IN:
+                    InventoryItem.objects.create(
+                        location=location,
+                        product=product,
+                        current_qty=quantity,
+                        reserved_qty=Decimal('0.00'),
+                        avg_cost=cost_price,
+                        last_movement_date=timezone.now()
+                    )
 
         except Exception as e:
-            logger.error(f"Error refreshing cache after adjustment: {e}")
+            logger.error(f"Error in adjustment incremental update: {e}")
+
+            raise
 
         logger.info(f"✅ Created adjustment: {product.code} {adjustment_qty:+} at {location.code}")
         return movement
@@ -1009,7 +1070,37 @@ class MovementService:
             )
 
             # Refresh cache
-            InventoryItem.refresh_for_combination(original_movement.location, original_movement.product)
+            try:
+                existing_item = InventoryItem.objects.select_for_update().filter(
+                    location=original_movement.location,
+                    product=original_movement.product
+                ).first()
+
+                if existing_item:
+                    if reverse_movement_type == 'IN':
+                        # Reversing an OUT movement - add quantity back
+                        new_total_value = (existing_item.current_qty * existing_item.avg_cost) + (
+                                    original_movement.quantity * original_movement.cost_price)
+                        new_qty = existing_item.current_qty + original_movement.quantity
+                        new_avg_cost = new_total_value / new_qty if new_qty > 0 else existing_item.avg_cost
+
+                        InventoryItem.objects.filter(pk=existing_item.pk).update(
+                            current_qty=new_qty,
+                            avg_cost=new_avg_cost,
+                            last_movement_date=timezone.now()
+                        )
+                    else:
+                        # Reversing an IN movement - subtract quantity
+                        new_qty = existing_item.current_qty - original_movement.quantity
+                        InventoryItem.objects.filter(pk=existing_item.pk).update(
+                            current_qty=new_qty,
+                            last_movement_date=timezone.now()
+                            # Keep same avg_cost when reversing incoming
+                        )
+
+            except Exception as e:
+                logger.error(f"Error in reversal incremental update: {e}")
+                raise
 
             logger.info(f"Created reverse movement {reverse_movement.id} for original {original_movement.id}")
             return reverse_movement
@@ -1562,3 +1653,435 @@ class MovementService:
 # =====================================================
 
 __all__ = ['MovementService']
+
+# TARGETED DEBUG FOR SPECIFIC ISSUES
+# python manage.py shell
+
+from decimal import Decimal
+from django.utils import timezone
+from django.db import transaction
+from inventory.models import InventoryLocation, InventoryItem, InventoryMovement, InventoryBatch
+from products.models import Product
+from inventory.services import MovementService
+import logging
+
+# Enable ALL logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger('inventory')
+
+print("=" * 80)
+print("TARGETED DEBUG FOR SPECIFIC ISSUES")
+print("=" * 80)
+
+
+def debug_incremental_calculation_issue():
+    """Debug why step 3 incremental calculation fails"""
+    print("\n" + "=" * 60)
+    print("DEBUG 1: INCREMENTAL CALCULATION STEP 3 ISSUE")
+    print("=" * 60)
+
+    location = InventoryLocation.objects.filter(is_active=True).first()
+    product = Product.objects.filter(sales_blocked=False).first()
+
+    # Clean
+    InventoryMovement.objects.filter(location=location, product=product).delete()
+    InventoryItem.objects.filter(location=location, product=product).delete()
+
+    print(f"Testing incremental issue with: {product.code}")
+
+    # Step 1: 10 @ 5.00 = 50/10 = 5.00
+    print("\n--- Step 1: 10 @ 5.00 ---")
+    result1 = MovementService.create_incoming_stock(
+        location=location, product=product,
+        quantity=Decimal('10'), cost_price=Decimal('5.00'),
+        source_document_type='DEBUG_INC', reason='Step 1'
+    )
+    print(f"Result1: {result1.ok} - {result1.msg}")
+
+    item1 = InventoryItem.objects.get(location=location, product=product)
+    print(f"After step 1: qty={item1.current_qty}, avg_cost={item1.avg_cost}")
+
+    # Step 2: +5 @ 7.00 = (50+35)/15 = 5.67
+    print("\n--- Step 2: +5 @ 7.00 ---")
+    result2 = MovementService.create_incoming_stock(
+        location=location, product=product,
+        quantity=Decimal('5'), cost_price=Decimal('7.00'),
+        source_document_type='DEBUG_INC', reason='Step 2'
+    )
+    print(f"Result2: {result2.ok} - {result2.msg}")
+
+    item2 = InventoryItem.objects.get(location=location, product=product)
+    print(f"After step 2: qty={item2.current_qty}, avg_cost={item2.avg_cost}")
+
+    # Step 3: +20 @ 4.50 = (85+90)/35 = 5.00 (THIS IS WHERE IT FAILS!)
+    print("\n--- Step 3: +20 @ 4.50 (PROBLEMATIC) ---")
+    print("Expected: (85+90)/35 = 175/35 = 5.00")
+
+    # Manual calculation
+    old_qty = item2.current_qty  # 15
+    old_avg = item2.avg_cost  # 5.67
+    new_qty = Decimal('20')
+    new_cost = Decimal('4.50')
+
+    old_total_value = old_qty * old_avg  # 15 * 5.67 = 85.05
+    new_movement_value = new_qty * new_cost  # 20 * 4.50 = 90.00
+    expected_total_value = old_total_value + new_movement_value  # 175.05
+    expected_total_qty = old_qty + new_qty  # 35
+    expected_avg = expected_total_value / expected_total_qty  # 5.00
+
+    print(f"Manual calc: old_total_value={old_total_value}, new_movement_value={new_movement_value}")
+    print(f"Expected: total_value={expected_total_value}, total_qty={expected_total_qty}, avg={expected_avg}")
+
+    try:
+        result3 = MovementService.create_incoming_stock(
+            location=location, product=product,
+            quantity=new_qty, cost_price=new_cost,
+            source_document_type='DEBUG_INC', reason='Step 3 - problematic'
+        )
+        print(f"Result3: {result3.ok} - {result3.msg}")
+
+        if result3.ok:
+            item3 = InventoryItem.objects.get(location=location, product=product)
+            print(f"After step 3: qty={item3.current_qty}, avg_cost={item3.avg_cost}")
+            print(f"Expected avg: {expected_avg:.4f}, Actual avg: {item3.avg_cost}")
+
+            if abs(item3.avg_cost - expected_avg) > Decimal('0.01'):
+                print("❌ STEP 3 CALCULATION IS WRONG!")
+                return False
+            else:
+                print("✅ Step 3 calculation is correct")
+                return True
+        else:
+            print("❌ Step 3 failed to create movement")
+            return False
+
+    except Exception as e:
+        print(f"❌ Exception in step 3: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# FIX DEBUG TESTS - ADD BATCH NUMBERS
+# В targeted_debug_issues.py
+
+def debug_outgoing_f_expressions_issue():
+    """Debug why outgoing F() expressions don't work"""
+    print("\n" + "=" * 60)
+    print("DEBUG 2: OUTGOING F() EXPRESSIONS ISSUE")
+    print("=" * 60)
+
+    location = InventoryLocation.objects.filter(is_active=True).first()
+    product = Product.objects.filter(sales_blocked=False).first()
+
+    # Clean
+    InventoryMovement.objects.filter(location=location, product=product).delete()
+    InventoryItem.objects.filter(location=location, product=product).delete()
+    InventoryBatch.objects.filter(location=location, product=product).delete()  # ← Clean batches too
+
+    print(f"Testing outgoing issue with: {product.code}")
+    print(f"Product track_batches: {product.track_batches}")
+
+    # ✅ ПОПРАВКА: Добави batch_number за batch-tracked products
+    print("\n--- Setup: 100 @ 10.00 ---")
+
+    if product.track_batches:
+        setup_result = MovementService.create_incoming_stock(
+            location=location, product=product,
+            quantity=Decimal('100'), cost_price=Decimal('10.00'),
+            batch_number='SETUP_BATCH001',  # ← ADD BATCH NUMBER
+            source_document_type='DEBUG_OUT_SETUP', reason='Setup for outgoing debug'
+        )
+        print(f"Setup with batch: SETUP_BATCH001")
+    else:
+        setup_result = MovementService.create_incoming_stock(
+            location=location, product=product,
+            quantity=Decimal('100'), cost_price=Decimal('10.00'),
+            source_document_type='DEBUG_OUT_SETUP', reason='Setup for outgoing debug'
+        )
+        print(f"Setup without batch (product doesn't track batches)")
+
+    print(f"Setup result: {setup_result.ok}")
+
+    if not setup_result.ok:
+        print(f"❌ Setup failed: {setup_result.msg}")
+        return False
+
+    initial_item = InventoryItem.objects.get(location=location, product=product)
+    print(f"After setup: qty={initial_item.current_qty}, avg_cost={initial_item.avg_cost}")
+
+    # Check batches if product tracks batches
+    if product.track_batches:
+        batches = InventoryBatch.objects.filter(location=location, product=product)
+        print(f"Batches created: {batches.count()}")
+        for batch in batches:
+            print(f"  {batch.batch_number}: remaining={batch.remaining_qty}")
+
+    # Test outgoing: -15 should leave 85
+    print("\n--- Outgoing: -15 (should leave 85) ---")
+    try:
+        outgoing_result = MovementService.create_outgoing_stock(
+            location=location, product=product,
+            quantity=Decimal('15'), sale_price=Decimal('15.00'),
+            source_document_type='DEBUG_OUT', reason='Debug outgoing -15'
+        )
+        print(f"Outgoing result: {outgoing_result.ok} - {outgoing_result.msg}")
+
+        if outgoing_result.ok:
+            final_item = InventoryItem.objects.get(location=location, product=product)
+            print(f"After outgoing: qty={final_item.current_qty} (expected: 85)")
+
+            # Check batches after outgoing
+            if product.track_batches:
+                batches = InventoryBatch.objects.filter(location=location, product=product)
+                for batch in batches:
+                    print(f"  {batch.batch_number}: remaining={batch.remaining_qty}")
+
+            if final_item.current_qty == Decimal('85'):
+                print("✅ Outgoing works correctly")
+                return True
+            else:
+                print(f"❌ Wrong quantity: expected 85, got {final_item.current_qty}")
+                return False
+        else:
+            print(f"❌ Outgoing failed: {outgoing_result.msg}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Exception in outgoing: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+# ===============================================================================
+# АЛТЕРНАТИВНО: СЪЗДАЙ SEPARATE ТЕСТОВЕ ЗА BATCH VS NON-BATCH
+# ===============================================================================
+
+def debug_non_batch_outgoing():
+    """Test outgoing for NON-batch products"""
+    print("\n" + "=" * 60)
+    print("DEBUG: NON-BATCH OUTGOING TEST")
+    print("=" * 60)
+
+    location = InventoryLocation.objects.filter(is_active=True).first()
+
+    # Find or create a NON-batch product
+    product = Product.objects.filter(sales_blocked=False, track_batches=False).first()
+    if not product:
+        product = Product.objects.filter(sales_blocked=False).first()
+        product.track_batches = False
+        product.save()
+        print(f"✅ Disabled batch tracking for {product.code}")
+
+    # Clean
+    InventoryMovement.objects.filter(location=location, product=product).delete()
+    InventoryItem.objects.filter(location=location, product=product).delete()
+
+    print(f"Testing NON-batch outgoing with: {product.code}")
+
+    # Setup without batch
+    setup_result = MovementService.create_incoming_stock(
+        location=location, product=product,
+        quantity=Decimal('100'), cost_price=Decimal('10.00'),
+        source_document_type='DEBUG_NONBATCH_SETUP'
+    )
+
+    if not setup_result.ok:
+        print(f"❌ Setup failed: {setup_result.msg}")
+        return False
+
+    print(f"After setup: {setup_result.msg}")
+
+    # Test outgoing
+    outgoing_result = MovementService.create_outgoing_stock(
+        location=location, product=product,
+        quantity=Decimal('15'), sale_price=Decimal('15.00'),
+        source_document_type='DEBUG_NONBATCH_OUT'
+    )
+
+    if outgoing_result.ok:
+        final_item = InventoryItem.objects.get(location=location, product=product)
+        print(f"After outgoing: qty={final_item.current_qty} (expected: 85)")
+        return final_item.current_qty == Decimal('85')
+    else:
+        print(f"❌ Outgoing failed: {outgoing_result.msg}")
+        return False
+
+
+def debug_batch_outgoing():
+    """Test outgoing for BATCH products"""
+    print("\n" + "=" * 60)
+    print("DEBUG: BATCH OUTGOING TEST")
+    print("=" * 60)
+
+    location = InventoryLocation.objects.filter(is_active=True).first()
+
+    # Find or create a BATCH product
+    product = Product.objects.filter(sales_blocked=False).first()
+    if not product.track_batches:
+        product.track_batches = True
+        product.save()
+        print(f"✅ Enabled batch tracking for {product.code}")
+
+    # Clean
+    InventoryMovement.objects.filter(location=location, product=product).delete()
+    InventoryItem.objects.filter(location=location, product=product).delete()
+    InventoryBatch.objects.filter(location=location, product=product).delete()
+
+    print(f"Testing BATCH outgoing with: {product.code}")
+
+    # Setup WITH batch
+    setup_result = MovementService.create_incoming_stock(
+        location=location, product=product,
+        quantity=Decimal('100'), cost_price=Decimal('10.00'),
+        batch_number='BATCH_TEST_001',
+        source_document_type='DEBUG_BATCH_SETUP'
+    )
+
+    if not setup_result.ok:
+        print(f"❌ Setup failed: {setup_result.msg}")
+        return False
+
+    # Check batch was created
+    batches = InventoryBatch.objects.filter(location=location, product=product)
+    print(f"Batches created: {batches.count()}")
+
+    # Test FIFO outgoing
+    outgoing_result = MovementService.create_outgoing_stock(
+        location=location, product=product,
+        quantity=Decimal('15'), sale_price=Decimal('15.00'),
+        use_fifo=True,
+        source_document_type='DEBUG_BATCH_OUT'
+    )
+
+    if outgoing_result.ok:
+        final_item = InventoryItem.objects.get(location=location, product=product)
+        print(f"After outgoing: qty={final_item.current_qty} (expected: 85)")
+
+        # Check batch quantities
+        for batch in batches:
+            batch.refresh_from_db()
+            print(f"  {batch.batch_number}: remaining={batch.remaining_qty}")
+
+        return final_item.current_qty == Decimal('85')
+    else:
+        print(f"❌ Outgoing failed: {outgoing_result.msg}")
+        return False
+
+
+def debug_batch_creation_issue():
+    """Debug why batches are not created"""
+    print("\n" + "=" * 60)
+    print("DEBUG 3: BATCH CREATION ISSUE")
+    print("=" * 60)
+
+    location = InventoryLocation.objects.filter(is_active=True).first()
+    product = Product.objects.filter(sales_blocked=False, track_batches=True).first()
+
+    if not product:
+        # Enable batch tracking on a product
+        product = Product.objects.filter(sales_blocked=False).first()
+        product.track_batches = True
+        product.save()
+        print(f"✅ Enabled batch tracking on {product.code}")
+
+    # Clean
+    InventoryMovement.objects.filter(location=location, product=product).delete()
+    InventoryItem.objects.filter(location=location, product=product).delete()
+    InventoryBatch.objects.filter(location=location, product=product).delete()
+
+    print(f"Testing batch creation with: {product.code}")
+    print(f"Product.track_batches: {product.track_batches}")
+
+    # Test _should_track_batches function
+    should_track = MovementService._should_track_batches(location, product)
+    print(f"_should_track_batches result: {should_track}")
+
+    # Create incoming with batch
+    print("\n--- Creating incoming with batch ---")
+    try:
+        batch_result = MovementService.create_incoming_stock(
+            location=location, product=product,
+            quantity=Decimal('20'), cost_price=Decimal('8.00'),
+            batch_number='DEBUG_BATCH001',
+            source_document_type='DEBUG_BATCH', reason='Debug batch creation'
+        )
+        print(f"Batch result: {batch_result.ok} - {batch_result.msg}")
+
+        if batch_result.ok:
+            # Check if InventoryItem was created
+            items = InventoryItem.objects.filter(location=location, product=product)
+            print(f"InventoryItems created: {items.count()}")
+            for item in items:
+                print(f"  Item: qty={item.current_qty}, avg_cost={item.avg_cost}")
+
+            # Check if InventoryBatch was created
+            batches = InventoryBatch.objects.filter(location=location, product=product)
+            print(f"InventoryBatches created: {batches.count()}")
+            for batch in batches:
+                print(
+                    f"  Batch: {batch.batch_number}, remaining_qty={batch.remaining_qty}, cost_price={batch.cost_price}")
+
+            # Check movements
+            movements = InventoryMovement.objects.filter(
+                location=location, product=product, source_document_type='DEBUG_BATCH'
+            )
+            print(f"Movements created: {movements.count()}")
+            for mov in movements:
+                print(f"  Movement: {mov.movement_type} qty={mov.quantity} batch={mov.batch_number}")
+
+            if batches.count() > 0:
+                print("✅ Batch creation works correctly")
+                return True
+            else:
+                print("❌ No batches were created!")
+                return False
+        else:
+            print(f"❌ Batch movement failed: {batch_result.msg}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Exception in batch creation: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def run_targeted_debug():
+    """Run targeted debug for each issue"""
+    print("🚀 RUNNING TARGETED DEBUG...")
+
+    tests = [
+        ("Incremental Calculation Issue", debug_incremental_calculation_issue),
+        ("Outgoing F() Expressions Issue", debug_outgoing_f_expressions_issue),
+        ("Batch Creation Issue", debug_batch_creation_issue),
+    ]
+
+    results = []
+
+    for test_name, test_func in tests:
+        print(f"\n🧪 Debugging: {test_name}")
+        try:
+            success = test_func()
+            results.append((test_name, success))
+        except Exception as e:
+            print(f"❌ EXCEPTION in {test_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append((test_name, False))
+
+    # Report results
+    print("\n" + "=" * 80)
+    print("TARGETED DEBUG RESULTS")
+    print("=" * 80)
+
+    for test_name, success in results:
+        status = "✅ PASS" if success else "❌ FAIL"
+        print(f"{status} - {test_name}")
+
+    return results
+
+
+if __name__ == "__main__":
+    results = run_targeted_debug()
