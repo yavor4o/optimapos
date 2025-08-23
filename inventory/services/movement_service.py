@@ -62,6 +62,8 @@ class MovementService:
                     data={'cost_price': cost_price}
                 )
 
+            cost_price = cost_price.quantize(Decimal('0.0001'))
+
             # Set defaults
             if movement_date is None:
                 movement_date = timezone.now().date()
@@ -138,6 +140,12 @@ class MovementService:
             )
             if not validation_result.ok:
                 return validation_result
+
+            if sale_price is not None:
+                sale_price = sale_price.quantize(Decimal('0.01'))
+
+            if manual_cost_price is not None:
+                manual_cost_price = manual_cost_price.quantize(Decimal('0.0001'))
 
             # Create movements using legacy method for full functionality
             movements = MovementService._create_outgoing_movement_internal(
@@ -664,6 +672,11 @@ class MovementService:
         if allow_negative_stock is None:
             allow_negative_stock = getattr(location, 'allow_negative_stock', False)
 
+        logger.debug(f"Location {location.code} allow_negative_stock: {allow_negative_stock}")
+
+        # Ensure it's definitely a boolean
+        allow_negative_stock = bool(allow_negative_stock)
+
         # Auto-detect sale price if not provided
         if sale_price is None and source_document_type in ['SALE', 'DELIVERY']:
             sale_price = MovementService._detect_sale_price(location, product, customer, quantity)
@@ -689,15 +702,24 @@ class MovementService:
                     )
                 except InventoryItem.DoesNotExist:
                     raise ValidationError("No inventory record found for this product at this location")
-
         else:
-            # If negative allowed, just decrease without checking
-            InventoryItem.objects.filter(
-                location=location,
-                product=product
-            ).update(
-                current_qty=F('current_qty') - quantity
-            )
+            # If negative allowed, update OR create with negative quantity
+            existing_item = InventoryItem.objects.filter(location=location, product=product).first()
+
+            if existing_item:
+                # Update existing item
+                InventoryItem.objects.filter(pk=existing_item.pk).update(
+                    current_qty=F('current_qty') - quantity
+                )
+            else:
+                # Create new item with negative quantity
+                InventoryItem.objects.create(
+                    location=location,
+                    product=product,
+                    current_qty=-quantity,
+                    reserved_qty=Decimal('0.00'),
+                    avg_cost=Decimal('0.00')  # Will be set by cost price detection
+                )
 
         movements = []
         should_track_batches = MovementService._should_track_batches(location, product)
@@ -776,10 +798,17 @@ class MovementService:
             qty_from_batch = min(remaining_qty, batch.remaining_qty)
 
             # 🔧 FIX: Calculate and round profit_amount
-            batch_cost = batch.cost_price or Decimal('0.00')
+            batch_cost = (batch.cost_price or Decimal('0.00')).quantize(Decimal('0.01'))
             profit_amount = Decimal('0.00')
             if sale_price:
-                profit_amount = ((sale_price - batch_cost) * qty_from_batch).quantize(Decimal('0.01'))
+                # Ensure all components are properly quantized BEFORE calculation
+                sale_price_clean = (sale_price or Decimal('0.00')).quantize(Decimal('0.01'))
+                batch_cost_clean = (batch_cost or Decimal('0.00')).quantize(Decimal('0.01'))
+                qty_clean = qty_from_batch.quantize(Decimal('0.001'))
+
+                # Calculate profit with clean decimals
+                profit_per_unit = (sale_price_clean - batch_cost_clean).quantize(Decimal('0.01'))
+                profit_amount = (profit_per_unit * qty_clean).quantize(Decimal('0.01'))
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -809,8 +838,16 @@ class MovementService:
 
         # Handle remaining if no batches
         if remaining_qty > 0:
-            if not getattr(location, 'allow_negative_stock', False):
+            # Check if we should fallback to non-batch mode
+            should_fallback = (
+                    remaining_qty == quantity or  # No batches were processed at all
+                    getattr(location, 'allow_negative_stock', False)  # Or negative stock is allowed
+            )
+
+            if not should_fallback:
                 raise ValidationError(f"Insufficient batch quantities. Need {remaining_qty} more units")
+
+            logger.info(f"FIFO fallback: Creating non-batch movement for {remaining_qty} units")
 
             default_cost = MovementService._get_smart_cost_price(location, product, None, 'OUT')
 

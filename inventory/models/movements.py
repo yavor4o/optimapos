@@ -440,6 +440,24 @@ class InventoryMovement(models.Model):
 
         return reverse_movement
 
+    @staticmethod
+    def _validate_decimal_limits(quantity, cost_price, profit_amount=None):
+        '''Validate decimal values don't exceed model field limits'''
+
+        # Check quantity: max_digits=12, decimal_places=3
+        if quantity and (quantity >= Decimal('10') ** 9 or quantity < Decimal('0.001')):
+            raise ValidationError(f"Quantity {quantity} exceeds valid range")
+
+        # Check cost_price: max_digits=10, decimal_places=4
+        if cost_price and (cost_price >= Decimal('10') ** 6 or cost_price < Decimal('0.0001')):
+            raise ValidationError(f"Cost price {cost_price} exceeds valid range")
+
+        # Check profit_amount: max_digits=10, decimal_places=2
+        if profit_amount and (profit_amount >= Decimal('10') ** 8 or profit_amount < Decimal('0.01')):
+            raise ValidationError(f"Profit amount {profit_amount} exceeds valid range")
+
+        return True
+
     @classmethod
     def get_profit_summary(cls, location=None, product=None, date_from=None, date_to=None) -> dict:
         """
