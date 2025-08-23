@@ -550,23 +550,24 @@ class MovementService:
                 old_total_value = old_qty * old_avg_cost
                 new_movement_value = quantity * cost_price
                 new_total_value = old_total_value + new_movement_value
-                new_total_qty = old_qty + quantity
+                new_total_qty = old_qty + quantity  # ← CONSISTENT calculation
 
                 from decimal import ROUND_HALF_UP
                 new_avg_cost = (new_total_value / new_total_qty).quantize(
                     Decimal('0.01'), rounding=ROUND_HALF_UP
                 ) if new_total_qty > 0 else Decimal('0.00')
 
-                # ATOMIC UPDATE - всички полета наведнъж
+                # ATOMIC UPDATE - използвай calculated new_total_qty
                 InventoryItem.objects.filter(pk=existing_item.pk).update(
-                    current_qty=F('current_qty') + quantity,
+                    current_qty=new_total_qty,  # ← FIX: Използвай calculated стойността
                     avg_cost=new_avg_cost,
                     last_purchase_cost=cost_price,
                     last_purchase_date=movement_date,
                     last_movement_date=timezone.now()
                 )
 
-                logger.debug(f"Incremental update: {product.code} avg_cost {old_avg_cost} → {new_avg_cost}")
+                logger.debug(
+                    f"Incremental update: {product.code} qty {old_qty}→{new_total_qty} avg_cost {old_avg_cost}→{new_avg_cost}")
 
                 # Check for significant cost change
                 if old_avg_cost > 0:
@@ -587,10 +588,6 @@ class MovementService:
                     last_movement_date=timezone.now()
                 )
                 logger.debug(f"Created new inventory: {product.code} qty={quantity} avg_cost={cost_price}")
-
-            # Batch cache if needed
-            if batch_number and MovementService._should_track_batches(location, product):
-                InventoryBatch.refresh_for_combination(location, product, batch_number)
 
         except Exception as e:
             # При грешка, fallback към старата логика
