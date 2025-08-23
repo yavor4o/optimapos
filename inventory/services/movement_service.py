@@ -535,38 +535,71 @@ class MovementService:
 
         # ✅ CACHE REFRESH & PRICING UPDATE
         try:
-            # Get old avg cost for pricing update check
-            old_avg_cost = None
-            try:
-                old_item = InventoryItem.objects.get(location=location, product=product)
-                old_avg_cost = old_item.avg_cost
-            except InventoryItem.DoesNotExist:
-                pass
+            # Опит за incremental обновяване
+            existing_item = InventoryItem.objects.select_for_update().filter(
+                location=location,
+                product=product
+            ).first()
 
-            # Refresh inventory cache
-            InventoryItem.refresh_for_combination(location, product)
+            if existing_item:
+                # INCREMENTAL AVG COST CALCULATION
+                old_qty = existing_item.current_qty
+                old_avg_cost = existing_item.avg_cost or Decimal('0.00')
 
-            # Check if avg cost changed significantly and update pricing
-            if old_avg_cost is not None:
-                try:
-                    new_item = InventoryItem.objects.get(location=location, product=product)
-                    new_avg_cost = new_item.avg_cost
+                # Weighted average formula
+                old_total_value = old_qty * old_avg_cost
+                new_movement_value = quantity * cost_price
+                new_total_value = old_total_value + new_movement_value
+                new_total_qty = old_qty + quantity
 
-                    # If cost changed by more than 5%, update markup prices
-                    if old_avg_cost > 0:
-                        cost_change_percentage = abs(new_avg_cost - old_avg_cost) / old_avg_cost * 100
-                        if cost_change_percentage > 5:  # 5% threshold
-                            MovementService._trigger_pricing_update(location, product, new_avg_cost)
+                from decimal import ROUND_HALF_UP
+                new_avg_cost = (new_total_value / new_total_qty).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                ) if new_total_qty > 0 else Decimal('0.00')
 
-                except Exception as e:
-                    logger.warning(f"Error checking cost change: {e}")
+                # ATOMIC UPDATE - всички полета наведнъж
+                InventoryItem.objects.filter(pk=existing_item.pk).update(
+                    current_qty=F('current_qty') + quantity,
+                    avg_cost=new_avg_cost,
+                    last_purchase_cost=cost_price,
+                    last_purchase_date=movement_date,
+                    last_movement_date=timezone.now()
+                )
+
+                logger.debug(f"Incremental update: {product.code} avg_cost {old_avg_cost} → {new_avg_cost}")
+
+                # Check for significant cost change
+                if old_avg_cost > 0:
+                    cost_change_percentage = abs(new_avg_cost - old_avg_cost) / old_avg_cost * 100
+                    if cost_change_percentage > 5:  # 5% threshold
+                        MovementService._trigger_pricing_update(location, product, new_avg_cost)
+
+            else:
+                # Ако няма съществуващ item, създай нов директно
+                InventoryItem.objects.create(
+                    location=location,
+                    product=product,
+                    current_qty=quantity,
+                    reserved_qty=Decimal('0.00'),
+                    avg_cost=cost_price,
+                    last_purchase_cost=cost_price,
+                    last_purchase_date=movement_date,
+                    last_movement_date=timezone.now()
+                )
+                logger.debug(f"Created new inventory: {product.code} qty={quantity} avg_cost={cost_price}")
 
             # Batch cache if needed
             if batch_number and MovementService._should_track_batches(location, product):
                 InventoryBatch.refresh_for_combination(location, product, batch_number)
 
         except Exception as e:
-            logger.error(f"Error refreshing cache after incoming movement: {e}")
+            # При грешка, fallback към старата логика
+            logger.warning(f"Incremental update failed, using refresh_for_combination: {e}")
+            InventoryItem.refresh_for_combination(location, product)
+
+            # Batch cache if needed
+            if batch_number and MovementService._should_track_batches(location, product):
+                InventoryBatch.refresh_for_combination(location, product, batch_number)
 
         logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
         return movement
@@ -678,8 +711,6 @@ class MovementService:
 
         # Cache refresh AFTER movement is created
         try:
-            InventoryItem.refresh_for_combination(location, product)
-
             if should_track_batches and movements:
                 for movement in movements:
                     if movement.batch_number:
@@ -687,7 +718,7 @@ class MovementService:
                             location, product, movement.batch_number
                         )
         except Exception as e:
-            logger.error(f"Error refreshing cache after outgoing movement: {e}")
+            logger.error(f"Error refreshing batch cache: {e}")
 
         # Log success
         total_profit = sum(getattr(m, 'total_profit', 0) or Decimal('0') for m in movements)
@@ -712,14 +743,14 @@ class MovementService:
         available_batches = InventoryBatch.objects.select_for_update().filter(
             location=location,
             product=product,
-            current_qty__gt=0
+            remaining_qty=0
         ).order_by('created_at')
 
         for batch in available_batches:
             if remaining_qty <= 0:
                 break
 
-            qty_from_batch = min(remaining_qty, batch.current_qty)
+            qty_from_batch = min(remaining_qty, batch.remaining_qty)
 
             # 🔧 FIX: Calculate and round profit_amount
             batch_cost = batch.avg_cost or Decimal('0.00')
@@ -734,7 +765,7 @@ class MovementService:
                 quantity=qty_from_batch,
                 cost_price=batch_cost,
                 sale_price=sale_price,
-                profit_amount=profit_amount,  # ← ДОБАВЕНО С ЗАКРЪГЛЯНЕ
+                profit_amount=profit_amount,
                 batch_number=batch.batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
@@ -748,7 +779,7 @@ class MovementService:
             # Update batch atomically
 
             InventoryBatch.objects.filter(pk=batch.pk).update(
-                current_qty=F('current_qty') - qty_from_batch
+                remaining_qty=F('remaining_qty') - qty_from_batch
             )
 
             remaining_qty -= qty_from_batch
@@ -1459,7 +1490,7 @@ class MovementService:
                 batch = InventoryBatch.objects.get(
                     location=location, product=product, batch_number=batch_number
                 )
-                return batch.avg_cost or Decimal('0')
+                return batch.cost_price or Decimal('0')
             else:
                 # Get location average cost
                 item = InventoryItem.objects.get(location=location, product=product)
