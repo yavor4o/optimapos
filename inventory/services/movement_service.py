@@ -1107,7 +1107,7 @@ class MovementService:
                 source_document_number=reversal_doc_number,
                 source_document_line_id=original_movement.source_document_line_id,
                 reason=reason or f'Reverse of {original_movement.source_document_number}',
-                movement_date=timezone.now(),
+                movement_date=timezone.now().date(),
                 created_by=created_by
             )
 
@@ -1596,7 +1596,7 @@ class MovementService:
         Determine if batch tracking should be used
         SIMPLE VERSION - based on what EXISTS in the code
         """
-        # Check if location has the method (currently doesn't exist)
+
         if hasattr(location, 'should_track_batches'):
             return location.should_track_batches(product)
 
