@@ -371,22 +371,6 @@ class DocumentService:
             )
 
     # =====================
-    # LEGACY COMPATIBILITY WRAPPERS
-    # =====================
-
-    @staticmethod
-    def can_edit(document, user=None):
-        """LEGACY: Returns bool for backward compatibility"""
-        result = DocumentService.can_edit_document(document, user)
-        return result.data.get('can_edit', False) if result.ok else False
-
-    @staticmethod
-    def can_delete(document, user=None):
-        """LEGACY: Returns bool for backward compatibility"""
-        result = DocumentService.can_delete_document(document, user)
-        return result.data.get('can_delete', False) if result.ok else False
-
-    # =====================
     # BULK OPERATIONS
     # =====================
 
