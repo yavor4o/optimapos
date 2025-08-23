@@ -1411,14 +1411,31 @@ class MovementService:
 
     @staticmethod
     def _create_from_purchase_order(order) -> List[InventoryMovement]:
-        """Create movements from purchase order (auto-receive scenario) - full original logic"""
+        """Create movements from purchase order - FIXED: Use DocumentTypeStatus configuration"""
         movements = []
 
-        # Check if auto-receive is enabled
-        if not getattr(order.document_type, 'auto_receive', False):
-            logger.debug(f"Order {order.document_number} does not have auto-receive enabled")
-            return movements
+        # ✅ NEW: Check DocumentTypeStatus configuration instead of DocumentType
+        try:
+            from nomenclatures.models import DocumentTypeStatus
 
+            # Check if current status should create movements
+            current_config = DocumentTypeStatus.objects.filter(
+                document_type=order.document_type,
+                status__code=order.status,
+                is_active=True
+            ).first()
+
+            if not current_config or not current_config.creates_inventory_movements:
+                logger.debug(f"Order {order.document_number} status '{order.status}' does not create movements")
+                return movements
+
+        except ImportError:
+            # Fallback: Check auto_receive field (different from auto_create_movements)
+            if not getattr(order.document_type, 'auto_receive', False):
+                logger.debug(f"Order {order.document_number} does not have auto-receive enabled")
+                return movements
+
+        # Create movements for each line
         for line in order.lines.all():
             if not line.ordered_quantity or line.ordered_quantity <= 0:
                 continue
@@ -1442,6 +1459,7 @@ class MovementService:
                 logger.error(f"Error in auto-receive for PO line {getattr(line, 'line_number', '?')}: {e}")
                 continue
 
+        logger.info(f"Created {len(movements)} movements from purchase order {order.document_number}")
         return movements
 
     @staticmethod

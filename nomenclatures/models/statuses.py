@@ -263,8 +263,10 @@ class DocumentTypeStatus(models.Model):
         return f"{self.document_type.name} - {name}"
 
     def clean(self):
-        """Validate configuration"""
-        # Only one initial status per document type
+        """Enhanced validation with movement creation rules"""
+        super().clean()
+
+        # Existing validations (unchanged)
         if self.is_initial:
             existing = DocumentTypeStatus.objects.filter(
                 document_type=self.document_type,
@@ -276,7 +278,6 @@ class DocumentTypeStatus(models.Model):
                     'is_initial': _('This document type already has an initial status')
                 })
 
-        # Only one cancellation status per document type
         if self.is_cancellation:
             existing = DocumentTypeStatus.objects.filter(
                 document_type=self.document_type,
@@ -287,6 +288,66 @@ class DocumentTypeStatus(models.Model):
                 raise ValidationError({
                     'is_cancellation': _('This document type already has a cancellation status')
                 })
+
+        # =====================================================
+        # NEW: INVENTORY MOVEMENT VALIDATION RULES
+        # =====================================================
+
+        # Movement creation requires inventory-affecting document type
+        if self.creates_inventory_movements and not self.document_type.affects_inventory:
+            raise ValidationError({
+                'creates_inventory_movements': _(
+                    'Cannot create inventory movements - document type does not affect inventory'
+                )
+            })
+
+        # Movement reversal requires inventory-affecting document type
+        if self.reverses_inventory_movements and not self.document_type.affects_inventory:
+            raise ValidationError({
+                'reverses_inventory_movements': _(
+                    'Cannot reverse inventory movements - document type does not affect inventory'
+                )
+            })
+
+        # Movement correction requires inventory-affecting document type
+        if self.allows_movement_correction and not self.document_type.affects_inventory:
+            raise ValidationError({
+                'allows_movement_correction': _(
+                    'Cannot allow movement correction - document type does not affect inventory'
+                )
+            })
+
+        # Cannot create and reverse movements simultaneously
+        if self.creates_inventory_movements and self.reverses_inventory_movements:
+            raise ValidationError({
+                'reverses_inventory_movements': _(
+                    'Cannot both create and reverse movements in the same status'
+                )
+            })
+
+        # Auto-correction requires correction to be allowed
+        if self.auto_correct_movements_on_edit and not self.allows_movement_correction:
+            raise ValidationError({
+                'auto_correct_movements_on_edit': _(
+                    'Auto-correction requires movement correction to be allowed'
+                )
+            })
+
+        # Final statuses should not allow editing (business rule)
+        if self.is_final and self.allows_editing:
+            raise ValidationError({
+                'allows_editing': _(
+                    'Final statuses should not allow editing (business rule violation)'
+                )
+            })
+
+        # Initial statuses should allow editing (business rule)
+        if self.is_initial and not self.allows_editing:
+            raise ValidationError({
+                'allows_editing': _(
+                    'Initial statuses should typically allow editing'
+                )
+            })
 
     def save(self, *args, **kwargs):
         self.full_clean()

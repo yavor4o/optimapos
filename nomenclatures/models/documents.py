@@ -128,11 +128,7 @@ class DocumentType(BaseNomenclature):
         help_text=_('Subject to Bulgarian fiscal regulations (VAT, 10-digit numbering, NRA requirements)')
     )
 
-    auto_create_movements = models.BooleanField(
-        _('Auto Create Movements'),
-        default=False,
-        help_text=_('Automatically create inventory movements when document is processed')
-    )
+
 
     # =====================
     # SYSTEM INTEGRATION
@@ -185,7 +181,6 @@ class DocumentType(BaseNomenclature):
             models.Index(fields=['affects_inventory', 'inventory_direction']),
             models.Index(fields=['requires_approval']),
             models.Index(fields=['is_fiscal']),
-            models.Index(fields=['auto_create_movements']),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -220,13 +215,7 @@ class DocumentType(BaseNomenclature):
                 )
             })
 
-        # Auto movements require inventory affect
-        if self.auto_create_movements and not self.affects_inventory:
-            raise ValidationError({
-                'auto_create_movements': _(
-                    'Cannot auto-create movements if document does not affect inventory'
-                )
-            })
+
 
         # NEW: Auto receive validation
         if self.auto_receive and not self.affects_inventory:
