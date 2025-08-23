@@ -432,54 +432,180 @@ class BaseDocument(models.Model):
     # =====================
 
     def can_edit(self, user=None):
-        """Check if document can be edited - USES DocumentService"""
+        """
+        ✅ FIXED: Check if document can be edited - RESULT-COMPATIBLE
+
+        FIXED: Правилно извлича от Result object
+        """
         try:
             from nomenclatures.services import DocumentService
-            can_edit, reason = DocumentService.can_edit_document(self, user)
-            return can_edit
-        except ImportError:
-            # Fallback - basic logic
-            readonly_statuses = ['confirmed', 'closed', 'cancelled']
-            return self.status not in readonly_statuses
+            result = DocumentService.can_edit_document(self, user)
+            return result.data.get('can_edit', False) if result.ok else False
+        except Exception as e:
+            logger.warning(f"DocumentService failed, using enhanced fallback: {e}")
+
+            # ✅ ENHANCED FALLBACK - respects configuration instead of hardcoded lists
+            try:
+                from nomenclatures.models import DocumentTypeStatus
+
+                if not self.document_type:
+                    return self.status in ['draft', 'pending', '']
+
+                status_config = DocumentTypeStatus.objects.filter(
+                    document_type=self.document_type,
+                    status__code=self.status,
+                    is_active=True
+                ).first()
+
+                if status_config:
+                    # ✅ USE CONFIGURATION-BASED DECISION
+                    base_allows = status_config.allows_editing
+
+                    # Check final document rules
+                    if status_config.is_final:
+                        return base_allows and self.document_type.allow_edit_completed
+
+                    return base_allows
+                else:
+                    logger.warning(f"No status configuration found for {self.document_type.name}.{self.status}")
+
+            except Exception as fallback_error:
+                logger.error(f"Enhanced fallback failed: {fallback_error}")
+
+            # ✅ ULTIMATE FALLBACK - more permissive than hardcoded
+            return self.status in ['draft', 'pending', 'submitted', '']
 
     def can_delete(self, user=None):
-        """Check if document can be deleted"""
+        """
+        ✅ FIXED: Check if document can be deleted - RESULT-COMPATIBLE
+
+        FIXED: Правилно извлича от Result object
+        """
         try:
             from nomenclatures.services import DocumentService
-            can_delete, reason = DocumentService.can_delete_document(self, user)
-            return can_delete
-        except ImportError:
-            # Fallback - only draft documents
-            return self.status in ['draft', ''] and not self.lines.exists()
+            result = DocumentService.can_delete_document(self, user)
+            return result.data.get('can_delete', False) if result.ok else False
+        except Exception as e:
+            logger.warning(f"DocumentService failed, using enhanced fallback: {e}")
+
+            # ✅ ENHANCED FALLBACK
+            try:
+                from nomenclatures.models import DocumentTypeStatus
+
+                if not self.document_type:
+                    return (self.status in ['draft', ''] and
+                            not (hasattr(self, 'lines') and self.lines.exists()))
+
+                status_config = DocumentTypeStatus.objects.filter(
+                    document_type=self.document_type,
+                    status__code=self.status,
+                    is_active=True
+                ).first()
+
+                if status_config:
+                    # ✅ USE CONFIGURATION
+                    if not status_config.allows_deletion:
+                        return False
+
+                    # Final documents can't be deleted (business rule)
+                    if status_config.is_final:
+                        return False
+
+                    # Check for dependent data
+                    if hasattr(self, 'lines') and self.lines.exists():
+                        return False
+
+                    return True
+                else:
+                    logger.warning(f"No status configuration found for {self.document_type.name}.{self.status}")
+
+            except Exception as fallback_error:
+                logger.error(f"Enhanced fallback failed: {fallback_error}")
+
+            # ✅ ULTIMATE FALLBACK
+            return (self.status in ['draft', ''] and
+                    not (hasattr(self, 'lines') and self.lines.exists()))
 
     def get_available_actions(self, user=None):
-        """Get available actions for user - USES DocumentService"""
+        """
+        ✅ ENHANCED: Get available actions - USES CONFIGURATION
+        """
+        actions = []
+
         try:
             from nomenclatures.services import DocumentService
-            return DocumentService.get_available_actions(self, user)
-        except ImportError:
-            # Fallback - basic actions
-            actions = []
-            if self.can_edit(user):
-                actions.append({'key': 'edit', 'name': _('Edit'), 'icon': 'edit'})
-            if self.can_delete(user):
-                actions.append({'key': 'delete', 'name': _('Delete'), 'icon': 'trash'})
+            result = DocumentService.get_document_permissions(self, user)
+
+            if result.ok:
+                permissions = result.data
+
+                if permissions.get('can_edit', False):
+                    actions.append({
+                        'key': 'edit',
+                        'name': _('Edit'),
+                        'icon': 'edit',
+                        'reason': permissions.get('edit_reason', '')
+                    })
+
+                if permissions.get('can_delete', False):
+                    actions.append({
+                        'key': 'delete',
+                        'name': _('Delete'),
+                        'icon': 'trash',
+                        'reason': permissions.get('delete_reason', '')
+                    })
+
+                if permissions.get('can_transition', False):
+                    actions.append({
+                        'key': 'change_status',
+                        'name': _('Change Status'),
+                        'icon': 'arrow-right',
+                        'reason': 'Status transition available'
+                    })
+
             return actions
 
+        except Exception as e:
+            logger.warning(f"DocumentService failed for actions, using fallback: {e}")
+
+        # ✅ FALLBACK - basic actions using enhanced can_edit/can_delete
+        if self.can_edit(user):
+            actions.append({'key': 'edit', 'name': _('Edit'), 'icon': 'edit'})
+        if self.can_delete(user):
+            actions.append({'key': 'delete', 'name': _('Delete'), 'icon': 'trash'})
+
+        return actions
+
     def transition_to(self, new_status, user, comments=''):
-        """Transition to new status - USES DocumentService"""
+        """
+        ✅ ENHANCED: Transition to new status - USES DocumentService
+        """
         try:
             from nomenclatures.services import DocumentService
-            return DocumentService.transition_document(
-                self, new_status, user, comments
-            )
+            result = DocumentService.transition_document(self, new_status, user, comments)
+            return result  # Return the Result object directly
+
         except ImportError:
-            # Simple fallback
+            logger.warning("DocumentService not available, using simple fallback")
+            # Simple fallback - just change status
             old_status = self.status
             self.status = new_status
-            self.updated_by = user
-            self.save(update_fields=['status', 'updated_by'])
-            return True
+            if hasattr(self, 'updated_by'):
+                self.updated_by = user
+            self.save(update_fields=['status'] + (['updated_by'] if hasattr(self, 'updated_by') else []))
+
+            # Return Result-compatible object
+            from core.utils.result import Result
+            return Result.success(
+                data={'old_status': old_status, 'new_status': new_status},
+                msg=f'Status changed from {old_status} to {new_status}'
+            )
+        except Exception as e:
+            from core.utils.result import Result
+            return Result.error(
+                code='TRANSITION_ERROR',
+                msg=f'Status transition failed: {str(e)}'
+            )
 
     def __str__(self):
         partner_info = ""

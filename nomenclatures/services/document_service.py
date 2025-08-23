@@ -73,42 +73,59 @@ class DocumentService:
 
     @staticmethod
     def can_edit_document(document, user: User) -> Result:
-        """Check if document can be edited - returns Result"""
+        """
+        ✅ FIXED: Check if document can be edited - CONFIGURATION-DRIVEN
+
+        FIXED: Делегира към DocumentValidator вместо hardcoded логика
+        """
         try:
             can_edit, reason = DocumentValidator.can_edit_document(document, user)
             return Result.success(
-                {'can_edit': can_edit, 'reason': reason},
-                reason if not can_edit else 'Document can be edited'
+                data={'can_edit': can_edit, 'reason': reason},
+                msg=reason if not can_edit else 'Document can be edited'
             )
         except Exception as e:
             return Result.error('EDIT_CHECK_ERROR', f'Failed to check edit permissions: {str(e)}')
 
-    # ДОБАВИ след can_edit_document:
     @staticmethod
     def can_delete_document(document, user: User) -> Result:
-        """Check if document can be deleted"""
+        """
+        ✅ FIXED: Check if document can be deleted - CONFIGURATION-DRIVEN
+
+        FIXED: Заменя hardcoded readonly_statuses с DocumentValidator
+        """
         try:
-            can_delete = True
-            reason = "Document can be deleted"
-
-            # Check document status
-            if hasattr(document, 'status'):
-                readonly_statuses = ['confirmed', 'closed', 'cancelled', 'completed']
-                if document.status in readonly_statuses:
-                    can_delete = False
-                    reason = f"Cannot delete document in {document.status} status"
-
-            # Check if document has lines
-            if can_delete and hasattr(document, 'lines') and document.lines.exists():
-                can_delete = False
-                reason = "Cannot delete document with existing lines"
-
+            can_delete, reason = DocumentValidator.can_delete_document(document, user)
             return Result.success(
-                {'can_delete': can_delete, 'reason': reason},
-                reason
+                data={'can_delete': can_delete, 'reason': reason},
+                msg=reason
             )
         except Exception as e:
             return Result.error('DELETE_CHECK_ERROR', f'Failed to check delete permissions: {str(e)}')
+
+    def get_document_permissions(document, user: User) -> Result:
+        """
+        ✅ NEW: Get comprehensive document permissions summary
+        """
+        try:
+            permissions = DocumentValidator.get_effective_permissions(document, user)
+
+            if 'error' in permissions:
+                return Result.error(
+                    code='PERMISSIONS_ERROR',
+                    msg=permissions['error'],
+                    data=permissions
+                )
+
+            return Result.success(
+                data=permissions,
+                msg='Successfully retrieved document permissions'
+            )
+        except Exception as e:
+            return Result.error(
+                code='PERMISSIONS_CALCULATION_ERROR',
+                msg=f'Failed to calculate permissions: {str(e)}'
+            )
 
     # =====================
     # QUERIES (делегира на DocumentQuery)
