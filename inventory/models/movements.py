@@ -414,31 +414,6 @@ class InventoryMovement(models.Model):
 
         return analysis
 
-    def create_reverse_movement(self, reason: str = '', created_by=None):
-        """
-        NEW: Create reverse movement for corrections
-        """
-        if self.movement_type in [self.TRANSFER, self.ADJUSTMENT]:
-            raise ValidationError("Cannot reverse transfer or adjustment movements")
-
-        reverse_type = self.OUT if self.is_incoming else self.IN
-
-        reverse_movement = InventoryMovement.objects.create(
-            location=self.location,
-            product=self.product,
-            movement_type=reverse_type,
-            quantity=self.quantity,
-            cost_price=self.cost_price,
-            batch_number=self.batch_number,
-            expiry_date=self.expiry_date,
-            source_document_type='ADJUSTMENT',
-            source_document_number=f"REV-{self.id}",
-            movement_date=timezone.now().date(),
-            reason=f"Reverse of movement #{self.id}: {reason}",
-            created_by=created_by
-        )
-
-        return reverse_movement
 
     @staticmethod
     def _validate_decimal_limits(quantity, cost_price, profit_amount=None):

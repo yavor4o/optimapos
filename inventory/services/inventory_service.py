@@ -501,38 +501,6 @@ class InventoryService:
         result = InventoryService.validate_batch_availability(location, product, required_qty)
         return result.data if result.ok else {'error': result.msg}
 
-    @staticmethod
-    def reserve_stock(location: InventoryLocation, product, quantity: Decimal, reason: str = '') -> Dict:
-        """
-        LEGACY METHOD: Use reserve_stock_qty() for new code
-
-        Maintained for backward compatibility
-        """
-        result = InventoryService.reserve_stock_qty(location, product, quantity, reason)
-        if result.ok:
-            return {'success': True, **result.data}
-        else:
-            return {'success': False, 'error': result.msg, **result.data}
-
-    @staticmethod
-    def get_stock_info(location: InventoryLocation, product) -> Dict:
-        """
-        LEGACY METHOD: Use get_stock_summary() for new code
-
-        Maintained for backward compatibility
-        """
-        result = InventoryService.get_stock_summary(location, product)
-        return result.data if result.ok else {'error': result.msg}
-
-    @staticmethod
-    def get_cost_for_location_legacy(location: InventoryLocation, product) -> Decimal:
-        """
-        LEGACY METHOD: Use get_cost_for_location() for new code
-
-        Maintained for backward compatibility
-        """
-        result = InventoryService.get_cost_for_location(location, product)
-        return result.data.get('cost_price', Decimal('0.00')) if result.ok else Decimal('0.00')
 
     # =====================================================
     # ANALYTICS METHODS (unchanged, already good)
