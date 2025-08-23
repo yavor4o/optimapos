@@ -483,6 +483,106 @@ class Product(models.Model):
 
     # === BUSINESS METHODS ===
 
+    def validate_packaging_configuration(self) -> Tuple[bool, List[str]]:
+        '''Validate all packaging configurations for this product'''
+        issues = []
+
+        try:
+            # Check each active packaging
+            for packaging in self.packagings.filter(is_active=True):
+                try:
+                    packaging.full_clean()
+                except ValidationError as e:
+                    if hasattr(e, 'message_dict'):
+                        for field, errors in e.message_dict.items():
+                            for error in errors:
+                                issues.append(f"Packaging {packaging.unit.name}: {error}")
+                    else:
+                        issues.append(f"Packaging {packaging.unit.name}: {str(e)}")
+
+            # Additional business rule checks for PIECE products
+            if self.unit_type == 'PIECE':
+                for packaging in self.packagings.filter(is_active=True):
+                    if packaging.conversion_factor != int(packaging.conversion_factor):
+                        issues.append(
+                            f"PIECE product has fractional packaging: "
+                            f"{packaging.conversion_factor} {packaging.unit.name}"
+                        )
+
+            return len(issues) == 0, issues
+
+        except Exception as e:
+            return False, [f"Validation error: {str(e)}"]
+
+    def get_problematic_packagings(self) -> List[Dict]:
+        '''Get list of packaging configurations that violate business rules'''
+        problems = []
+
+        if self.unit_type == 'PIECE':
+            for packaging in self.packagings.filter(is_active=True):
+                if packaging.conversion_factor != int(packaging.conversion_factor):
+                    problems.append({
+                        'packaging': packaging,
+                        'issue': 'fractional_conversion',
+                        'current_factor': packaging.conversion_factor,
+                        'suggested_factor': round(packaging.conversion_factor),
+                        'severity': 'error'
+                    })
+
+        return problems
+
+    def get_packaging_consistency_report(self) -> Dict:
+        '''Get detailed packaging consistency analysis'''
+        packagings = list(self.packagings.filter(is_active=True))
+        report = {
+            'is_consistent': True,
+            'total_packagings': len(packagings),
+            'unit_type': self.unit_type,
+            'issues': [],
+            'warnings': [],
+            'conversion_matrix': {},
+            'recommendations': []
+        }
+
+        if len(packagings) == 0:
+            report['warnings'].append('No packaging configurations defined')
+            return report
+
+        # Build conversion matrix
+        for pkg1 in packagings:
+            report['conversion_matrix'][pkg1.unit.name] = {}
+
+            for pkg2 in packagings:
+                if pkg1 != pkg2:
+                    ratio = pkg1.conversion_factor / pkg2.conversion_factor if pkg2.conversion_factor != 0 else 0
+
+                    conversion_info = {
+                        'ratio': float(ratio),
+                        'is_whole': ratio == int(ratio) if ratio > 0 else False,
+                        'problematic': False
+                    }
+
+                    # Check for PIECE product issues
+                    if self.unit_type == 'PIECE' and ratio > 0:
+                        if ratio != int(ratio):
+                            conversion_info['problematic'] = True
+                            report['issues'].append(
+                                f"{pkg1.unit.name} to {pkg2.unit.name} creates fractional units ({ratio:.3f})"
+                            )
+                            report['is_consistent'] = False
+
+                    report['conversion_matrix'][pkg1.unit.name][pkg2.unit.name] = conversion_info
+
+        # Generate recommendations
+        if not report['is_consistent'] and self.unit_type == 'PIECE':
+            report['recommendations'].extend([
+                'Use whole number conversion factors only for PIECE products',
+                'Consider adjusting packaging sizes to create clean conversions',
+                'Example: Instead of 12.5 pieces/box, use 12 or 13 pieces/box'
+            ])
+
+        return report
+
     def validate_sale_quantity(self, quantity: Decimal, location=None) -> Tuple[bool, str]:
         """Validate quantity for sale"""
         # Sellability check

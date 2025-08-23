@@ -148,18 +148,33 @@ class ProductPackaging(models.Model):
         return f"{self.product.code} - {self.unit.code} x{self.conversion_factor}"
 
     def clean(self):
+
         super().clean()
 
+        # Existing validations
         if self.conversion_factor <= 0:
             raise ValidationError({
                 'conversion_factor': _('Conversion factor must be positive')
             })
 
-        # Не може опаковката да е същата като базовата единица
         if self.unit == self.product.base_unit:
             raise ValidationError({
                 'unit': _('Packaging unit cannot be the same as base unit')
             })
+
+        # 🎯 NEW: PIECE product fractional validation
+        if self.product.unit_type == 'PIECE':
+            if self.conversion_factor != int(self.conversion_factor):
+                raise ValidationError({
+                    'conversion_factor': _(
+                        'PIECE products cannot have fractional packaging. '
+                        f'{self.conversion_factor} pieces per {self.unit.name} is impossible. '
+                        'Use whole numbers only (e.g., 12 pieces, not 12.5).'
+                    )
+                })
+
+
+
 
     def save(self, *args, **kwargs):
         self.full_clean()

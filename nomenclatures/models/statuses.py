@@ -263,10 +263,18 @@ class DocumentTypeStatus(models.Model):
         return f"{self.document_type.name} - {name}"
 
     def clean(self):
-        """Enhanced validation with movement creation rules"""
+        """
+        🎯 ENHANCED CONFIGURATION VALIDATION - PHASE 4.1
+
+        Всички възможни логически inconsistencies и business rules!
+        """
         super().clean()
 
-        # Existing validations (unchanged)
+        # =====================================================
+        # EXISTING VALIDATIONS (запазени)
+        # =====================================================
+
+        # Unique initial status per document type
         if self.is_initial:
             existing = DocumentTypeStatus.objects.filter(
                 document_type=self.document_type,
@@ -278,6 +286,7 @@ class DocumentTypeStatus(models.Model):
                     'is_initial': _('This document type already has an initial status')
                 })
 
+        # Unique cancellation status per document type
         if self.is_cancellation:
             existing = DocumentTypeStatus.objects.filter(
                 document_type=self.document_type,
@@ -290,7 +299,7 @@ class DocumentTypeStatus(models.Model):
                 })
 
         # =====================================================
-        # NEW: INVENTORY MOVEMENT VALIDATION RULES
+        # INVENTORY MOVEMENT VALIDATION RULES (existing)
         # =====================================================
 
         # Movement creation requires inventory-affecting document type
@@ -333,6 +342,10 @@ class DocumentTypeStatus(models.Model):
                 )
             })
 
+        # =====================================================
+        # BUSINESS RULES VALIDATION (existing)
+        # =====================================================
+
         # Final statuses should not allow editing (business rule)
         if self.is_final and self.allows_editing:
             raise ValidationError({
@@ -348,6 +361,158 @@ class DocumentTypeStatus(models.Model):
                     'Initial statuses should typically allow editing'
                 )
             })
+
+        # =====================================================
+        # 🎯 NEW: EXTENDED BUSINESS RULES (Phase 4.1)
+        # =====================================================
+
+        # 1. CANCELLATION STATUS RULES
+        if self.is_cancellation:
+            if self.is_initial:
+                raise ValidationError({
+                    'is_cancellation': _(
+                        'Cancellation status cannot be initial status'
+                    )
+                })
+
+            if self.is_final:
+                # This is actually OK - cancelled is usually final
+                pass
+
+            if self.creates_inventory_movements:
+                raise ValidationError({
+                    'creates_inventory_movements': _(
+                        'Cancellation status should not create inventory movements'
+                    )
+                })
+
+        # 2. INITIAL STATUS RULES
+        if self.is_initial:
+            if self.reverses_inventory_movements:
+                raise ValidationError({
+                    'reverses_inventory_movements': _(
+                        'Initial status should not reverse inventory movements'
+                    )
+                })
+
+            if not self.allows_editing:
+                raise ValidationError({
+                    'allows_editing': _(
+                        'Initial status must allow editing (documents start here)'
+                    )
+                })
+
+        # 3. FINAL STATUS RULES
+        if self.is_final:
+            if self.allows_editing and not getattr(self.document_type, 'allow_edit_completed', False):
+                raise ValidationError({
+                    'allows_editing': _(
+                        'Final status cannot allow editing unless document type allows editing completed documents'
+                    )
+                })
+
+            if self.reverses_inventory_movements:
+                # This might be OK for some business cases, but warn
+                pass
+
+        # 4. INVENTORY DIRECTION CONSISTENCY
+        if self.document_type.affects_inventory:
+            direction = self.document_type.inventory_direction
+
+            if direction == 'in':
+                if self.reverses_inventory_movements and not self.creates_inventory_movements:
+                    raise ValidationError({
+                        'reverses_inventory_movements': _(
+                            'Cannot reverse IN movements without creating them first (direction: in)'
+                        )
+                    })
+
+            elif direction == 'out':
+                if self.creates_inventory_movements and not self.reverses_inventory_movements:
+                    # OUT movements should typically be created directly
+                    pass
+
+        # 5. AUTO-RECEIVE INTEGRATION
+        if hasattr(self.document_type, 'auto_receive') and self.document_type.auto_receive:
+            if not self.creates_inventory_movements:
+                raise ValidationError({
+                    'creates_inventory_movements': _(
+                        'Auto-receive document type requires status that creates inventory movements'
+                    )
+                })
+
+            if self.document_type.inventory_direction not in ['in', 'both']:
+                raise ValidationError({
+                    'creates_inventory_movements': _(
+                        'Auto-receive only works with incoming inventory documents'
+                    )
+                })
+
+        # 6. FISCAL DOCUMENT RULES
+        if self.document_type.is_fiscal:
+            if self.allows_editing and self.is_final:
+                raise ValidationError({
+                    'allows_editing': _(
+                        'Fiscal documents cannot be edited after finalization (Bulgarian law)'
+                    )
+                })
+
+            if self.reverses_inventory_movements:
+                # Fiscal documents need special handling for reversals
+                # Това може да се разреши с отделен метод за fiscal reversals
+                pass
+
+        # 7. APPROVAL INTEGRATION
+        if self.document_type.requires_approval:
+            # Проверки за approval workflow consistency
+            if self.is_final and not self._has_approval_path():
+                raise ValidationError({
+                    'is_final': _(
+                        'Final status in approval-required document type must have approval path'
+                    )
+                })
+
+        # 8. MOVEMENT CORRECTION BUSINESS RULES
+        if self.allows_movement_correction:
+            if self.is_initial:
+                # Initial documents shouldn't need correction (they just started)
+                raise ValidationError({
+                    'allows_movement_correction': _(
+                        'Initial status should not allow movement correction (no movements to correct yet)'
+                    )
+                })
+
+            if self.is_cancellation:
+                # Cancelled documents might need correction to undo effects
+                pass
+
+        # 9. AUTO-CORRECTION SAFETY RULES
+        if self.auto_correct_movements_on_edit:
+            if self.is_final and not self.allows_editing:
+                raise ValidationError({
+                    'auto_correct_movements_on_edit': _(
+                        'Cannot auto-correct in non-editable final status'
+                    )
+                })
+
+        # 10. LOGICAL CONSISTENCY CROSS-CHECKS
+        if not self.allows_editing and not self.allows_deletion and self.is_initial:
+            raise ValidationError({
+                'allows_editing': _(
+                    'Initial status must allow either editing or deletion (otherwise documents get stuck)'
+                )
+            })
+
+        # 11. BULGARIAN LEGAL REQUIREMENTS
+        if self.document_type.is_fiscal:
+            if self.allows_deletion and self.is_final:
+                raise ValidationError({
+                    'allows_deletion': _(
+                        'Final fiscal documents cannot be deleted (Bulgarian law - only reversals allowed)'
+                    )
+                })
+
+
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -396,3 +561,15 @@ class DocumentTypeStatus(models.Model):
             'inventory_direction': self.document_type.inventory_direction,
             'affects_inventory': self.document_type.affects_inventory,
         }
+
+    def _has_approval_path(self):
+        """Helper: Check if there's an approval path to this status"""
+        try:
+            from .approvals import ApprovalRule
+            return ApprovalRule.objects.filter(
+                document_type=self.document_type,
+                to_status_obj__code=self.status.code,
+                is_active=True
+            ).exists()
+        except ImportError:
+            return True  # Assume OK if approval system not available

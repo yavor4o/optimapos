@@ -278,9 +278,7 @@ class VATCalculationService:
 
     @classmethod
     def _calculate_line_totals_internal(cls, line, entered_price: Decimal) -> Dict:
-        """Internal calculation method - preserves existing logic"""
-        # This is the existing calculate_line_totals method, unchanged
-        # Just renamed to indicate it's internal
+        """✅ FIXED VERSION - LINE-LEVEL ROUNDING според търговски стандарти"""
 
         document = getattr(line, 'document', None)
         product = getattr(line, 'product', None)
@@ -300,41 +298,56 @@ class VATCalculationService:
         }
 
         if not vat_applicable:
-            # No VAT case
+            # No VAT case - запазваме същата логика
+            line_total = entered_price * quantity
             result.update({
                 'unit_price': entered_price,
                 'unit_price_without_vat': entered_price,
                 'vat_amount_per_unit': Decimal('0'),
-                'line_total_without_vat': entered_price * quantity,
+                'line_total_without_vat': line_total,
                 'line_vat_amount': Decimal('0'),
-                'line_total_with_vat': entered_price * quantity,
+                'line_total_with_vat': line_total,
                 'calculation_reason': 'VAT not applicable'
             })
         else:
-            # VAT applicable case
-            if prices_include_vat:
-                # Price includes VAT
-                unit_price_with_vat = entered_price
-                unit_price_without_vat = entered_price / (Decimal('1') + vat_rate)
-                vat_amount_per_unit = unit_price_with_vat - unit_price_without_vat
-            else:
-                # Price excludes VAT
-                unit_price_without_vat = entered_price
-                vat_amount_per_unit = unit_price_without_vat * vat_rate
-                unit_price_with_vat = unit_price_without_vat + vat_amount_per_unit
+            # ✅ ПРАВИЛЕН ПОДХОД: LINE-LEVEL calculation
 
-            # Round to 2 decimal places
-            unit_price_without_vat = unit_price_without_vat.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            vat_amount_per_unit = vat_amount_per_unit.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            unit_price_with_vat = unit_price_without_vat + vat_amount_per_unit  # Recalculate to avoid rounding errors
+            # Стъпка 1: Изчисли line totals БЕЗ рано закръгляване
+            line_extended_price = entered_price * quantity
+
+            if prices_include_vat:
+                # Price includes VAT - работим с line totals
+                line_total_with_vat = line_extended_price
+                line_total_without_vat = line_total_with_vat / (Decimal('1') + vat_rate)
+                line_vat_amount = line_total_with_vat - line_total_without_vat
+            else:
+                # Price excludes VAT - работим с line totals
+                line_total_without_vat = line_extended_price
+                line_vat_amount = line_total_without_vat * vat_rate
+                line_total_with_vat = line_total_without_vat + line_vat_amount
+
+            # Стъпка 2: Закръгли ФИНАЛНИТЕ line totals - това е ключът!
+            line_total_without_vat = line_total_without_vat.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            line_vat_amount = line_vat_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            line_total_with_vat = (line_total_without_vat + line_vat_amount)  # Ensure consistency
+
+            # Стъпка 3: Backward calculate unit prices за display/storage
+            if quantity > 0:
+                unit_price_without_vat = line_total_without_vat / quantity
+                vat_amount_per_unit = line_vat_amount / quantity
+                unit_price_with_vat = line_total_with_vat / quantity
+            else:
+                unit_price_without_vat = Decimal('0')
+                vat_amount_per_unit = Decimal('0')
+                unit_price_with_vat = Decimal('0')
 
             result.update({
-                'unit_price': unit_price_with_vat,  # Store with VAT
+                'unit_price': unit_price_with_vat,  # Може да има повече от 2 digits
                 'unit_price_without_vat': unit_price_without_vat,
                 'vat_amount_per_unit': vat_amount_per_unit,
-                'line_total_without_vat': unit_price_without_vat * quantity,
-                'line_vat_amount': vat_amount_per_unit * quantity,
-                'line_total_with_vat': unit_price_with_vat * quantity,
+                'line_total_without_vat': line_total_without_vat,  # ✅ ТОЧНО закръглен
+                'line_vat_amount': line_vat_amount,  # ✅ ТОЧНО закръглен
+                'line_total_with_vat': line_total_with_vat,  # ✅ ТОЧНО закръглен
                 'calculation_reason': f'VAT {vat_rate * 100:.1f}% {"included" if prices_include_vat else "added"}'
             })
 
