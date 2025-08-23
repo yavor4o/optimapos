@@ -594,9 +594,7 @@ class MovementService:
             logger.warning(f"Incremental update failed, using refresh_for_combination: {e}")
             InventoryItem.refresh_for_combination(location, product)
 
-            # Batch cache if needed
-            if batch_number and MovementService._should_track_batches(location, product):
-                InventoryBatch.refresh_for_combination(location, product, batch_number)
+
 
         logger.info(f"✅ Created incoming movement: {product.code} +{quantity} at {location.code}")
         return movement
