@@ -1,12 +1,16 @@
 # products/services/product_service.py - REFACTORED
 
-from django.db.models import Q, Sum, F, Count, Avg
+from django.db.models import Q, Sum, F
 from django.utils import timezone
 from typing import List, Optional, Dict, Tuple
 from decimal import Decimal
+from ..models import Product, ProductBarcode, ProductPackaging, ProductLifecycleChoices
+from django.db import transaction
+from core.utils.result import Result
+from inventory.models import InventoryLocation, InventoryItem
+import logging
 
-from ..models import Product, ProductPLU, ProductBarcode, ProductPackaging, ProductLifecycleChoices
-
+logger = logging.getLogger(__name__)
 
 class ProductService:
     """
@@ -356,49 +360,7 @@ class ProductService:
 
         return stats
 
-    @staticmethod
-    def validate_product_data(product_data: Dict) -> Tuple[bool, List[str]]:
-        """Validate product data before creation/update"""
-        errors = []
 
-        # Required fields
-        if not product_data.get('code'):
-            errors.append('Product code is required')
-
-        if not product_data.get('name'):
-            errors.append('Product name is required')
-
-        if not product_data.get('base_unit'):
-            errors.append('Base unit is required')
-
-        if not product_data.get('tax_group'):
-            errors.append('Tax group is required')
-
-        # Code format validation
-        if product_data.get('code'):
-            code = product_data['code'].strip().upper()
-            if len(code) < 3:
-                errors.append('Product code must be at least 3 characters')
-            if ' ' in code:
-                errors.append('Product code cannot contain spaces')
-
-        # Lifecycle validation
-        if 'lifecycle_status' in product_data:
-            if product_data['lifecycle_status'] not in ProductLifecycleChoices.values:
-                errors.append('Invalid lifecycle status')
-
-        # Unit type validation
-        if 'unit_type' in product_data:
-            valid_types = ['PIECE', 'WEIGHT', 'VOLUME', 'LENGTH']
-            if product_data['unit_type'] not in valid_types:
-                errors.append('Invalid unit type')
-
-        # Tracking settings validation
-        if product_data.get('track_serial_numbers'):
-            if product_data.get('unit_type') != 'PIECE':
-                errors.append('Serial numbers can only be tracked for PIECE type products')
-
-        return len(errors) == 0, errors
 
     # ===== BULK OPERATIONS =====
 
@@ -446,3 +408,270 @@ class ProductService:
             purchase_blocked=block,
             updated_at=timezone.now()
         )
+
+    @staticmethod
+    @transaction.atomic
+    def create_product_with_inventory(product_data: Dict) -> Result:
+        """
+        🎯 NEW METHOD: Create product with automatic inventory setup
+
+        This is the preferred way to create products in the system.
+        Follows enterprise retail best practices.
+        """
+        try:
+            # Step 1: Validate input data
+            validation_result = ProductService.validate_product_data(product_data)
+            if not validation_result.ok:
+                return validation_result
+
+            # Step 2: Create the product
+            from ..models import Product
+            product = Product.objects.create(**product_data)
+
+            # Step 3: Create inventory items for all active locations
+            inventory_result = ProductService._create_inventory_items_for_product(product)
+
+            if not inventory_result.ok:
+                # Log warning but continue gracefully
+                logger.warning(f"Inventory creation failed for {product.code}: {inventory_result.msg}")
+
+            success_data = {
+                'product': {
+                    'id': product.id,
+                    'code': product.code,
+                    'name': product.name,
+                    'lifecycle_status': product.lifecycle_status
+                },
+                'inventory_items_created': inventory_result.data.get('created_count', 0) if inventory_result.ok else 0,
+                'active_locations': inventory_result.data.get('total_locations', 0) if inventory_result.ok else 0,
+                'warnings': [] if inventory_result.ok else [inventory_result.msg]
+            }
+
+            logger.info(f"✅ Product created successfully: {product.code}")
+            return Result.success(success_data, f"Product {product.code} created successfully")
+
+        except Exception as e:
+            logger.error(f"❌ Product creation failed: {e}")
+            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create product: {str(e)}")
+
+    @staticmethod
+    def create_product_without_inventory(product_data: Dict) -> Result:
+        """
+        🔧 ALTERNATIVE: Create product without inventory (for special cases)
+        """
+        try:
+            validation_result = ProductService.validate_product_data(product_data)
+            if not validation_result.ok:
+                return validation_result
+
+            from ..models import Product
+            product = Product.objects.create(**product_data)
+
+            success_data = {
+                'product': {
+                    'id': product.id,
+                    'code': product.code,
+                    'name': product.name
+                },
+                'inventory_items_created': 0,
+                'note': 'Product created without inventory items'
+            }
+
+            logger.info(f"✅ Product created (no inventory): {product.code}")
+            return Result.success(success_data, f"Product {product.code} created without inventory")
+
+        except Exception as e:
+            logger.error(f"❌ Product creation failed: {e}")
+            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create product: {str(e)}")
+
+    @staticmethod
+    def _create_inventory_items_for_product(product) -> Result:
+        """
+        🏪 INTERNAL: Create InventoryItem records for all active locations
+        """
+        try:
+            active_locations = InventoryLocation.objects.filter(is_active=True)
+            created_count = 0
+            skipped_count = 0
+
+            for location in active_locations:
+                inventory_item, created = InventoryItem.objects.get_or_create(
+                    product=product,
+                    location=location,
+                    defaults={
+                        'current_qty': Decimal('0'),
+                        'reserved_qty': Decimal('0'),
+                        'avg_cost': getattr(product, 'standard_cost', None) or Decimal('0'),
+                        'min_stock_level': Decimal('0'),
+                        'max_stock_level': Decimal('0'),
+                    }
+                )
+
+                if created:
+                    created_count += 1
+                    logger.debug(f"Created InventoryItem: {product.code} @ {location.code}")
+                else:
+                    skipped_count += 1
+                    logger.debug(f"InventoryItem already exists: {product.code} @ {location.code}")
+
+            result_data = {
+                'created_count': created_count,
+                'skipped_count': skipped_count,
+                'total_locations': active_locations.count()
+            }
+
+            if created_count > 0:
+                logger.info(f"✅ Created {created_count} InventoryItems for {product.code}")
+                return Result.success(result_data, f"Created {created_count} inventory items")
+            else:
+                logger.warning(f"⚠️ No inventory items created for {product.code} (all existed)")
+                return Result.success(result_data, "No new inventory items needed")
+
+        except Exception as e:
+            logger.error(f"❌ Inventory creation failed for {product.code}: {e}")
+            return Result.error('INVENTORY_CREATION_FAILED', f"Failed to create inventory items: {str(e)}")
+
+    @staticmethod
+    def add_product_to_location(product, location) -> Result:
+        """
+        🏪 PUBLIC METHOD: Add existing product to a specific location
+        """
+        try:
+            inventory_item, created = InventoryItem.objects.get_or_create(
+                product=product,
+                location=location,
+                defaults={
+                    'current_qty': Decimal('0'),
+                    'reserved_qty': Decimal('0'),
+                    'avg_cost': getattr(product, 'standard_cost', None) or Decimal('0'),
+                    'min_stock_level': Decimal('0'),
+                    'max_stock_level': Decimal('0'),
+                }
+            )
+
+            if created:
+                logger.info(f"✅ Added {product.code} to {location.code}")
+                return Result.success({
+                    'product_code': product.code,
+                    'location_code': location.code,
+                    'created': True
+                }, f"Product {product.code} added to {location.code}")
+            else:
+                logger.info(f"⚠️ {product.code} already exists at {location.code}")
+                return Result.success({
+                    'product_code': product.code,
+                    'location_code': location.code,
+                    'created': False
+                }, f"Product {product.code} already exists at {location.code}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to add {product.code} to {location.code}: {e}")
+            return Result.error('LOCATION_ADD_FAILED', f"Failed to add product to location: {str(e)}")
+
+    @staticmethod
+    def setup_inventory_for_existing_products() -> Result:
+        """
+        🔧 MIGRATION HELPER: Setup inventory for products created before this system
+        """
+        try:
+            with transaction.atomic():
+                from ..models import Product
+
+                products_without_full_inventory = []
+                total_created = 0
+
+                active_locations = InventoryLocation.objects.filter(is_active=True)
+                all_products = Product.objects.all()
+
+                for product in all_products:
+                    existing_items = InventoryItem.objects.filter(product=product).count()
+                    expected_items = active_locations.count()
+
+                    if existing_items < expected_items:
+                        products_without_full_inventory.append(product.code)
+
+                        # Create missing inventory items
+                        for location in active_locations:
+                            inventory_item, created = InventoryItem.objects.get_or_create(
+                                product=product,
+                                location=location,
+                                defaults={
+                                    'current_qty': Decimal('0'),
+                                    'reserved_qty': Decimal('0'),
+                                    'avg_cost': getattr(product, 'standard_cost', None) or Decimal('0'),
+                                    'min_stock_level': Decimal('0'),
+                                    'max_stock_level': Decimal('0'),
+                                }
+                            )
+
+                            if created:
+                                total_created += 1
+
+                migration_result = {
+                    'products_processed': len(products_without_full_inventory),
+                    'inventory_items_created': total_created,
+                    'products_with_missing_inventory': products_without_full_inventory[:10]  # Sample
+                }
+
+                logger.info(
+                    f"✅ Migration completed: {total_created} inventory items created for {len(products_without_full_inventory)} products")
+                return Result.success(migration_result, f"Migration completed successfully")
+
+        except Exception as e:
+            logger.error(f"❌ Migration failed: {e}")
+            return Result.error('MIGRATION_FAILED', f"Migration failed: {str(e)}")
+
+    @staticmethod
+    def validate_product_data(product_data: Dict) -> Result:
+        """
+        🔍 UNIFIED: Complete product data validation before creation/update
+
+        Combines all validation rules from existing codebase
+        """
+        errors = []
+
+        # Required fields validation
+        if not product_data.get('code'):
+            errors.append('Product code is required')
+        if not product_data.get('name'):
+            errors.append('Product name is required')
+        if not product_data.get('base_unit'):
+            errors.append('Base unit is required')
+        if not product_data.get('tax_group'):
+            errors.append('Tax group is required')
+
+        # Code format validation
+        if product_data.get('code'):
+            code = product_data['code'].strip().upper()
+            if len(code) < 3:
+                errors.append('Product code must be at least 3 characters')
+            if ' ' in code:
+                errors.append('Product code cannot contain spaces')
+
+            # Code uniqueness check
+            from ..models import Product
+            if Product.objects.filter(code=code).exists():
+                errors.append(f"Product code '{code}' already exists")
+
+        # Lifecycle validation
+        if 'lifecycle_status' in product_data:
+            from ..models import ProductLifecycleChoices
+            if product_data['lifecycle_status'] not in [choice[0] for choice in ProductLifecycleChoices.choices]:
+                errors.append('Invalid lifecycle status')
+
+        # Unit type validation
+        if 'unit_type' in product_data:
+            valid_types = ['PIECE', 'WEIGHT', 'VOLUME', 'LENGTH']
+            if product_data['unit_type'] not in valid_types:
+                errors.append('Invalid unit type')
+
+        # Tracking settings validation
+        if product_data.get('track_serial_numbers'):
+            if product_data.get('unit_type') != 'PIECE':
+                errors.append('Serial numbers can only be tracked for PIECE type products')
+
+        # Return Result
+        if errors:
+            return Result.error('VALIDATION_FAILED', "Validation errors", {'errors': errors})
+
+        return Result.success({}, "Validation passed")
