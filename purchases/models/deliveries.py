@@ -282,20 +282,17 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         """Simple status check - stays in model"""
         return self.quality_status in ['rejected', 'partial']
 
-
-
     @property
     def total_approved_quantity(self):
-        """Simple aggregation - stays in model"""
         return self.lines.filter(quality_approved=True).aggregate(
-            total=models.Sum('quantity')
+            total=models.Sum('received_quantity')
         )['total'] or Decimal('0')
 
     @property
     def total_rejected_quantity(self):
         """Simple aggregation - stays in model"""
         return self.lines.filter(quality_approved=False).aggregate(
-            total=models.Sum('quantity')
+            total=models.Sum('received_quantity')
         )['total'] or Decimal('0')
 
     @property
@@ -409,7 +406,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
             'approved_lines': self.lines.filter(quality_approved=True).count(),
             'rejected_lines': self.lines.filter(quality_approved=False).count(),
             'pending_lines': self.lines.filter(quality_approved__isnull=True).count(),
-            'total_quantity': self.lines.aggregate(models.Sum('quantity'))['quantity__sum'] or Decimal('0'),
+            'total_quantity': self.lines.aggregate(models.Sum('received_quantity'))['received_quantity__sum'] or Decimal('0'),
             'approved_quantity': self.total_approved_quantity,
             'rejected_quantity': self.total_rejected_quantity,
             'approval_rate': self.quality_approval_rate

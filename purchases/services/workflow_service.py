@@ -854,9 +854,9 @@ class PurchaseWorkflowService:
                 delivery_data = DeliveryLine.objects.filter(
                     source_order_line=order_line
                 ).aggregate(
-                    total_delivered=Sum('quantity'),
-                    quality_approved=Sum('quantity', filter=Q(quality_approved=True)),
-                    quality_rejected=Sum('quantity', filter=Q(quality_approved=False))
+                    total_delivered=Sum('received_quantity'),
+                    quality_approved=Sum('received_quantity', filter=Q(quality_approved=True)),
+                    quality_rejected=Sum('received_quantity', filter=Q(quality_approved=False))
                 )
 
                 old_delivered = order_line.delivered_quantity
