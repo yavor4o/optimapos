@@ -1,17 +1,5 @@
 # purchases/models/orders.py - REFACTORED WITH SERVICE DELEGATION
-"""
-PurchaseOrder Model - Clean Architecture Implementation
 
-CHANGES:
-❌ REMOVED: Fat business logic methods from model
-✅ ADDED: Thin wrapper methods that delegate to services
-✅ PRESERVED: 100% backward compatibility
-✅ ENHANCED: Better error handling and logging
-
-PRINCIPLE:
-Model = Data + Simple Operations
-Services = Business Logic + Complex Operations
-"""
 
 
 from decimal import Decimal
@@ -21,8 +9,8 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from nomenclatures.models import BaseDocument
-from nomenclatures.mixins import FinancialMixin, PaymentMixin
+from nomenclatures.models import BaseDocument, BaseDocumentLine
+from nomenclatures.mixins import FinancialMixin, PaymentMixin, FinancialLineMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -518,126 +506,88 @@ class PurchaseOrderLineManager(models.Manager):
     """Manager for purchase order lines"""
 
     def get_queryset(self):
-        return super().get_queryset().select_related('document', 'product')
+        return super().get_queryset().select_related('document', 'product', 'source_request_line')
 
-    def pending_delivery(self):
-        """Lines with pending deliveries"""
-        return self.filter(delivery_status='pending')
+    def pending_orders(self):
+        """Lines in pending orders"""
+        return self.filter(document__status='pending')
 
-    def partially_delivered(self):
-        """Lines with partial deliveries"""
-        return self.filter(delivery_status='partial')
+    def confirmed_orders(self):
+        """Lines in confirmed orders"""
+        return self.filter(document__status='confirmed')
 
-    def fully_delivered(self):
-        """Lines fully delivered"""
-        return self.filter(delivery_status='completed')
+    def for_supplier(self, supplier):
+        """Lines for specific supplier"""
+        return self.filter(document__partner=supplier)
+
+    def total_order_value(self):
+        """Total value of all order lines"""
+        from django.db.models import Sum
+        return self.aggregate(
+            total=Sum('line_total')
+        )['total'] or Decimal('0')
+
+    def by_product(self, product):
+        """Lines for specific product"""
+        return self.filter(product=product)
 
 
-class PurchaseOrderLine(FinancialMixin):
+class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Purchase Order Line - Simple data model
+    Purchase Order Line - ПРАВИЛНО НАСЛЕДЯВАНЕ
 
-    PRINCIPLE: Keep line models simple - they're primarily data containers
-    Complex calculations and business logic belong in services
+    Наследява BaseDocumentLine за:
+    - line_number
+    - product
+    - unit (ForeignKey към UnitOfMeasure)
+    - description
+    - created_at, updated_at
+
+    Наследява FinancialLineMixin за:
+    - unit_price
+    - discount_percent
+    - line_total (calculated)
+    - tax_rate, tax_amount (ако има)
+
+    Добавя специфични полета за поръчки.
     """
 
+    # =====================
+    # PARENT DOCUMENT
+    # =====================
     document = models.ForeignKey(
-        PurchaseOrder,
+        'PurchaseOrder',
         on_delete=models.CASCADE,
         related_name='lines',
-        verbose_name=_('Order')
+        verbose_name=_('Purchase Order')
     )
 
-    line_number = models.PositiveIntegerField(
-        _('Line Number'),
-        help_text=_('Sequential line number within document')
-    )
-
-    product = models.ForeignKey(
-        'products.Product',
-        on_delete=models.PROTECT,
-        verbose_name=_('Product')
-    )
-
-    quantity = models.DecimalField(
-        _('Quantity'),
-        max_digits=15,
-        decimal_places=3,
-        help_text=_('Quantity in specified unit')
-    )
-
-    unit = models.CharField(
-        _('Unit'),
-        max_length=20,
-        help_text=_('Unit of measure for this line')
-    )
-
+    # =====================
+    # СПЕЦИФИЧНО QUANTITY ПОЛЕ
+    # =====================
     ordered_quantity = models.DecimalField(
         _('Ordered Quantity'),
         max_digits=15,
         decimal_places=3,
-        help_text=_('Final ordered quantity')
-    )
-
-    unit_price = models.DecimalField(
-        _('Unit Price'),
-        max_digits=15,
-        decimal_places=4,
-        help_text=_('Price per unit')
-    )
-
-    # =====================
-    # DELIVERY TRACKING - Consider for removal/property conversion
-    # =====================
-
-    delivered_quantity = models.DecimalField(
-        _('Delivered Quantity'),
-        max_digits=15,
-        decimal_places=3,
-        default=Decimal('0'),
-        help_text=_('Total quantity delivered (aggregated from delivery lines)')
-    )
-
-    DELIVERY_STATUS_CHOICES = [
-        ('pending', _('Pending')),
-        ('partial', _('Partially Delivered')),
-        ('completed', _('Fully Delivered')),
-    ]
-
-    delivery_status = models.CharField(
-        _('Delivery Status'),
-        max_length=20,
-        choices=DELIVERY_STATUS_CHOICES,
-        default='pending',
-        help_text=_('Delivery status of this line')
+        help_text=_('Quantity ordered from supplier')
     )
 
     # =====================
     # SOURCE TRACKING
     # =====================
-
     source_request_line = models.ForeignKey(
         'purchases.PurchaseRequestLine',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='converted_to_order_line',
-        verbose_name=_('Source Request Line')
-    )
-
-    notes = models.TextField(
-        _('Line Notes'),
-        blank=True,
-        help_text=_('Additional notes for this line')
+        verbose_name=_('Source Request Line'),
+        help_text=_('Original request line this order line was created from')
     )
 
     # =====================
-    # TRACKING FIELDS
+    # MANAGER
     # =====================
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     objects = PurchaseOrderLineManager()
 
     class Meta:
@@ -648,7 +598,6 @@ class PurchaseOrderLine(FinancialMixin):
         indexes = [
             models.Index(fields=['document', 'line_number']),
             models.Index(fields=['product']),
-            models.Index(fields=['delivery_status']),
             models.Index(fields=['source_request_line']),
         ]
 
@@ -656,89 +605,34 @@ class PurchaseOrderLine(FinancialMixin):
         return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.ordered_quantity}"
 
     # =====================
-    # SIMPLE CALCULATIONS - Keep in Model
+    # ВАЛИДАЦИЯ
     # =====================
-
-    @property
-    def line_total(self):
-        """Simple calculation - stays in model - NULL-SAFE"""
-        ordered = self.ordered_quantity or Decimal('0')
-        price = self.unit_price or Decimal('0')
-        return ordered * price
-
-    @property
-    def delivery_progress(self):
-        """Simple calculation - stays in model - NULL-SAFE"""
-        ordered = self.ordered_quantity or Decimal('0')
-        delivered = self.delivered_quantity or Decimal('0')
-
-        if ordered > 0:
-            return float(delivered / ordered * 100)
-        return 0.0
-
-    @property
-    def remaining_quantity(self):
-        """Simple calculation - stays in model - NULL-SAFE"""
-        ordered = self.ordered_quantity or Decimal('0')
-        delivered = self.delivered_quantity or Decimal('0')
-        return max(Decimal('0'), ordered - delivered)
-
     def clean(self):
-        """Model-level validation"""
-        super().clean()
+        """Order line specific validation"""
+        super().clean()  # BaseDocumentLine + FinancialLineMixin validation
 
+        # Ordered quantity must be positive
         if self.ordered_quantity <= 0:
             raise ValidationError({
-                'ordered_quantity': _('Ordered quantity must be positive')
+                'ordered_quantity': _('Ordered quantity must be greater than zero')
             })
 
-        if self.unit_price < 0:
+        # Unit price must be positive
+        if hasattr(self, 'unit_price') and self.unit_price and self.unit_price <= 0:
             raise ValidationError({
-                'unit_price': _('Unit price cannot be negative')
-            })
-
-        # Delivered quantity validation
-        if self.delivered_quantity > self.ordered_quantity:
-            raise ValidationError({
-                'delivered_quantity': _('Delivered quantity cannot exceed ordered quantity')
+                'unit_price': _('Unit price must be greater than zero')
             })
 
     # =====================
-    # SERVICE INTEGRATION - When Needed
+    # OVERRIDE FinancialLineMixin methods for custom quantity
     # =====================
+    def get_quantity_for_calculation(self):
+        """Override FinancialLineMixin method to use ordered_quantity"""
+        return self.ordered_quantity or Decimal('1')
 
-    def get_current_market_price(self):
-        """Get current market price - delegates to PricingService"""
-        try:
-            from pricing.services import PricingService
-
-            result = PricingService.get_product_pricing(
-                self.document.location,
-                self.product,
-                quantity=self.ordered_quantity
-            )
-
-            if result.ok:
-                return result.data.get('final_price')
-            else:
-                return None
-
-        except ImportError:
-            return None
-
-    def validate_product_availability(self):
-        """Validate product can be purchased - delegates to ProductValidationService"""
-        try:
-            from products.services import ProductValidationService
-
-            return ProductValidationService.validate_purchase(
-                self.product,
-                self.ordered_quantity,
-                self.document.partner
-            )
-
-        except ImportError:
-            from core.utils.result import Result
-            return Result.success({}, 'ProductValidationService not available')
+    def recalculate_totals(self, save=True):
+        """Recalculate line totals using ordered_quantity"""
+        # This will use get_quantity_for_calculation() internally
+        super().recalculate_totals(save=save)
 
 

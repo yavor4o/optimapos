@@ -7,8 +7,8 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from nomenclatures.models import BaseDocument
-from nomenclatures.mixins import FinancialMixin, PaymentMixin
+from nomenclatures.models import BaseDocument, BaseDocumentLine
+from nomenclatures.mixins import FinancialMixin, PaymentMixin, FinancialLineMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -483,61 +483,90 @@ class DeliveryLineManager(models.Manager):
         """Lines pending quality control"""
         return self.filter(quality_approved__isnull=True)
 
+    def with_variances(self):
+        """Lines with delivery variances - MOVED FROM LineManager!"""
+        from django.db.models import F
+        return self.exclude(
+            received_quantity=F('source_order_line__ordered_quantity')
+        ).filter(source_order_line__isnull=False)
 
-class DeliveryLine(FinancialMixin):
+    def over_delivered(self):
+        """Lines with more received than ordered"""
+        from django.db.models import F
+        return self.filter(
+            received_quantity__gt=F('source_order_line__ordered_quantity'),
+            source_order_line__isnull=False
+        )
+
+    def under_delivered(self):
+        """Lines with less received than ordered"""
+        from django.db.models import F
+        return self.filter(
+            received_quantity__lt=F('source_order_line__ordered_quantity'),
+            source_order_line__isnull=False
+        )
+
+    def expiring_soon(self, days=30):
+        """Lines expiring within specified days"""
+        from datetime import timedelta
+        cutoff = timezone.now().date() + timedelta(days=days)
+        return self.filter(
+            expiry_date__isnull=False,
+            expiry_date__lte=cutoff
+        )
+
+    def with_batch_numbers(self):
+        """Lines with batch tracking"""
+        return self.exclude(batch_number='')
+
+
+class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     """
-    Delivery Line - Simple data model with quality control
+    Delivery Line - ПРАВИЛНО НАСЛЕДЯВАНЕ
 
-    PRINCIPLE: Keep line models simple - they're primarily data containers
-    Quality control logic belongs in services
+    Наследява BaseDocumentLine за:
+    - line_number
+    - product
+    - unit (ForeignKey към UnitOfMeasure)
+    - description
+    - created_at, updated_at
+
+    Наследява FinancialLineMixin за:
+    - unit_price
+    - discount_percent
+    - line_total (calculated)
+    - VAT полета
+
+    Добавя специфични полета за доставки и качествен контрол.
     """
 
+    # =====================
+    # PARENT DOCUMENT
+    # =====================
     document = models.ForeignKey(
-        DeliveryReceipt,
+        'DeliveryReceipt',
         on_delete=models.CASCADE,
         related_name='lines',
-        verbose_name=_('Delivery')
+        verbose_name=_('Delivery Receipt')
     )
 
-    line_number = models.PositiveIntegerField(
-        _('Line Number'),
-        help_text=_('Sequential line number within document')
-    )
-
-    product = models.ForeignKey(
-        'products.Product',
-        on_delete=models.PROTECT,
-        verbose_name=_('Product')
-    )
-
-    quantity = models.DecimalField(
-        _('Delivered Quantity'),
+    # =====================
+    # СПЕЦИФИЧНО QUANTITY ПОЛЕ
+    # =====================
+    received_quantity = models.DecimalField(
+        _('Received Quantity'),
         max_digits=15,
         decimal_places=3,
-        help_text=_('Actual delivered quantity')
-    )
-
-    unit = models.CharField(
-        _('Unit'),
-        max_length=20,
-        help_text=_('Unit of measure for this line')
-    )
-
-    unit_price = models.DecimalField(
-        _('Unit Price'),
-        max_digits=15,
-        decimal_places=4,
-        help_text=_('Price per unit from order')
+        help_text=_('Actual quantity received from supplier')
     )
 
     # =====================
     # QUALITY CONTROL FIELDS
     # =====================
-
     quality_approved = models.BooleanField(
         _('Quality Approved'),
         null=True,  # Allows for pending state
-        help_text=_('True=approved, False=rejected, None=pending')
+        help_text=_('True=approved, False=rejected, None=pending quality check')
     )
 
     QUALITY_ISSUE_CHOICES = [
@@ -562,7 +591,7 @@ class DeliveryLine(FinancialMixin):
     quality_notes = models.TextField(
         _('Quality Notes'),
         blank=True,
-        help_text=_('Detailed notes about quality issues')
+        help_text=_('Detailed notes about quality control')
     )
 
     quality_checked_by = models.ForeignKey(
@@ -583,7 +612,6 @@ class DeliveryLine(FinancialMixin):
     # =====================
     # BATCH AND EXPIRY TRACKING
     # =====================
-
     batch_number = models.CharField(
         _('Batch Number'),
         max_length=50,
@@ -601,29 +629,19 @@ class DeliveryLine(FinancialMixin):
     # =====================
     # SOURCE TRACKING
     # =====================
-
     source_order_line = models.ForeignKey(
         'purchases.PurchaseOrderLine',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='delivery_lines',
-        verbose_name=_('Source Order Line')
-    )
-
-    notes = models.TextField(
-        _('Line Notes'),
-        blank=True,
-        help_text=_('Additional notes for this line')
+        verbose_name=_('Source Order Line'),
+        help_text=_('Order line this delivery fulfills')
     )
 
     # =====================
-    # TRACKING FIELDS
+    # MANAGER
     # =====================
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
     objects = DeliveryLineManager()
 
     class Meta:
@@ -641,60 +659,19 @@ class DeliveryLine(FinancialMixin):
         ]
 
     def __str__(self):
-        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.quantity}"
+        return f"{self.document.document_number} L{self.line_number}: {self.product.code} x {self.received_quantity}"
 
     # =====================
-    # SIMPLE CALCULATIONS - Keep in Model
+    # ВАЛИДАЦИЯ
     # =====================
-
-    @property
-    def line_total(self):
-        """Simple calculation - stays in model"""
-        if self.quantity and self.unit_price:
-            return self.quantity * self.unit_price
-        return Decimal('0')
-
-    @property
-    def is_quality_pending(self):
-        """Simple status check - stays in model"""
-        return self.quality_approved is None
-
-    @property
-    def is_quality_approved(self):
-        """Simple status check - stays in model"""
-        return self.quality_approved is True
-
-    @property
-    def is_quality_rejected(self):
-        """Simple status check - stays in model"""
-        return self.quality_approved is False
-
-    @property
-    def is_near_expiry(self, days=30):
-        """Simple calculation - stays in model"""
-        if not self.expiry_date:
-            return False
-        return (self.expiry_date - timezone.now().date()).days <= days
-
-    @property
-    def is_expired(self):
-        """Simple calculation - stays in model"""
-        if not self.expiry_date:
-            return False
-        return self.expiry_date < timezone.now().date()
-
     def clean(self):
-        """Model-level validation"""
-        super().clean()
+        """Delivery line specific validation"""
+        super().clean()  # BaseDocumentLine + FinancialLineMixin validation
 
-        if self.quantity <= 0:
+        # Received quantity must be positive
+        if self.received_quantity <= 0:
             raise ValidationError({
-                'quantity': _('Quantity must be positive')
-            })
-
-        if self.unit_price < 0:
-            raise ValidationError({
-                'unit_price': _('Unit price cannot be negative')
+                'received_quantity': _('Received quantity must be greater than zero')
             })
 
         # Quality validation
@@ -704,10 +681,11 @@ class DeliveryLine(FinancialMixin):
             })
 
         # Expiry validation
-        if self.expiry_date and self.expiry_date < self.document.delivery_date:
-            raise ValidationError({
-                'expiry_date': _('Expiry date cannot be before delivery date')
-            })
+        if self.expiry_date and hasattr(self.document, 'delivery_date'):
+            if self.expiry_date < self.document.delivery_date:
+                raise ValidationError({
+                    'expiry_date': _('Expiry date cannot be before delivery date')
+                })
 
         # Source order line validation
         if self.source_order_line:
@@ -717,9 +695,128 @@ class DeliveryLine(FinancialMixin):
                 })
 
     # =====================
-    # SERVICE INTEGRATION - When Needed
+    # QUANTITY PROPERTIES (с достъп до поръчаното количество)
     # =====================
+    @property
+    def ordered_quantity(self):
+        """Shortcut за поръчаното количество"""
+        return self.source_order_line.ordered_quantity if self.source_order_line else Decimal('0')
 
+    @property
+    def quantity_variance(self):
+        """Отклонение в количеството (received - ordered)"""
+        return self.received_quantity - self.ordered_quantity
+
+    @property
+    def quantity_variance_percent(self):
+        """Отклонение в количеството като процент"""
+        if self.ordered_quantity > 0:
+            return float(self.quantity_variance / self.ordered_quantity * 100)
+        return 0.0
+
+    @property
+    def has_variance(self):
+        """Има ли отклонение в количеството?"""
+        return self.quantity_variance != 0
+
+    @property
+    def is_over_delivered(self):
+        """Получено ли е повече от поръчаното?"""
+        return self.quantity_variance > 0
+
+    @property
+    def is_under_delivered(self):
+        """Получено ли е по-малко от поръчаното?"""
+        return self.quantity_variance < 0
+
+    # =====================
+    # QUALITY PROPERTIES
+    # =====================
+    @property
+    def is_quality_pending(self):
+        """Чака ли качествен контрол?"""
+        return self.quality_approved is None
+
+    @property
+    def is_quality_approved(self):
+        """Одобрено ли е качеството?"""
+        return self.quality_approved is True
+
+    @property
+    def is_quality_rejected(self):
+        """Отхвърлено ли е качеството?"""
+        return self.quality_approved is False
+
+    # =====================
+    # EXPIRY PROPERTIES
+    # =====================
+    @property
+    def is_near_expiry(self, days=30):
+        """Близо ли е до изтичане (по подразбиране 30 дни)?"""
+        if not self.expiry_date:
+            return False
+        return (self.expiry_date - timezone.now().date()).days <= days
+
+    @property
+    def is_expired(self):
+        """Изтекъл ли е?"""
+        if not self.expiry_date:
+            return False
+        return self.expiry_date < timezone.now().date()
+
+    @property
+    def days_to_expiry(self):
+        """Дни до изтичане"""
+        if not self.expiry_date:
+            return None
+        return (self.expiry_date - timezone.now().date()).days
+
+    # =====================
+    # OVERRIDE FinancialLineMixin methods for custom quantity
+    # =====================
+    def get_quantity_for_calculation(self):
+        """Override FinancialLineMixin method to use received_quantity"""
+        return self.received_quantity or Decimal('1')
+
+    def recalculate_totals(self, save=True):
+        """Recalculate line totals using received_quantity"""
+        # This will use get_quantity_for_calculation() internally
+        super().recalculate_totals(save=save)
+
+    # =====================
+    # BUSINESS LOGIC METHODS
+    # =====================
+    def approve_quality(self, user, notes=''):
+        """Approve quality for this line"""
+        self.quality_approved = True
+        self.quality_checked_by = user
+        self.quality_checked_at = timezone.now()
+        if notes:
+            self.quality_notes = notes
+        self.quality_issue_type = ''  # Clear any previous issues
+        self.save(update_fields=[
+            'quality_approved', 'quality_checked_by', 'quality_checked_at',
+            'quality_notes', 'quality_issue_type'
+        ])
+
+    def reject_quality(self, user, issue_type, notes=''):
+        """Reject quality for this line"""
+        if not issue_type:
+            raise ValidationError("Quality issue type is required for rejection")
+
+        self.quality_approved = False
+        self.quality_checked_by = user
+        self.quality_checked_at = timezone.now()
+        self.quality_issue_type = issue_type
+        self.quality_notes = notes
+        self.save(update_fields=[
+            'quality_approved', 'quality_checked_by', 'quality_checked_at',
+            'quality_issue_type', 'quality_notes'
+        ])
+
+    # =====================
+    # SERVICE INTEGRATION
+    # =====================
     def get_current_market_price(self):
         """Get current market price - delegates to PricingService"""
         try:
@@ -728,7 +825,7 @@ class DeliveryLine(FinancialMixin):
             result = PricingService.get_product_pricing(
                 self.document.location,
                 self.product,
-                quantity=self.quantity
+                quantity=self.received_quantity
             )
 
             if result.ok:
@@ -744,16 +841,11 @@ class DeliveryLine(FinancialMixin):
         try:
             from products.services import ProductValidationService
 
-            # Check if product requires expiry tracking
-            validation_result = ProductValidationService.validate_sale(
-                self.product, self.quantity
+            return ProductValidationService.validate_expiry(
+                self.product,
+                self.expiry_date,
+                self.batch_number
             )
-
-            if validation_result.ok:
-                # Additional expiry validation could go here
-                return validation_result
-            else:
-                return validation_result
 
         except ImportError:
             from core.utils.result import Result
