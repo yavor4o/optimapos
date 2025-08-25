@@ -104,32 +104,7 @@ class PurchaseOrderManager(models.Manager):
 
 
 class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
-    """
-    Purchase Order - Clean Model Implementation
 
-    PHILOSOPHY:
-    - Model handles data persistence and simple operations
-    - Complex business logic delegated to services
-    - Backward compatibility maintained through wrapper methods
-    - Service integration through composition, not inheritance
-    """
-
-    # =====================
-    # ORDER-SPECIFIC STATUS CHOICES
-    # =====================
-    DRAFT = 'draft'
-    SENT = 'sent'
-    CONFIRMED = 'confirmed'
-    COMPLETED = 'completed'
-    CANCELLED = 'cancelled'
-
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (SENT, _('Sent to Supplier')),
-        (CONFIRMED, _('Confirmed by Supplier')),
-        (COMPLETED, _('Completed')),
-        (CANCELLED, _('Cancelled')),
-    ]
 
     # =====================
     # ORDER-SPECIFIC FIELDS
@@ -187,24 +162,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         help_text=_('When order was sent to supplier')
     )
 
-    # =====================
-    # DELIVERY TRACKING FIELDS
-    # =====================
-
-    DELIVERY_STATUS_CHOICES = [
-        ('pending', _('Pending')),
-        ('partial', _('Partially Delivered')),
-        ('completed', _('Fully Delivered')),
-        ('cancelled', _('Cancelled')),
-    ]
-
-    delivery_status = models.CharField(
-        _('Delivery Status'),
-        max_length=20,
-        choices=DELIVERY_STATUS_CHOICES,
-        default='pending',
-        help_text=_('Current delivery status of this order')
-    )
 
     # =====================
     # SOURCE TRACKING
@@ -258,13 +215,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         """Model-level validation"""
         super().clean()
 
-        # Status-specific validation
-        if self.status == self.CONFIRMED:
-            if not self.supplier_confirmed:
-                raise ValidationError({
-                    'supplier_confirmed': _('Supplier confirmation required when status is confirmed')
-                })
-
         # Business validation
         if self.expected_delivery_date and self.expected_delivery_date < timezone.now().date():
             raise ValidationError({
@@ -286,46 +236,13 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""
         # Auto-set supplier confirmation timestamp
-        if self.status == self.CONFIRMED and not self.supplier_confirmed_date:
-            self.supplier_confirmed_date = timezone.now().date()
+
 
         super().save(*args, **kwargs)
 
     # =====================
     # SIMPLE MODEL PROPERTIES - Keep in Model
     # =====================
-
-    @property
-    def is_draft(self):
-        """Simple status check - stays in model"""
-        return self.status == self.DRAFT
-
-    @property
-    def is_sent(self):
-        """Simple status check - stays in model"""
-        return self.status == self.SENT
-
-    @property
-    def is_confirmed(self):
-        """Simple status check - stays in model"""
-        return self.status == self.CONFIRMED
-
-    @property
-    def can_be_sent(self):
-        """Simple business rule - stays in model"""
-        return self.status == self.DRAFT and self.lines.exists()
-
-    @property
-    def can_be_confirmed(self):
-        """Simple business rule - stays in model"""
-        return self.status == self.SENT
-
-    @property
-    def is_overdue(self):
-        """Simple calculation - stays in model"""
-        if not self.expected_delivery_date:
-            return False
-        return self.expected_delivery_date < timezone.now().date() and self.status == self.CONFIRMED
 
     @property
     def days_until_delivery(self):
@@ -417,34 +334,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
                 'PurchaseWorkflowService not available for synchronization'
             )
 
-    # =====================
-    # DELIVERY STATUS MANAGEMENT - Keep Simple Aggregation in Model
-    # =====================
-
-    def update_delivery_status(self):
-        """
-        Update delivery status based on lines - SIMPLE AGGREGATION (Keep in Model)
-
-        This is simple aggregation logic that can stay in the model.
-        For complex synchronization with actual deliveries, use synchronize_delivery_status()
-        """
-        total_ordered = self.lines.aggregate(
-            total=models.Sum('ordered_quantity')
-        )['total'] or Decimal('0')
-
-        total_delivered = self.lines.aggregate(
-            total=models.Sum('delivered_quantity')
-        )['total'] or Decimal('0')
-
-        if total_delivered == 0:
-            self.delivery_status = 'pending'
-        elif total_delivered >= total_ordered:
-            self.delivery_status = 'completed'
-        else:
-            self.delivery_status = 'partial'
-
-        self.save(update_fields=['delivery_status'])
-        return self.delivery_status
 
     # =====================
     # WORKFLOW INTEGRATION METHODS
@@ -468,13 +357,11 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
                 else:
                     return {
                         'current_status': self.status,
-                        'available_transitions': self._get_simple_transitions(),
                         'error': result.msg
                     }
             else:
                 return {
                     'current_status': self.status,
-                    'available_transitions': self._get_simple_transitions(),
                     'service_available': True,
                     'method_available': False
                 }
@@ -482,20 +369,10 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         except (ImportError, AttributeError):
             return {
                 'current_status': self.status,
-                'available_transitions': self._get_simple_transitions(),
                 'service_available': False
             }
 
-    def _get_simple_transitions(self):
-        """Simple fallback for available transitions"""
-        if self.status == self.DRAFT:
-            return ['sent'] if self.lines.exists() else []
-        elif self.status == self.SENT:
-            return ['confirmed', 'cancelled']
-        elif self.status == self.CONFIRMED:
-            return ['completed', 'cancelled']
-        else:
-            return []
+
 
 
 # =====================
