@@ -14,6 +14,7 @@ from inventory.services import MovementService
 from nomenclatures.models import DocumentType
 from nomenclatures.services import VATCalculationService, DocumentService
 from nomenclatures.services.document import DocumentCreator
+from partners.services import SupplierService
 from purchases.models import PurchaseOrder, PurchaseOrderLine, DeliveryReceipt, DeliveryLine
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,16 @@ class PurchaseWorkflowService:
                     {'existing_order': request.converted_to_order.document_number}
                 )
 
+            if request.partner:
+
+                supplier_validation = SupplierService.validate_supplier_operation(
+                    request.partner,
+                    request.total or Decimal('0')
+                )
+
+                if not supplier_validation.ok:
+                    return supplier_validation
+
 
             # Prepare order data
             order_data = {
@@ -77,11 +88,7 @@ class PurchaseWorkflowService:
             # Apply overrides
             order_data.update(order_overrides)
 
-            # Create order
-            # НОВ КОД:
-            from nomenclatures.services import DocumentService
 
-            # Използвай DocumentService за правилно създаване
             create_result = DocumentService.create_document(
                 model_class=PurchaseOrder,
                 data=order_data,
@@ -180,6 +187,17 @@ class PurchaseWorkflowService:
                     f'Order {order.document_number} has no lines to send',
                     {'lines_count': 0}
                 )
+
+            if order.partner:
+                from partners.services import SupplierService
+
+                supplier_validation = SupplierService.validate_supplier_operation(
+                    order.partner,
+                    order.total or Decimal('0')
+                )
+
+                if not supplier_validation.ok:
+                    return supplier_validation
 
             # Use DocumentService for status transition
             try:
@@ -361,6 +379,17 @@ class PurchaseWorkflowService:
                     'INVALID_ORDER_STATUS',
                     f'Cannot create delivery from order with status: {order.status}'
                 )
+
+            if order.partner:
+                from partners.services import SupplierService
+
+                supplier_validation = SupplierService.validate_supplier_operation(
+                    order.partner,
+                    order.total or Decimal('0')
+                )
+
+                if not supplier_validation.ok:
+                    return supplier_validation
 
             # ===================================================================
             # СТЪПКА 1: СЪЗДАЙ DELIVERY INSTANCE (БЕЗ SAVE)

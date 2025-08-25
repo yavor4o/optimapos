@@ -318,7 +318,7 @@ class SupplierService:
             )
 
     @staticmethod
-    def validate_order_placement(supplier, amount: Decimal) -> Result:
+    def validate_supplier_operation(supplier, amount: Decimal) -> Result:
         """Проверява дали може да се направи поръчка - NEW Result-based method"""
         if not supplier.is_active:
             return Result.error(
