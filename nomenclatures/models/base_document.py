@@ -1,16 +1,5 @@
 # nomenclatures/models/base_document.py - UNIVERSAL BASE DOCUMENT
-"""
-Base Document Models - УНИВЕРСАЛЕН И НЕЗАВИСИМ
 
-КЛЮЧОВА ПРОМЯНА: 
-- Премахнат supplier = ForeignKey('partners.Supplier')  
-- Добавен partner = GenericForeignKey за всякакви партньори
-- Backward compatibility properties за supplier/customer
-
-РЕЗУЛТАТ: BaseDocument може да работи с purchases, sales, hr, accounting apps
-"""
-
-import warnings
 from django.db import models
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -108,18 +97,40 @@ class DocumentManager(models.Manager):
 
 
 class LineManager(models.Manager):
-    """Base manager for document lines"""
+    """
+    Base manager for document lines - САМО общи операции
+
+    НЕ прави assumptions за специфични quantity полета!
+    """
 
     def for_product(self, product):
         """Lines for specific product"""
         return self.filter(product=product)
 
-    def with_variances(self):
-        """Lines with quantity variances"""
-        return self.filter(
-            models.Q(variance_quantity__gt=0) |
-            models.Q(variance_quantity__lt=0)
-        )
+    def for_product_code(self, product_code):
+        """Lines for product by code"""
+        return self.filter(product__code=product_code)
+
+    def active_products_only(self):
+        """Lines with active products only"""
+        return self.filter(product__lifecycle_status='ACTIVE')
+
+    def ordered_by_line_number(self):
+        """Lines ordered by line number"""
+        return self.order_by('line_number')
+
+    def for_unit(self, unit):
+        """Lines for specific unit of measure"""
+        return self.filter(unit=unit)
+
+    def recent(self, days=30):
+        """Recently created lines"""
+        from django.utils import timezone
+        from datetime import timedelta
+        cutoff = timezone.now() - timedelta(days=days)
+        return self.filter(created_at__gte=cutoff)
+
+
 
 
 # =================================================================
@@ -366,7 +377,7 @@ class BaseDocument(models.Model):
         # Auto-generate document number ако липсва
         if not self.document_number:
             try:
-                # ✅ ПОПРАВЕНО: Използвай NumberingService вместо DocumentService
+
                 from nomenclatures.services.numbering_service import NumberingService
                 self.document_number = NumberingService.generate_document_number(
                     document_type=self.document_type,
@@ -620,18 +631,14 @@ class BaseDocument(models.Model):
 
 class BaseDocumentLine(models.Model):
     """
-    Base Document Line - CLEAN VERSION
+    Base Document Line - КОРИГИРАНА ВЕРСИЯ
 
-    САМО essential line behavior:
-    - Core fields
-    - Basic validation
-    - Helper methods
-
-    NO complex calculations - moved to services!
+    САМО общи полета - БЕЗ quantity!
+    Всеки наследник си дефинира своите quantity семантики.
     """
 
     # =====================
-    # CORE FIELDS
+    # CORE FIELDS (общи за всички)
     # =====================
     line_number = models.PositiveSmallIntegerField(
         _('Line Number'),
@@ -644,13 +651,6 @@ class BaseDocumentLine(models.Model):
         verbose_name=_('Product')
     )
 
-    quantity = models.DecimalField(
-        _('Quantity'),
-        max_digits=12,
-        decimal_places=3,
-        help_text=_('Quantity in specified unit')
-    )
-
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
         on_delete=models.PROTECT,
@@ -658,7 +658,7 @@ class BaseDocumentLine(models.Model):
     )
 
     # =====================
-    # ADDITIONAL FIELDS
+    # OPTIONAL FIELDS
     # =====================
     description = models.TextField(
         _('Description'),
@@ -666,7 +666,9 @@ class BaseDocumentLine(models.Model):
         help_text=_('Additional description for this line')
     )
 
-    # Система полета
+    # =====================
+    # AUDIT FIELDS
+    # =====================
     created_at = models.DateTimeField(_('Created At'), auto_now_add=True)
     updated_at = models.DateTimeField(_('Updated At'), auto_now=True)
 
@@ -677,15 +679,13 @@ class BaseDocumentLine(models.Model):
         ordering = ['line_number']
 
     def clean(self):
+        """Основни валидации - БЕЗ quantity проверки"""
         super().clean()
 
-        # Основни валидации
-        if self.quantity <= 0:
-            raise ValidationError({'quantity': _('Quantity must be positive')})
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
+        # Validate product is active
+        if self.product and not getattr(self.product, 'is_active', True):
+            raise ValidationError({'product': _('Product must be active')})
 
     def __str__(self):
-        return f"Line {self.line_number}: {self.product.name} x {self.quantity}"
+        return f"Line {self.line_number}: {self.product.name}"
+
