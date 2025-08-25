@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from nomenclatures.models import BaseDocument
+from nomenclatures.models import BaseDocument, BaseDocumentLine
 from nomenclatures.mixins import FinancialMixin
 import logging
 
@@ -530,7 +530,7 @@ class PurchaseRequestLineManager(models.Manager):
         )
 
 
-class PurchaseRequestLine(models.Model):
+class PurchaseRequestLine(BaseDocumentLine):
     """
     Purchase Request Line - Simple data model
 
@@ -545,16 +545,7 @@ class PurchaseRequestLine(models.Model):
         verbose_name=_('Request')
     )
 
-    line_number = models.PositiveIntegerField(
-        _('Line Number'),
-        help_text=_('Sequential line number within document')
-    )
 
-    product = models.ForeignKey(
-        'products.Product',
-        on_delete=models.PROTECT,
-        verbose_name=_('Product')
-    )
 
     requested_quantity = models.DecimalField(
         _('Requested Quantity'),
@@ -563,11 +554,7 @@ class PurchaseRequestLine(models.Model):
         help_text=_('Quantity requested in specified unit')
     )
 
-    unit = models.CharField(
-        _('Unit'),
-        max_length=20,
-        help_text=_('Unit of measure for this line')
-    )
+
 
     estimated_price = models.DecimalField(
         _('Estimated Price'),
@@ -578,17 +565,12 @@ class PurchaseRequestLine(models.Model):
         help_text=_('Estimated unit price for budgeting')
     )
 
-    notes = models.TextField(
-        _('Line Notes'),
-        blank=True,
-        help_text=_('Additional notes for this line')
-    )
 
     # =====================
     # TRACKING FIELDS
     # =====================
 
-    created_at = models.DateTimeField(auto_now_add=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = PurchaseRequestLineManager()
