@@ -25,10 +25,16 @@ def last_purchase_price_api(request):
         product = Product.objects.get(id=product_id)
 
         # Намери последното IN движение за този продукт
+        from nomenclatures.models import DocumentType
+        purchase_doc_types = DocumentType.objects.filter(
+            app_name='purchases',
+            affects_inventory=True
+        ).values_list('type_key', flat=True)
+
         last_movement = InventoryMovement.objects.filter(
             product=product,
             movement_type='IN',
-            source_document_type__in=['DELIVERY', 'PURCHASE_REQUEST', 'PURCHASE']
+            source_document_type__in=purchase_doc_types
         ).order_by('-created_at').first()
 
         if last_movement:
