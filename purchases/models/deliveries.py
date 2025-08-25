@@ -319,29 +319,6 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
                 'DocumentService not available for recalculation'
             )
 
-    def update_source_order_status(self):
-        """
-        Update source order delivery status - delegates to PurchaseWorkflowService
-
-        Returns:
-            Result object with synchronization details
-        """
-        if not self.source_order:
-            from core.utils.result import Result
-            return Result.success(
-                {'no_source_order': True},
-                'No source order to update'
-            )
-
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-            return PurchaseWorkflowService.synchronize_order_delivery_status(self.source_order)
-        except ImportError:
-            from core.utils.result import Result
-            return Result.error(
-                'SERVICE_NOT_AVAILABLE',
-                'PurchaseWorkflowService not available for synchronization'
-            )
 
     # =====================
     # QUALITY CONTROL WORKFLOW METHODS
