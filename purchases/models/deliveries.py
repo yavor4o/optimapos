@@ -205,24 +205,6 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         """Model-level validation"""
         super().clean()
 
-        # Quality control validation
-        if self.quality_status != 'pending':
-            if not self.quality_checked_by:
-                raise ValidationError({
-                    'quality_checked_by': _('Quality checked by is required when quality status is not pending')
-                })
-
-        # Source order validation
-        if self.source_order:
-            if self.partner != self.source_order.partner:
-                raise ValidationError({
-                    'partner': _('Partner must match source order partner')
-                })
-
-            if self.source_order.status != 'confirmed':
-                raise ValidationError({
-                    'source_order': _('Source order must be confirmed')
-                })
 
         # Business validation
         if self.delivery_date > timezone.now().date():
@@ -232,10 +214,6 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
 
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""
-        # Auto-set quality check timestamp
-        if self.quality_status != 'pending' and not self.quality_checked_at:
-            self.quality_checked_at = timezone.now()
-
         super().save(*args, **kwargs)
 
     # =====================
@@ -586,11 +564,11 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     # ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Delivery line specific validation"""
-        super().clean()  # BaseDocumentLine + FinancialLineMixin validation
+        """Model-level validation - ONLY simple field validations"""
+        super().clean()
 
-        # Received quantity must be positive
-        if self.received_quantity <= 0:
+        # DeliveryLine има received_quantity
+        if self.received_quantity and self.received_quantity <= 0:
             raise ValidationError({
                 'received_quantity': _('Received quantity must be greater than zero')
             })
@@ -602,18 +580,10 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
             })
 
         # Expiry validation
-        if self.expiry_date and hasattr(self.document, 'delivery_date'):
-            if self.expiry_date < self.document.delivery_date:
-                raise ValidationError({
-                    'expiry_date': _('Expiry date cannot be before delivery date')
-                })
-
-        # Source order line validation
-        if self.source_order_line:
-            if self.source_order_line.product != self.product:
-                raise ValidationError({
-                    'product': _('Product must match source order line product')
-                })
+        if self.expiry_date and self.expiry_date < timezone.now().date():
+            raise ValidationError({
+                'expiry_date': _('Product is already expired')
+            })
 
     # =====================
     # QUANTITY PROPERTIES (с достъп до поръчаното количество)

@@ -359,19 +359,20 @@ class PurchaseRequestLine(BaseDocumentLine):
         return bool(self.estimated_price and self.estimated_price > 0)
 
     def clean(self):
-        """Model-level validation"""
+        """Model-level validation - ONLY simple field validations"""
         super().clean()
 
-        if self.requested_quantity <= 0:
+        # PurchaseRequestLine има requested_quantity
+        if self.requested_quantity and self.requested_quantity <= 0:
             raise ValidationError({
-                'requested_quantity': _('Quantity must be positive')
+                'requested_quantity': _('Requested quantity must be greater than zero')
             })
 
+        # И estimated_price
         if self.estimated_price is not None and self.estimated_price < 0:
             raise ValidationError({
-                'estimated_price': _('Price cannot be negative')
+                'estimated_price': _('Estimated price cannot be negative')
             })
-
     # =====================
     # SERVICE INTEGRATION - When Needed
     # =====================

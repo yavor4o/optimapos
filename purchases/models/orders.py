@@ -157,26 +157,14 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
     # =====================
 
     def clean(self):
-        """Model-level validation"""
+        """Model-level validation - ONLY simple field validations"""
         super().clean()
 
-        # Business validation
+        # PurchaseOrder ИМА expected_delivery_date
         if self.expected_delivery_date and self.expected_delivery_date < timezone.now().date():
             raise ValidationError({
                 'expected_delivery_date': _('Expected delivery date cannot be in the past')
             })
-
-        # Source request validation
-        if self.source_request:
-            if self.source_request.status != 'approved':
-                raise ValidationError({
-                    'source_request': _('Source request must be approved')
-                })
-
-            if self.partner != self.source_request.partner:
-                raise ValidationError({
-                    'partner': _('Partner must match source request partner')
-                })
 
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""
@@ -354,19 +342,19 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     # ВАЛИДАЦИЯ
     # =====================
     def clean(self):
-        """Order line specific validation"""
-        super().clean()  # BaseDocumentLine + FinancialLineMixin validation
+        """Model-level validation - ONLY simple field validations"""
+        super().clean()
 
-        # Ordered quantity must be positive
-        if self.ordered_quantity <= 0:
+        # PurchaseOrderLine има ordered_quantity
+        if self.ordered_quantity and self.ordered_quantity <= 0:
             raise ValidationError({
                 'ordered_quantity': _('Ordered quantity must be greater than zero')
             })
 
-        # Unit price must be positive
-        if hasattr(self, 'unit_price') and self.unit_price and self.unit_price <= 0:
+        # И unit_price
+        if self.unit_price is not None and self.unit_price < 0:
             raise ValidationError({
-                'unit_price': _('Unit price must be greater than zero')
+                'unit_price': _('Unit price cannot be negative')
             })
 
     # =====================

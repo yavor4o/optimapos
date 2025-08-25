@@ -584,6 +584,7 @@ class PurchaseWorkflowService:
     # =====================
 
     @classmethod
+    @transaction.atomic
     def bulk_convert_requests(cls, request_queryset, user=None) -> Result:
         """
         Bulk convert multiple approved requests to orders.
@@ -630,6 +631,7 @@ class PurchaseWorkflowService:
             )
 
     @classmethod
+    @transaction.atomic
     def bulk_confirm_orders(cls, order_queryset, user=None, auto_receive=False) -> Result:
         """
         Bulk confirm multiple sent orders.
