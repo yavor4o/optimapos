@@ -725,36 +725,6 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         return self.received_quantity or Decimal('1')
 
 
-    # =====================
-    # BUSINESS LOGIC METHODS
-    # =====================
-    def approve_quality(self, user, notes=''):
-        """Approve quality for this line"""
-        self.quality_approved = True
-        self.quality_checked_by = user
-        self.quality_checked_at = timezone.now()
-        if notes:
-            self.quality_notes = notes
-        self.quality_issue_type = ''  # Clear any previous issues
-        self.save(update_fields=[
-            'quality_approved', 'quality_checked_by', 'quality_checked_at',
-            'quality_notes', 'quality_issue_type'
-        ])
-
-    def reject_quality(self, user, issue_type, notes=''):
-        """Reject quality for this line"""
-        if not issue_type:
-            raise ValidationError("Quality issue type is required for rejection")
-
-        self.quality_approved = False
-        self.quality_checked_by = user
-        self.quality_checked_at = timezone.now()
-        self.quality_issue_type = issue_type
-        self.quality_notes = notes
-        self.save(update_fields=[
-            'quality_approved', 'quality_checked_by', 'quality_checked_at',
-            'quality_issue_type', 'quality_notes'
-        ])
 
     # =====================
     # SERVICE INTEGRATION

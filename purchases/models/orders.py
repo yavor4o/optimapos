@@ -211,9 +211,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
 
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""
-        # Auto-set supplier confirmation timestamp
-
-
         super().save(*args, **kwargs)
 
     # =====================
