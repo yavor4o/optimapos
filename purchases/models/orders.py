@@ -37,29 +37,6 @@ class PurchaseOrderManager(models.Manager):
             lines__isnull=True
         )
 
-    def awaiting_confirmation(self):
-        """Orders sent but not confirmed by supplier"""
-        return self.filter(
-            status='sent',
-            supplier_confirmed=False
-        )
-
-    def ready_for_delivery(self):
-        """Orders ready for delivery creation"""
-        return self.filter(
-            status='confirmed',
-            supplier_confirmed=True,
-            delivery_status__in=['pending', 'partial']
-        )
-
-    def overdue_delivery(self):
-        """Orders past expected delivery date"""
-        today = timezone.now().date()
-        return self.filter(
-            expected_delivery_date__lt=today,
-            status='confirmed'
-        )
-
     def by_partner(self, partner):
         return self.filter(partner=partner)
 
@@ -172,7 +149,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='sourced_orders',  # ✅ ДОБАВИ ТОВА
+        related_name='sourced_orders',
         verbose_name=_('Source Request'),
         help_text=_('Request this order was created from (if any)'))
 
@@ -190,7 +167,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['supplier_confirmed', 'supplier_confirmed_date']),
             models.Index(fields=['expected_delivery_date']),
-            models.Index(fields=['delivery_status']),
             models.Index(fields=['source_request']),
         ]
 
@@ -316,62 +292,6 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
                 'SERVICE_NOT_AVAILABLE',
                 'DocumentService not available for recalculation'
             )
-
-    def synchronize_delivery_status(self):
-        """
-        Synchronize delivery status - delegates to PurchaseWorkflowService
-
-        Returns:
-            Result object with synchronization details
-        """
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-            return PurchaseWorkflowService.synchronize_order_delivery_status(self)
-        except ImportError:
-            from core.utils.result import Result
-            return Result.error(
-                'SERVICE_NOT_AVAILABLE',
-                'PurchaseWorkflowService not available for synchronization'
-            )
-
-
-    # =====================
-    # WORKFLOW INTEGRATION METHODS
-    # =====================
-
-    def get_workflow_status(self):
-        """
-        Get current workflow status and available actions
-
-        Returns:
-            Dict with workflow information
-        """
-        try:
-            from nomenclatures.services import ApprovalService
-
-            if hasattr(ApprovalService, 'get_workflow_information'):
-                result = ApprovalService.get_workflow_information(self)
-
-                if result.ok:
-                    return result.data
-                else:
-                    return {
-                        'current_status': self.status,
-                        'error': result.msg
-                    }
-            else:
-                return {
-                    'current_status': self.status,
-                    'service_available': True,
-                    'method_available': False
-                }
-
-        except (ImportError, AttributeError):
-            return {
-                'current_status': self.status,
-                'service_available': False
-            }
-
 
 
 
@@ -507,9 +427,5 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
         """Override FinancialLineMixin method to use ordered_quantity"""
         return self.ordered_quantity or Decimal('1')
 
-    def recalculate_totals(self, save=True):
-        """Recalculate line totals using ordered_quantity"""
-        # This will use get_quantity_for_calculation() internally
-        super().recalculate_totals(save=save)
 
 

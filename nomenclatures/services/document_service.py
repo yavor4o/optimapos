@@ -361,8 +361,7 @@ class DocumentService:
                 try:
                     from pricing.services import PricingService
 
-                    # ПРЕДИ: include_cost=True - unexpected argument
-                    # СЕГА: без допълнителни параметри
+
                     cost_result = PricingService.get_product_pricing(
                         document.location, line.product
                     )
