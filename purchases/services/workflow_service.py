@@ -139,7 +139,6 @@ class PurchaseWorkflowService:
                     document=order,
                     line_number=req_line.line_number,
                     product=req_line.product,
-                    quantity=req_line.requested_quantity,  # Copy requested as ordered
                     unit=req_line.unit,
                     ordered_quantity=req_line.requested_quantity,
                     unit_price=req_line.estimated_price or Decimal('0.0000'),
@@ -148,9 +147,7 @@ class PurchaseWorkflowService:
                 )
                 lines_created += 1
 
-            # ФИКС: Update tracking fields БЕЗ промяна на статус
-            # Request остава 'approved' - статусът НЕ се променя!
-            # Conversion се проследява чрез специализираните полета:
+
             request.converted_to_order = order
             request.converted_at = timezone.now()
             request.converted_by = user
