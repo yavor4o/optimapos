@@ -94,36 +94,7 @@ class DeliveryReceiptManager(models.Manager):
 
 
 class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
-    """
-    Delivery Receipt - Clean Model Implementation
 
-    PHILOSOPHY:
-    - Model handles data persistence and simple operations
-    - Complex quality control delegated to services
-    - Backward compatibility maintained through wrapper methods
-    - Focus on quality control and inventory integration
-    """
-
-    # =====================
-    # DELIVERY-SPECIFIC STATUS CHOICES
-    # =====================
-    DRAFT = 'draft'
-    RECEIVED = 'received'
-    QUALITY_CHECKED = 'quality_checked'
-    PROCESSED = 'processed'
-    CANCELLED = 'cancelled'
-
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (RECEIVED, _('Received')),
-        (QUALITY_CHECKED, _('Quality Checked')),
-        (PROCESSED, _('Processed to Inventory')),
-        (CANCELLED, _('Cancelled')),
-    ]
-
-    # =====================
-    # DELIVERY-SPECIFIC FIELDS
-    # =====================
 
     delivery_date = models.DateField(
         _('Delivery Date'),
@@ -311,10 +282,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         """Simple status check - stays in model"""
         return self.quality_status in ['rejected', 'partial']
 
-    @property
-    def can_be_processed_to_inventory(self):
-        """Simple business rule - stays in model"""
-        return self.quality_status in ['approved', 'partial'] and self.status != 'processed'
+
 
     @property
     def total_approved_quantity(self):
@@ -454,7 +422,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
             if issue_type not in quality_issues:
                 quality_issues[issue_type] = {'count': 0, 'quantity': Decimal('0')}
             quality_issues[issue_type]['count'] += 1
-            quality_issues[issue_type]['quantity'] += line.quantity
+            quality_issues[issue_type]['quantity'] += line.received_quantity
 
         summary['quality_issues'] = quality_issues
 
@@ -521,24 +489,6 @@ class DeliveryLineManager(models.Manager):
 
 
 class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
-    """
-    Delivery Line - ПРАВИЛНО НАСЛЕДЯВАНЕ
-
-    Наследява BaseDocumentLine за:
-    - line_number
-    - product
-    - unit (ForeignKey към UnitOfMeasure)
-    - description
-    - created_at, updated_at
-
-    Наследява FinancialLineMixin за:
-    - unit_price
-    - discount_percent
-    - line_total (calculated)
-    - VAT полета
-
-    Добавя специфични полета за доставки и качествен контрол.
-    """
 
     # =====================
     # PARENT DOCUMENT
@@ -550,8 +500,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         verbose_name=_('Delivery Receipt')
     )
 
-    # =====================
-    # СПЕЦИФИЧНО QUANTITY ПОЛЕ
+
     # =====================
     received_quantity = models.DecimalField(
         _('Received Quantity'),
@@ -778,10 +727,6 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         """Override FinancialLineMixin method to use received_quantity"""
         return self.received_quantity or Decimal('1')
 
-    def recalculate_totals(self, save=True):
-        """Recalculate line totals using received_quantity"""
-        # This will use get_quantity_for_calculation() internally
-        super().recalculate_totals(save=save)
 
     # =====================
     # BUSINESS LOGIC METHODS
@@ -836,19 +781,5 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         except ImportError:
             return None
 
-    def validate_expiry_compliance(self):
-        """Validate expiry compliance - delegates to ProductValidationService"""
-        try:
-            from products.services import ProductValidationService
-
-            return ProductValidationService.validate_expiry(
-                self.product,
-                self.expiry_date,
-                self.batch_number
-            )
-
-        except ImportError:
-            from core.utils.result import Result
-            return Result.success({}, 'ProductValidationService not available')
 
 

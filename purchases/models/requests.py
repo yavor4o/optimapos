@@ -89,34 +89,6 @@ class PurchaseRequestManager(models.Manager):
 
 
 class PurchaseRequest(BaseDocument, FinancialMixin):
-    """
-    Purchase Request - Clean Model Implementation
-
-    PHILOSOPHY:
-    - Model handles data persistence and simple operations
-    - Complex business logic delegated to services
-    - Backward compatibility maintained through wrapper methods
-    - Service integration through composition, not inheritance
-    """
-
-    # =====================
-    # REQUEST-SPECIFIC STATUS CHOICES
-    # =====================
-    DRAFT = 'draft'
-    SUBMITTED = 'submitted'
-    APPROVED = 'approved'
-    CONVERTED = 'converted'
-    REJECTED = 'rejected'
-    CANCELLED = 'cancelled'
-
-    STATUS_CHOICES = [
-        (DRAFT, _('Draft')),
-        (SUBMITTED, _('Submitted for Approval')),
-        (APPROVED, _('Approved')),
-        (CONVERTED, _('Converted to Order')),
-        (REJECTED, _('Rejected')),
-        (CANCELLED, _('Cancelled')),
-    ]
 
     # =====================
     # REQUEST-SPECIFIC FIELDS
@@ -171,14 +143,12 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
     # CONVERSION TRACKING FIELDS
     # =====================
 
-    # В purchases/models/requests.py - променй САМО тази линия:
-    # В purchases/models/requests.py - променй САМО тази линия:
+
     converted_to_order = models.ForeignKey(
         'purchases.PurchaseOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='originating_request',  # ✅ ДОБАВИ ТОВА
         verbose_name=_('Converted to Order')
     )
 
@@ -233,25 +203,6 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
         """Model-level validation"""
         super().clean()
 
-        # Status-specific validation
-        if self.status == self.APPROVED:
-            if not self.approved_by:
-                raise ValidationError({
-                    'approved_by': _('Approved by is required when status is approved')
-                })
-
-        if self.status == self.REJECTED:
-            if not self.rejection_reason:
-                raise ValidationError({
-                    'rejection_reason': _('Rejection reason is required when status is rejected')
-                })
-
-        if self.status == self.CONVERTED:
-            if not self.converted_to_order:
-                raise ValidationError({
-                    'converted_to_order': _('Converted to order is required when status is converted')
-                })
-
         # Business validation
         if self.required_by_date and self.required_by_date < timezone.now().date():
             raise ValidationError({
@@ -260,44 +211,8 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
 
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""
-        # Auto-set approval timestamp
-        if self.status == self.APPROVED and not self.approved_at:
-            self.approved_at = timezone.now()
-
-        # Auto-set conversion timestamp
-        if self.status == self.CONVERTED and not self.converted_at:
-            self.converted_at = timezone.now()
-
         super().save(*args, **kwargs)
 
-    # =====================
-    # SIMPLE MODEL PROPERTIES - Keep in Model
-    # =====================
-
-    @property
-    def is_pending_approval(self):
-        """Simple status check - stays in model"""
-        return self.status == self.SUBMITTED
-
-    @property
-    def is_approved(self):
-        """Simple status check - stays in model"""
-        return self.status == self.APPROVED
-
-    @property
-    def is_converted(self):
-        """Simple status check - stays in model"""
-        return self.status == self.CONVERTED
-
-    @property
-    def can_be_edited(self):
-        """Simple business rule - stays in model"""
-        return self.status in [self.DRAFT]
-
-    @property
-    def can_be_cancelled(self):
-        """Simple business rule - stays in model"""
-        return self.status in [self.DRAFT, self.SUBMITTED]
 
     @property
     def approval_duration_days(self):
@@ -322,195 +237,68 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
 
     def get_financial_analysis(self):
         """
-        Get detailed financial analysis - PLACEHOLDER до DocumentService enhancement
+        Get detailed financial analysis - delegates to DocumentService
 
         Returns:
             Result object with financial breakdown
         """
         try:
-            # TODO: Implement when DocumentService gets this method
+            from nomenclatures.services import DocumentService
+            return DocumentService.analyze_document_financial_impact(
+                self, compare_to_budget=True
+            )
+        except ImportError:
+            # Fallback with basic info
             from core.utils.result import Result
             return Result.success(
                 {
                     'total_estimated_cost': float(self.total_estimated_cost),
                     'lines_count': self.lines.count(),
-                    'partner': self.partner.name if self.partner else None,  # ← ПОПРАВИ
+                    'partner': self.partner.name if self.partner else None,
                     'status': self.status
                 },
-                'Basic financial analysis (enhanced version pending)'
-            )
-        except Exception as e:
-            from core.utils.result import Result
-            return Result.error(
-                'ANALYSIS_ERROR',
-                f'Financial analysis failed: {str(e)}'
+                'Basic financial analysis (DocumentService not available)'
             )
 
     def validate_integrity(self, deep_validation=True):
         """
-        Validate document integrity - PLACEHOLDER до DocumentService enhancement
+        Validate document integrity - delegates to DocumentService  # ← ПОПРАВИ КОМЕНТАРА!
 
         Returns:
             Result object with validation details
         """
         try:
-            from core.utils.result import Result
-
-            issues = []
-
-            # Basic validation
-            if not self.lines.exists():
-                issues.append({
-                    'type': 'no_lines',
-                    'severity': 'error',
-                    'message': 'Document has no lines'
-                })
-
-            # Line validation
-            for line in self.lines.all():
-                if line.requested_quantity <= 0:
-                    issues.append({
-                        'type': 'invalid_quantity',
-                        'severity': 'error',
-                        'line': line.line_number,
-                        'message': f'Line {line.line_number}: Invalid quantity'
-                    })
-
-            error_count = len([i for i in issues if i['severity'] == 'error'])
-            is_valid = error_count == 0
-
-            return Result.success(
-                {
-                    'is_valid': is_valid,
-                    'error_count': error_count,
-                    'validation_issues': issues,
-                    'document_number': self.document_number
-                },
-                f'Validation completed: {"VALID" if is_valid else "INVALID"}'
+            from nomenclatures.services import DocumentService
+            return DocumentService.validate_document_integrity(
+                self, deep_validation=deep_validation
             )
-
-        except Exception as e:
+        except ImportError:
             from core.utils.result import Result
             return Result.error(
-                'VALIDATION_ERROR',
-                f'Document validation failed: {str(e)}'
+                'SERVICE_NOT_AVAILABLE',
+                'DocumentService not available for validation'
             )
 
     def recalculate_lines(self, user=None, update_pricing=True):
         """
-        Recalculate all lines - PLACEHOLDER до DocumentService enhancement
+        Recalculate all lines - delegates to DocumentService
 
         Returns:
             Result object with recalculation details
         """
         try:
-            from core.utils.result import Result
-
-            # Basic recalculation - just call model's method
-            original_total = self.total
-            self.recalculate_totals()  # Existing model method
-
-            return Result.success(
-                {
-                    'lines_processed': self.lines.count(),
-                    'total_amount_change': float(self.total - original_total),
-                    'new_total': float(self.total)
-                },
-                f'Recalculated {self.lines.count()} lines (basic version)'
+            from nomenclatures.services import DocumentService
+            return DocumentService.recalculate_document_lines(
+                self, user=user,
+                recalc_vat=True,
+                update_pricing=update_pricing
             )
-
-        except Exception as e:
+        except ImportError:
             from core.utils.result import Result
             return Result.error(
-                'RECALCULATION_ERROR',
-                f'Line recalculation failed: {str(e)}'
+                'SERVICE_NOT_AVAILABLE',
+                'DocumentService not available for recalculation'
             )
-
-    # =====================
-    # WORKFLOW INTEGRATION METHODS
-    # =====================
-
-    def get_workflow_status(self):
-        """
-        Get current workflow status and available actions
-
-        Returns:
-            Dict with workflow information
-        """
-        try:
-            from nomenclatures.services import ApprovalService
-
-            # Try to get workflow info if method exists
-            if hasattr(ApprovalService, 'get_workflow_information'):
-                result = ApprovalService.get_workflow_information(self)
-
-                if result.ok:
-                    return result.data
-                else:
-                    return {
-                        'current_status': self.status,
-                        'available_transitions': self._get_simple_transitions(),
-                        'error': result.msg
-                    }
-            else:
-                # ApprovalService exists but method doesn't
-                return {
-                    'current_status': self.status,
-                    'available_transitions': self._get_simple_transitions(),
-                    'service_available': True,
-                    'method_available': False
-                }
-
-        except (ImportError, AttributeError):
-            return {
-                'current_status': self.status,
-                'available_transitions': self._get_simple_transitions(),
-                'service_available': False
-            }
-
-    def _get_simple_transitions(self):
-        """Simple fallback for available transitions"""
-        if self.status == self.DRAFT:
-            return ['submitted']
-        elif self.status == self.SUBMITTED:
-            return ['approved', 'rejected']
-        elif self.status == self.APPROVED:
-            return ['converted'] if not self.converted_to_order else []
-        else:
-            return []
-
-    def get_conversion_eligibility(self):
-        """
-        Check if request can be converted to order
-
-        Returns:
-            Dict with eligibility status and reasons
-        """
-        eligibility = {
-            'eligible': False,
-            'reasons': []
-        }
-
-        if self.status != self.APPROVED:
-            eligibility['reasons'].append(f'Status is {self.status}, must be approved')
-
-        if self.converted_to_order:
-            eligibility['reasons'].append('Already converted to order')
-
-        if not self.lines.exists():
-            eligibility['reasons'].append('No lines to convert')
-
-        # Check for line-level issues
-        for line in self.lines.all():
-            if not line.requested_quantity or line.requested_quantity <= 0:
-                eligibility['reasons'].append(f'Line {line.line_number}: Invalid quantity')
-
-            if not line.estimated_price:
-                eligibility['reasons'].append(f'Line {line.line_number}: Missing estimated price')
-
-        eligibility['eligible'] = len(eligibility['reasons']) == 0
-
-        return eligibility
 
 
 # =====================
@@ -546,14 +334,12 @@ class PurchaseRequestLine(BaseDocumentLine):
     )
 
 
-
     requested_quantity = models.DecimalField(
         _('Requested Quantity'),
         max_digits=15,
         decimal_places=3,
         help_text=_('Quantity requested in specified unit')
     )
-
 
 
     estimated_price = models.DecimalField(
@@ -649,7 +435,7 @@ class PurchaseRequestLine(BaseDocumentLine):
             return ProductValidationService.validate_purchase(
                 self.product,
                 self.requested_quantity,
-                self.document.partner  # ← ПРОМЕНИ supplier → partner
+                self.document.partner
             )
 
         except ImportError:

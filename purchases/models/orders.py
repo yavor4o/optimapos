@@ -330,24 +330,7 @@ class PurchaseOrderLineManager(models.Manager):
 
 
 class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
-    """
-    Purchase Order Line - ПРАВИЛНО НАСЛЕДЯВАНЕ
 
-    Наследява BaseDocumentLine за:
-    - line_number
-    - product
-    - unit (ForeignKey към UnitOfMeasure)
-    - description
-    - created_at, updated_at
-
-    Наследява FinancialLineMixin за:
-    - unit_price
-    - discount_percent
-    - line_total (calculated)
-    - tax_rate, tax_amount (ако има)
-
-    Добавя специфични полета за поръчки.
-    """
 
     # =====================
     # PARENT DOCUMENT
