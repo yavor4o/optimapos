@@ -1,18 +1,5 @@
 # purchases/services/workflow_service.py
-"""
-Purchase Workflow Service - ЦЕНТРАЛИЗИРАНА БИЗНЕС ЛОГИКА
 
-Цел: Извади всичката сложна бизнес логика от model методите
-и централизирай я в надежден, тестваем service слой.
-
-ИЗВЛЕЧЕНИ МЕТОДИ ОТ МОДЕЛИ:
-- PurchaseRequest.convert_to_order() → convert_request_to_order()
-- PurchaseOrder.confirm_order() → confirm_purchase_order()
-- PurchaseOrder.send_to_supplier() → send_order_to_supplier()
-- Delivery creation logic → create_delivery_from_order()
-
-ВСИЧКИ МЕТОДИ ВРЪЩАТ Result objects със стандартизирани error codes.
-"""
 
 from dataclasses import dataclass
 from datetime import timedelta
@@ -21,8 +8,14 @@ from django.db import transaction
 from django.contrib.auth import get_user_model
 import logging
 from core.utils.result import Result
-from django.db.models import Sum, Q
 from django.utils import timezone
+
+from inventory.services import MovementService
+from nomenclatures.models import DocumentType
+from nomenclatures.services import VATCalculationService, DocumentService
+from nomenclatures.services.document import DocumentCreator
+from purchases.models import PurchaseOrder, PurchaseOrderLine, DeliveryReceipt, DeliveryLine
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -34,15 +27,7 @@ class WorkflowResult(Result):
 
 
 class PurchaseWorkflowService:
-    """
-    Централизиран service за всички purchase workflow операции.
 
-    ПРИНЦИПИ:
-    - Всички операции са transaction-safe
-    - Consistent Result returns
-    - Full backward compatibility чрез model wrappers
-    - Integration със service layer (Document, Movement, Approval)
-    """
 
     # =====================
     # REQUEST → ORDER CONVERSION
@@ -51,25 +36,7 @@ class PurchaseWorkflowService:
     @classmethod
     @transaction.atomic
     def convert_request_to_order(cls, request, user=None, **order_overrides) -> Result:
-        """
-        Convert approved PurchaseRequest to PurchaseOrder.
 
-        ИЗВЛЕЧЕНО ОТ: PurchaseRequest.convert_to_order()
-        ПОДОБРЕНИЯ:
-        - Transaction safety
-        - Enhanced validation
-        - Result pattern
-        - Service integration
-        - ФИКС: Не променя статус на request - използва само tracking полета
-
-        Args:
-            request: PurchaseRequest instance
-            user: User performing conversion
-            **order_overrides: Optional fields to override in new order
-
-        Returns:
-            Result with data={'order': PurchaseOrder, 'lines_count': int}
-        """
         try:
             # Validation
             if request.status != 'approved':
@@ -93,8 +60,6 @@ class PurchaseWorkflowService:
                     {'existing_order': request.converted_to_order.document_number}
                 )
 
-            # Import models (avoid circular imports)
-            from purchases.models import PurchaseOrder, PurchaseOrderLine
 
             # Prepare order data
             order_data = {
@@ -157,7 +122,7 @@ class PurchaseWorkflowService:
 
             # Recalculate order totals using service
             try:
-                from nomenclatures.services import VATCalculationService
+
                 calc_result = VATCalculationService.calculate_document_vat(order)
                 if not calc_result.ok:
                     logger.warning(f"VAT calculation warning: {calc_result.msg}")
@@ -218,7 +183,7 @@ class PurchaseWorkflowService:
 
             # Use DocumentService for status transition
             try:
-                from nomenclatures.services import DocumentService
+
                 transition_result = DocumentService.transition_document(
                     order, 'sent', user, 'Order sent to supplier'
                 )
@@ -289,7 +254,7 @@ class PurchaseWorkflowService:
 
             # Use DocumentService for transition
             try:
-                from nomenclatures.services import DocumentService
+
                 transition_result = DocumentService.transition_document(
                     order, 'confirmed', user, 'Order confirmed by supplier'
                 )
@@ -320,7 +285,7 @@ class PurchaseWorkflowService:
 
             if should_auto_receive:
                 try:
-                    from inventory.services.movement_service import MovementService
+
                     movement_result = MovementService.process_document_movements(order)
 
                     if movement_result.ok:
@@ -360,10 +325,7 @@ class PurchaseWorkflowService:
     # DELIVERY CREATION
     # =====================
 
-    # ===================================================================
-    # ПРАВИЛНА ПОПРАВКА: purchases/services/workflow_service.py
-    # Използвай DocumentCreator с правилните параметри
-    # ===================================================================
+
 
     @classmethod
     @transaction.atomic
@@ -372,9 +334,6 @@ class PurchaseWorkflowService:
         Create delivery receipt from purchase order using correct DocumentCreator signature.
         """
         try:
-            from purchases.models import DeliveryReceipt, DeliveryLine
-            from nomenclatures.services.document.creator import DocumentCreator
-            from nomenclatures.services.vat_calculation_service import VATCalculationService
 
             # ===================================================================
             # СТЪПКА 0: ENSURE WE HAVE A VALID USER
@@ -424,7 +383,7 @@ class PurchaseWorkflowService:
             if delivery_data:
                 delivery_data_final.update(delivery_data)
 
-            # Създай instance БЕЗ save - СЕТНИ ЗАДЪЛЖИТЕЛНИТЕ ПОЛЕТА
+
             delivery = DeliveryReceipt(**delivery_data_final)
             delivery.created_by = user
             delivery.updated_by = user
@@ -433,7 +392,7 @@ class PurchaseWorkflowService:
             # ВАЖНО: СЕТНИ DOCUMENT_TYPE ПРЕДИ DocumentCreator
             # ===================================================================
             try:
-                from nomenclatures.models import DocumentType
+
                 doc_type = DocumentType.objects.filter(
                     type_key=delivery.get_document_type_key()
                 ).first()
@@ -496,7 +455,7 @@ class PurchaseWorkflowService:
                         delivery_line.vat_total = data.get('line_vat_amount', Decimal('0.00'))
                         delivery_line.total = data.get('line_total_with_vat', Decimal('0.00'))
                         delivery_line.discount_total = Decimal('0.00')  # За сега няма discount
-                        delivery_line.save(update_fields=['subtotal', 'vat_total', 'total', 'discount_total'])
+                        delivery_line.save(update_fields=['net_amount', 'vat_amount', 'gross_amount', 'discount_amount'])
                         logger.debug(f"Line {delivery_line.line_number}: calculated totals={delivery_line.total}")
                     else:
                         logger.warning(
@@ -776,7 +735,7 @@ class PurchaseWorkflowService:
         - sales_request → sales_order
         - etc.
         """
-        from nomenclatures.models import DocumentType
+
 
         if request_document_type.app_name == 'purchases':
             if request_document_type.type_key == 'purchase_request':
@@ -927,11 +886,7 @@ class PurchaseWorkflowService:
                 'quality_status', 'quality_checked_by', 'quality_checked_at'
             ])
 
-            # Update source order delivery status
-            if delivery.source_order:
-                sync_result = cls.synchronize_order_delivery_status(delivery.source_order)
-                if not sync_result.ok:
-                    logger.warning(f"Order sync failed: {sync_result.msg}")
+
 
             return Result.success(
                 {

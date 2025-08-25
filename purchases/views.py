@@ -1,10 +1,19 @@
 # purchases/views.py
+from typing import Dict, Any
+
 from django.http import JsonResponse
-from django.views.decorators.http import require_GET
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_GET, require_http_methods
 from django.contrib.admin.views.decorators import staff_member_required
-from inventory.models import InventoryMovement
+from django.views.generic import TemplateView
+
+from inventory.models import InventoryMovement, InventoryItem
+from nomenclatures.models import DocumentType
+from nomenclatures.services import DocumentService
 from products.models import Product
 from decimal import Decimal
+
+from purchases.models import PurchaseOrder
 
 
 @staff_member_required
@@ -24,8 +33,7 @@ def last_purchase_price_api(request):
     try:
         product = Product.objects.get(id=product_id)
 
-        # Намери последното IN движение за този продукт
-        from nomenclatures.models import DocumentType
+
         purchase_doc_types = DocumentType.objects.filter(
             app_name='purchases',
             affects_inventory=True
@@ -47,8 +55,7 @@ def last_purchase_price_api(request):
                 'product_name': product.name
             })
         else:
-            # Fallback към InventoryItem avg_cost
-            from inventory.models import InventoryItem
+
             inventory_item = InventoryItem.objects.filter(
                 product=product,
                 avg_cost__gt=0
@@ -82,9 +89,7 @@ def last_purchase_price_api(request):
         })
 
 
-from django.shortcuts import render, get_object_or_404
-from django.contrib.admin.views.decorators import staff_member_required
-from .models import PurchaseOrder
+
 
 
 @staff_member_required
@@ -108,12 +113,6 @@ def test_order_workflow(request, pk):
     return render(request, 'admin/purchases/test_order_workflow.html', context)
 
 
-from django.shortcuts import render, get_object_or_404
-from django.contrib.admin.views.decorators import staff_member_required
-from django.http import JsonResponse
-from django.contrib import messages
-from django.views.decorators.http import require_http_methods
-from .models import PurchaseOrder
 
 
 @staff_member_required
@@ -159,11 +158,11 @@ def workflow_action(request, pk):
         except Exception as e:
             return JsonResponse({'success': False, 'message': str(e)})
 
-    # НОВO: Real workflow transitions
+
     elif status in ['sent', 'confirmed', 'completed', 'cancelled']:
         try:
-            from nomenclatures.services import DocumentService
-            # ВАЖНО: Подавай request.user!
+
+
             result = DocumentService.transition_document(order, status, request.user, f'Transition via workflow test')
 
             if result.ok:
@@ -185,9 +184,7 @@ def workflow_action(request, pk):
 
 
 
-from django.shortcuts import render
-from django.views.generic import TemplateView
-from typing import Dict, Any
+
 
 
 class IndexView(TemplateView):
