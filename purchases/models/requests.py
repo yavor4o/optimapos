@@ -54,38 +54,6 @@ class PurchaseRequestManager(models.Manager):
             created_at__year=today.year
         )
 
-    # =====================
-    # SERVICE INTEGRATION METHODS
-    # =====================
-
-    def bulk_submit_for_approval(self, user=None):
-        """Bulk submit draft requests - delegates to DocumentService"""
-        try:
-            from nomenclatures.services import DocumentService
-
-            draft_requests = self.filter(status='draft').exclude(lines__isnull=True)
-            results = []
-
-            for request in draft_requests:
-                result = DocumentService.transition_document(
-                    request, 'submitted', user, 'Bulk submission'
-                )
-                results.append((request, result))
-
-            return results
-
-        except ImportError:
-            logger.warning("DocumentService not available for bulk operations")
-            return []
-
-    def workflow_analysis(self):
-        """Get workflow analysis - delegates to PurchaseWorkflowService"""
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-            return PurchaseWorkflowService.get_workflow_analysis(self.all())
-        except ImportError:
-            logger.warning("PurchaseWorkflowService not available")
-            return None
 
 
 class PurchaseRequest(BaseDocument, FinancialMixin):

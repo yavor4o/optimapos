@@ -3,13 +3,14 @@
 
 
 from decimal import Decimal
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from nomenclatures.models import BaseDocument, BaseDocumentLine
+from core.utils.result import Result
+from nomenclatures.models import BaseDocument, BaseDocumentLine, ApprovalLog
 from nomenclatures.mixins import FinancialMixin, PaymentMixin, FinancialLineMixin
 import logging
 
@@ -47,38 +48,6 @@ class PurchaseOrderManager(models.Manager):
     def direct_orders(self):
         """Orders created directly (not from requests)"""
         return self.filter(source_request__isnull=True)
-
-    # =====================
-    # SERVICE INTEGRATION METHODS
-    # =====================
-
-    def bulk_send_to_supplier(self, user=None):
-        """Bulk send draft orders - delegates to PurchaseWorkflowService"""
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-
-            draft_orders = self.ready_to_send()
-            results = []
-
-            for order in draft_orders:
-                result = PurchaseWorkflowService.send_order_to_supplier(order, user)
-                results.append((order, result))
-
-            return results
-
-        except ImportError:
-            logger.warning("PurchaseWorkflowService not available for bulk operations")
-            return []
-
-    def workflow_analysis(self):
-        """Get workflow analysis - delegates to PurchaseWorkflowService"""
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
-            return PurchaseWorkflowService.get_workflow_analysis(self.all())
-        except ImportError:
-            logger.warning("PurchaseWorkflowService not available")
-            return None
-
 
 class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
 

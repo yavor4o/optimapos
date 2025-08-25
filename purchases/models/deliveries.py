@@ -63,34 +63,9 @@ class DeliveryReceiptManager(models.Manager):
         today = timezone.now().date()
         return self.filter(delivery_date=today)
 
-    # =====================
-    # SERVICE INTEGRATION METHODS
-    # =====================
 
-    def bulk_quality_approve(self, user=None):
-        """Bulk approve quality for pending deliveries"""
-        try:
-            from purchases.services.workflow_service import PurchaseWorkflowService
 
-            pending_deliveries = self.pending_quality_control()
-            results = []
 
-            for delivery in pending_deliveries:
-                # Auto-approve all lines
-                quality_decisions = {}
-                for line in delivery.lines.all():
-                    quality_decisions[str(line.id)] = {'approved': True}
-
-                result = PurchaseWorkflowService.process_quality_control(
-                    delivery, quality_decisions, user
-                )
-                results.append((delivery, result))
-
-            return results
-
-        except ImportError:
-            logger.warning("PurchaseWorkflowService not available for bulk operations")
-            return []
 
 
 class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
