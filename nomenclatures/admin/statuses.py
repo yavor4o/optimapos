@@ -11,8 +11,7 @@ Statuses Admin - DocumentStatus & DocumentTypeStatus
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django.db.models import Count
-from django.utils.safestring import mark_safe
+
 
 from ..models import DocumentStatus, DocumentTypeStatus
 
@@ -62,7 +61,7 @@ class DocumentStatusAdmin(admin.ModelAdmin):
                 'name',
                 'description',
                 'is_active',
-                'sort_order'
+                'sort_order',
             )
         }),
         (_('Visual Settings'), {
@@ -209,8 +208,7 @@ class DocumentStatusAdmin(admin.ModelAdmin):
 class DocumentTypeStatusInline(admin.TabularInline):
     """FIXED: Подобрена inline за конфигуриране на статуси"""
     model = DocumentTypeStatus
-    extra = 1
-    min_num = 1  # Поне един статус е нужен
+
 
     fields = [
         'status',
@@ -219,7 +217,8 @@ class DocumentTypeStatusInline(admin.TabularInline):
         'is_final',
         'is_cancellation',
         'sort_order',
-        'is_active'
+        'is_active',
+        'allows_editing',
     ]
 
     autocomplete_fields = ['status']
@@ -229,11 +228,6 @@ class DocumentTypeStatusInline(admin.TabularInline):
         qs = super().get_queryset(request)
         return qs.select_related('status').order_by('sort_order', 'status__name')
 
-    def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        """Филтрирай статусите - показвай само активни"""
-        if db_field.name == "status":
-            kwargs["queryset"] = DocumentStatus.objects.filter(is_active=True).order_by('name')
-        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
 # =================================================================

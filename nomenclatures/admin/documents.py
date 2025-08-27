@@ -81,7 +81,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
             'fields': (
                 'affects_inventory',
                 'inventory_direction',
-                'auto_create_movements',
+
 
             )
         }),
