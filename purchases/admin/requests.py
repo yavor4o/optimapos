@@ -91,7 +91,7 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                 'title': 'Create Purchase Request via Workflow',
                 'locations': InventoryLocation.objects.filter(is_active=True),
                 'suppliers': Supplier.objects.filter(is_active=True),
-                'products': Product.objects.filter(is_active=True)[:100],  # Limit за performance
+                'products': Product.objects.purchasable()[:100],  # Use purchasable() method for active products
                 'units': UnitOfMeasure.objects.filter(is_active=True),
                 'priorities': PurchaseRequest._meta.get_field('priority').choices,
                 'opts': self.model._meta,
@@ -120,12 +120,15 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
                             try:
                                 product = Product.objects.get(pk=line['product_id'])
                                 unit = UnitOfMeasure.objects.get(pk=line['unit_id']) if line.get('unit_id') else None
+                                estimated_price = Decimal(str(line['estimated_price'])) if line.get(
+                                    'estimated_price') else None
 
                                 lines_data.append({
                                     'product': product,
                                     'requested_quantity': Decimal(str(line['quantity'])),
+                                    'unit': unit,
+                                    'estimated_price': estimated_price,
                                     'notes': line.get('notes', ''),
-                                    'unit': unit
                                 })
                             except (Product.DoesNotExist, UnitOfMeasure.DoesNotExist, ValueError):
                                 continue
@@ -178,12 +181,20 @@ class PurchaseRequestAdmin(admin.ModelAdmin):
             data = {
                 'code': product.code,
                 'name': product.name,
-                'base_unit_id': product.base_unit.pk if hasattr(product, 'base_unit') and product.base_unit else None,
-                'base_unit_name': product.base_unit.name if hasattr(product,
-                                                                    'base_unit') and product.base_unit else None,
-                'cost_price': str(product.cost_price) if hasattr(product,
-                                                                 'cost_price') and product.cost_price else None,
+                'base_unit_id': product.base_unit.pk if product.base_unit else None,
+                'base_unit_name': product.base_unit.name if product.base_unit else None,
             }
+
+            # Try to get cost price - check various possible attributes
+            cost_price = None
+            for attr in ['cost_price', 'last_purchase_cost', 'avg_cost']:
+                if hasattr(product, attr):
+                    value = getattr(product, attr)
+                    if value is not None:
+                        cost_price = str(value)
+                        break
+
+            data['cost_price'] = cost_price
             return JsonResponse(data)
         except Product.DoesNotExist:
             return JsonResponse({'error': 'Product not found'})
