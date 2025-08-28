@@ -189,14 +189,21 @@ class DocumentQuery:
             if document.document_type.requires_approval:
                 # === APPROVAL WORKFLOW ACTIONS ===
                 try:
-                    from ..approval_service import ApprovalService
-                    transitions = ApprovalService.get_available_transitions(document, user)
+
+                    from .. import ApprovalService
+                    transitions_result = ApprovalService.get_available_transitions(document, user)
+                    transitions = []
+
+                    if transitions_result.ok:
+                        transitions = transitions_result.data.get('transitions', [])
 
                     for trans in transitions:
+
+
                         actions.append({
                             'action': 'transition',
                             'status': trans['to_status'],
-                            'label': trans['label'],
+                            'label': trans.get('label', trans.get('to_status_name', trans.get('to_status', 'Unknown'))),
                             'can_perform': True,
                             'requires_approval': True,
                             'button_style': DocumentQuery._get_button_style(trans['to_status']),

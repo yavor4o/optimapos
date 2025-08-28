@@ -440,8 +440,9 @@ class PurchaseRequestService:
                 summary['can_edit'] = can_edit_result.data.get('can_edit', False) if can_edit_result.ok else False
 
                 # Available actions САМО през DocumentService
-                actions_result = DocumentService.get_available_actions(request, user)
-                summary['available_actions'] = actions_result if isinstance(actions_result, list) else []
+
+                available_actions = DocumentService.get_available_actions(request, user)
+                summary['available_actions'] = available_actions or []
 
             except ImportError:
                 summary['can_edit'] = False
