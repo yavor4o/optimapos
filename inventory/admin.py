@@ -101,21 +101,21 @@ class InventoryLocationAdmin(admin.ModelAdmin):
     fieldsets = (
         (_('Basic Information'), {
             'fields': (
-                'code', 'name', 'location_type', 'description',
+                'code', 'name', 'location_type',
                 'is_active'
             )
         }),
         (_('Batch Tracking Settings'), {
             'fields': (
-                'batch_tracking_mode', 'batch_expiry_tracking',
-                'batch_tracking_info'
+                'batch_tracking_mode',
+
             ),
             'classes': ('collapse',)
         }),
         (_('Stock Management'), {
             'fields': (
-                'allow_negative_stock', 'enable_cycle_counting',
-                'auto_reorder_enabled'
+                'allow_negative_stock',
+
             )
         }),
         (_('Contact Information'), {

@@ -1,0 +1,286 @@
+{% extends "admin/base_site.html" %}
+{% load admin_urls static admin_list %}
+
+{% block title %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block extrahead %}
+    {{ block.super }}
+    <script src="{% url 'admin:jsi18n' %}"></script>
+    <style>
+        .workflow-form {
+            max-width: 1000px;
+        }
+        .form-row {
+            margin-bottom: 15px;
+        }
+        .form-row label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-row input, .form-row select, .form-row textarea {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .lines-section {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        .line-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: end;
+        }
+        .line-item .field {
+            flex: 1;
+        }
+        .line-item .field.small {
+            flex: 0.5;
+        }
+        .line-item .actions {
+            flex: 0.2;
+        }
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-primary {
+            background-color: #417690;
+            color: white;
+        }
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        .product-info {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 2px;
+        }
+    </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label='purchases' %}">Purchases</a>
+    &rsaquo; <a href="{% url 'admin:purchases_purchaserequest_changelist' %}">Purchase requests</a>
+    &rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="workflow-form">
+    <h1>{{ title }}</h1>
+    
+    <form method="post" id="workflow-form">
+        {% csrf_token %}
+        
+        <!-- Basic Fields -->
+        <fieldset>
+            <legend>Request Details</legend>
+            
+            <div class="form-row">
+                <label for="location">Location *</label>
+                <select name="location" id="location" required>
+                    <option value="">Select location...</option>
+                    {% for location in locations %}
+                        <option value="{{ location.pk }}">{{ location.code }} - {{ location.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-row">
+                <label for="supplier">Supplier (Optional)</label>
+                <select name="supplier" id="supplier">
+                    <option value="">No specific supplier</option>
+                    {% for supplier in suppliers %}
+                        <option value="{{ supplier.pk }}">{{ supplier.code }} - {{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-row">
+                <label for="priority">Priority</label>
+                <select name="priority" id="priority">
+                    {% for value, label in priorities %}
+                        <option value="{{ value }}"{% if value == 'normal' %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="form-row">
+                <label for="required_by_date">Required By Date</label>
+                <input type="date" name="required_by_date" id="required_by_date">
+            </div>
+            
+            <div class="form-row">
+                <label for="notes">Notes</label>
+                <textarea name="notes" id="notes" rows="3"></textarea>
+            </div>
+        </fieldset>
+        
+        <!-- Lines Section -->
+        <div class="lines-section">
+            <h3>Request Lines</h3>
+            <div id="lines-container"></div>
+            <button type="button" class="btn btn-success" onclick="addLine()">Add Line</button>
+        </div>
+        
+        <!-- Hidden field for lines data -->
+        <input type="hidden" name="lines_data" id="lines-data">
+        
+        <!-- Submit Buttons -->
+        <div class="form-row" style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">Create Purchase Request</button>
+            <a href="{% url 'admin:purchases_purchaserequest_changelist' %}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+let lineCounter = 0;
+const productsData = {{ products|safe }};
+const unitsData = {{ units|safe }};
+
+// Line template
+function createLineHTML(index) {
+    return `
+        <div class="line-item" data-index="${index}">
+            <div class="field">
+                <label>Product *</label>
+                <select name="lines[${index}][product_id]" onchange="updateProductInfo(${index})" required>
+                    <option value="">Select product...</option>
+                    {% for product in products %}
+                        <option value="{{ product.pk }}">{{ product.code }} - {{ product.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="product-info" id="product-info-${index}"></div>
+            </div>
+            <div class="field small">
+                <label>Quantity *</label>
+                <input type="number" name="lines[${index}][quantity]" step="0.001" min="0.001" required>
+            </div>
+            <div class="field small">
+                <label>Unit</label>
+                <select name="lines[${index}][unit_id]">
+                    <option value="">Auto</option>
+                    {% for unit in units %}
+                        <option value="{{ unit.pk }}">{{ unit.code }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label>Notes</label>
+                <input type="text" name="lines[${index}][notes]">
+            </div>
+            <div class="actions">
+                <button type="button" class="btn btn-danger" onclick="removeLine(${index})">Remove</button>
+            </div>
+        </div>
+    `;
+}
+
+function addLine() {
+    const container = document.getElementById('lines-container');
+    const lineHTML = createLineHTML(lineCounter);
+    container.insertAdjacentHTML('beforeend', lineHTML);
+    lineCounter++;
+}
+
+function removeLine(index) {
+    const line = document.querySelector(`.line-item[data-index="${index}"]`);
+    if (line) {
+        line.remove();
+    }
+}
+
+function updateProductInfo(lineIndex) {
+    const select = document.querySelector(`select[name="lines[${lineIndex}][product_id]"]`);
+    const infoDiv = document.getElementById(`product-info-${lineIndex}`);
+    const unitSelect = document.querySelector(`select[name="lines[${lineIndex}][unit_id]"]`);
+    
+    if (!select.value) {
+        infoDiv.innerHTML = '';
+        return;
+    }
+    
+    // AJAX call to get product info
+    fetch(`{% url 'admin:purchases_purchaserequest_ajax_product' %}?product_id=${select.value}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                infoDiv.innerHTML = `<span style="color: red;">${data.error}</span>`;
+            } else {
+                let info = `Code: ${data.code}`;
+                if (data.cost_price) {
+                    info += ` | Est. Price: ${data.cost_price}`;
+                }
+                infoDiv.innerHTML = info;
+                
+                // Auto-select base unit
+                if (data.base_unit_id && unitSelect) {
+                    unitSelect.value = data.base_unit_id;
+                }
+            }
+        })
+        .catch(error => {
+            infoDiv.innerHTML = `<span style="color: red;">Error loading product info</span>`;
+        });
+}
+
+// Form submission
+document.getElementById('workflow-form').addEventListener('submit', function(e) {
+    // Collect lines data
+    const lines = [];
+    document.querySelectorAll('.line-item').forEach(line => {
+        const index = line.dataset.index;
+        const productId = line.querySelector(`select[name="lines[${index}][product_id]"]`).value;
+        const quantity = line.querySelector(`input[name="lines[${index}][quantity]"]`).value;
+        const unitId = line.querySelector(`select[name="lines[${index}][unit_id]"]`).value;
+        const notes = line.querySelector(`input[name="lines[${index}][notes]"]`).value;
+        
+        if (productId && quantity) {
+            lines.push({
+                product_id: productId,
+                quantity: quantity,
+                unit_id: unitId || null,
+                notes: notes || ''
+            });
+        }
+    });
+    
+    // Set lines data
+    document.getElementById('lines-data').value = JSON.stringify(lines);
+    
+    // Validate
+    if (lines.length === 0) {
+        alert('Please add at least one line item');
+        e.preventDefault();
+        return false;
+    }
+});
+
+// Add initial line
+document.addEventListener('DOMContentLoaded', function() {
+    addLine();
+});
+</script>
+
+{% endblock %}

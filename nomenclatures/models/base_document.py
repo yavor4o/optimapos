@@ -374,7 +374,18 @@ class BaseDocument(models.Model):
             self._validate_document_type_location_compatibility()
 
     def save(self, *args, **kwargs):
-        # Auto-generate document number ако липсва
+
+        if self.location and not self.location_content_type:
+            from django.contrib.contenttypes.models import ContentType
+            self.location_content_type = ContentType.objects.get_for_model(self.location)
+            self.location_object_id = self.location.pk
+
+            # Автоматично попълни GenericFK за partner
+        if hasattr(self, 'partner') and self.partner and not self.partner_content_type:
+            from django.contrib.contenttypes.models import ContentType
+            self.partner_content_type = ContentType.objects.get_for_model(self.partner)
+            self.partner_object_id = self.partner.pk
+
         if not self.document_number:
             try:
 

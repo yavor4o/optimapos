@@ -233,5 +233,4 @@ __all__ = [
     'supports_inventory',
     'get_location_info',
     'format_location_display',
-    'is_location_compatible',  # backward compatibility
 ]

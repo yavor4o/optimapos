@@ -1,5 +1,7 @@
 # nomenclatures/admin/numbering.py - ПРАВИЛЕН АДМИН КОД
 from django.contrib import admin, messages
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
@@ -388,70 +390,63 @@ if HAS_NUMBERING_MODELS:
 
     @admin.register(LocationNumberingAssignment)
     class LocationNumberingAssignmentAdmin(admin.ModelAdmin):
-        """Админ за връзки location-numbering"""
-
         list_display = [
-            'location',
+            'get_location',
             'numbering_config',
             'document_type_display',
-            'series_display',
-            'is_active_badge',
+            'is_active',
             'assigned_by',
             'assigned_at'
         ]
 
-        list_filter = [
-            'is_active',
-            'numbering_config__document_type',
-            'numbering_config__numbering_type',
-            'assigned_at'
-        ]
+        # ПРЕМАХВАМЕ raw_id_fields за GenericForeignKey
+        # raw_id_fields = ['location_content_type', 'numbering_config', 'assigned_by']
 
-        search_fields = [
-            'location__name',
-            'numbering_config__name',
-            'numbering_config__document_type__name'
-        ]
+        # Правилно - само за обикновени ForeignKey
+        raw_id_fields = ['numbering_config', 'assigned_by']
 
-        readonly_fields = [
-            'assigned_at'
-        ]
+        readonly_fields = ['assigned_at']
 
-        raw_id_fields = ['location_content_type', 'numbering_config', 'assigned_by']
+        fieldsets = (
+            ('Assignment', {
+                'fields': ('numbering_config', 'is_active')
+            }),
+            ('Location (Optional)', {
+                'fields': ('location_content_type', 'location_object_id'),
+                'description': 'Leave both empty for global numbering'
+            }),
+            ('Metadata', {
+                'fields': ('assigned_by', 'assigned_at'),
+                'classes': ('collapse',)
+            })
+        )
 
-        date_hierarchy = 'assigned_at'
+        def get_location(self, obj):
+            """Показва location (GenericForeignKey)"""
+            if obj.location:
+                return str(obj.location)
+            return '-'
+
+        get_location.short_description = _('Location')
 
         def document_type_display(self, obj):
             """Показва типа документ"""
             return obj.numbering_config.document_type.name
 
         document_type_display.short_description = _('Document Type')
-        document_type_display.admin_order_field = 'numbering_config__document_type__name'
 
-        def series_display(self, obj):
-            """Показва серията"""
-            config = obj.numbering_config
-            if config.series_name:
-                return f"({config.series_number}) {config.series_name}"
-            return f"({config.series_number})"
-
-        series_display.short_description = _('Series')
-
-        def is_active_badge(self, obj):
-            """Показва дали е активно"""
-            if obj.is_active:
-                return format_html('<span style="color: #28a745;">✅ Active</span>')
-            else:
-                return format_html('<span style="color: #dc3545;">❌ Inactive</span>')
-
-        is_active_badge.short_description = _('Status')
-        is_active_badge.admin_order_field = 'is_active'
-
-        def save_model(self, request, obj, form, change):
-            """Auto-set assigned_by to current user if not set"""
-            if not change:  # Creating new
-                obj.assigned_by = request.user
-            super().save_model(request, obj, form, change)
+        def formfield_for_foreignkey(self, db_field, request, **kwargs):
+            if db_field.name == "location_content_type":
+                # Ограничаваме типовете - БЕЗ null и blank!
+                kwargs["queryset"] = ContentType.objects.filter(
+                    models.Q(app_label='inventory', model='inventorylocation') |
+                    models.Q(app_label='sales', model='onlinestore')
+                )
+                # Премахнете тези редове:
+                # kwargs["blank"] = True  # ГРЕШКА!
+                # kwargs["null"] = True   # ГРЕШКА!
+                kwargs["required"] = False  # Това е правилното за form field
+            return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
     # =================================================================
