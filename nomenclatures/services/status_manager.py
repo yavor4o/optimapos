@@ -18,7 +18,7 @@ import logging
 import json
 from django.db import transaction
 from core.utils.result import Result
-from .validator import DocumentValidator
+from nomenclatures.services.validator import DocumentValidator
 
 User = get_user_model()
 logger = logging.getLogger(__name__)

@@ -10,9 +10,8 @@ Document Query - queries и информационни методи
 - _get_button_style()
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict
 from django.contrib.auth import get_user_model
-from django.db import models
 import logging
 
 User = get_user_model()
@@ -36,7 +35,7 @@ class DocumentQuery:
 
         try:
             from ...models.approvals import ApprovalRule
-            from .creator import DocumentCreator
+            from nomenclatures.services.creator import DocumentCreator
 
             pending_statuses = set()
 
@@ -75,7 +74,7 @@ class DocumentQuery:
         try:
             from ...models.approvals import ApprovalRule
             from ...models.statuses import DocumentTypeStatus
-            from .creator import DocumentCreator
+            from nomenclatures.services.creator import DocumentCreator
 
             processing_statuses = set()
 
@@ -151,7 +150,7 @@ class DocumentQuery:
 
         try:
             from ...models.statuses import DocumentTypeStatus
-            from .creator import DocumentCreator
+            from nomenclatures.services.creator import DocumentCreator
 
             doc_type = DocumentCreator._get_document_type_for_model(queryset.model)
             if doc_type:
@@ -215,7 +214,7 @@ class DocumentQuery:
 
             else:
                 # === SIMPLE WORKFLOW ACTIONS ===
-                from .status_manager import StatusManager
+                from nomenclatures.services.status_manager import StatusManager
                 available_statuses = StatusManager._get_simple_next_statuses(document)
 
                 for status in available_statuses:
@@ -230,7 +229,7 @@ class DocumentQuery:
                     })
 
             # Add edit action if allowed
-            from .validator import DocumentValidator
+            from nomenclatures.services.validator import DocumentValidator
             can_edit, reason = DocumentValidator.can_edit_document(document, user)
             if can_edit:
                 actions.append({

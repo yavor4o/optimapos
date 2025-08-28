@@ -6,6 +6,10 @@ Nomenclatures services - Clean imports
 # Main services
 
 from .approval_service import ApprovalService
+from .creator import DocumentCreator
+from .query import DocumentQuery
+from .status_manager import StatusManager
+from .validator import DocumentValidator
 from .vat_calculation_service import VATCalculationService
 
 # New services
@@ -19,6 +23,10 @@ __all__ = [
 
     'ApprovalService',
     'VATCalculationService',
+    'DocumentCreator',
+    'StatusManager',
+    'DocumentValidator',
+    'DocumentQuery'
 ]
 
 # Add numbering if available
