@@ -4,7 +4,7 @@ Nomenclatures services - Clean imports
 """
 
 # Main services
-from .document_service import DocumentService
+
 from .approval_service import ApprovalService
 from .vat_calculation_service import VATCalculationService
 
@@ -16,7 +16,7 @@ except ImportError:
 
 # Export all
 __all__ = [
-    'DocumentService',
+
     'ApprovalService',
     'VATCalculationService',
 ]
