@@ -367,11 +367,10 @@ class VATCalculationService:
         }
 
         if hasattr(document, 'lines'):
-            # ПОПРАВЕНО: Използвай правилните полета
             lines_data = document.lines.aggregate(
-                sum_subtotal=Sum('subtotal'),  # ✅ беше 'net_amount'
-                sum_vat=Sum('vat_total'),  # ✅ беше 'vat_amount'
-                sum_discount=Sum('discount_total')  # ✅ беше 'discount_amount'
+                sum_subtotal=Sum('net_amount'),  # ПРАВИЛНО
+                sum_vat=Sum('vat_amount'),  # ПРАВИЛНО
+                sum_discount=Sum('discount_amount')  # ПРАВИЛНО
             )
 
             totals['subtotal'] = lines_data['sum_subtotal'] or Decimal('0')

@@ -69,8 +69,7 @@ class DocumentCreator:
 
             # 4. Audit fields
             if user:
-                if not instance.created_by:
-                    instance.created_by = user
+                instance.created_by = user
                 instance.updated_by = user
 
             # 5. Запази

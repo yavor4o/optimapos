@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from nomenclatures.models import BaseDocument, BaseDocumentLine
-from nomenclatures.mixins import FinancialMixin
+from nomenclatures.mixins import FinancialMixin, FinancialLineMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -286,7 +286,7 @@ class PurchaseRequestLineManager(models.Manager):
         )
 
 
-class PurchaseRequestLine(BaseDocumentLine):
+class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
     """
     Purchase Request Line - Simple data model
 

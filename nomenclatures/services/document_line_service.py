@@ -135,8 +135,14 @@ class DocumentLineService:
                     errors.append(f'Line {line.line_number}: Invalid quantity {quantity}')
 
                 # Валидация на продукт
-                if not line.product or not line.product.is_active:
-                    errors.append(f'Line {line.line_number}: Invalid or inactive product')
+                if not line.product:
+                    errors.append(f'Line {line.line_number}: Product is required')
+                elif hasattr(line.product, 'lifecycle_status'):
+                    if line.product.lifecycle_status != 'ACTIVE':
+                        errors.append(f'Line {line.line_number}: Product is not active')
+                elif hasattr(line.product, 'is_active'):
+                    if not line.product.is_active:
+                        errors.append(f'Line {line.line_number}: Product is not active')
 
             if errors:
                 return Result.error('LINE_VALIDATION_FAILED',
