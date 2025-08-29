@@ -19,7 +19,7 @@ class DocumentLineService:
 
     @staticmethod
     @transaction.atomic
-    def add_line(document, product, quantity: Decimal, **kwargs) -> Result:
+    def add_line(document, product, quantity: Decimal, user=None, **kwargs) -> Result:
         """
         Добавя нов ред към документ
 
@@ -60,6 +60,16 @@ class DocumentLineService:
             # Добави количеството според типа ред
             quantity_field = DocumentLineService._get_quantity_field(line_class)
             line_data[quantity_field] = quantity
+            
+            # Добави unit ако не е подаден (използва base_unit от продукта)
+            if 'unit' not in line_data and hasattr(product, 'base_unit') and product.base_unit:
+                line_data['unit'] = product.base_unit
+
+            # Map price fields според типа line
+            if 'unit_price' in kwargs:
+                price_field = DocumentLineService._get_price_field(line_class)
+                if price_field and price_field != 'unit_price':
+                    line_data[price_field] = kwargs.pop('unit_price')
 
             # Създай реда
             line = line_class.objects.create(**line_data)
@@ -77,7 +87,7 @@ class DocumentLineService:
 
     @staticmethod
     @transaction.atomic
-    def remove_line(document, line_number: int) -> Result:
+    def remove_line(document, line_number: int, user=None) -> Result:
         """Премахва ред от документ"""
         try:
             line_class = DocumentLineService._get_line_class(document)
@@ -95,7 +105,7 @@ class DocumentLineService:
                                     f'Line {line_number} not found in document {document.document_number}')
 
             # Check permissions
-            if not DocumentLineService._can_modify_line(document, line):
+            if not DocumentLineService._can_modify_line(document, line, user):
                 return Result.error('LINE_MODIFICATION_DENIED',
                                     'Cannot modify lines in current document status')
 
@@ -193,15 +203,31 @@ class DocumentLineService:
 
     @staticmethod
     def _get_quantity_field(line_class):
-        """Намира quantity field за Line class"""
-        if hasattr(line_class, 'requested_quantity'):
+        """Намира quantity field за Line class - FIXED: Check actual fields, not properties"""
+        # Check for actual model fields, not properties
+        field_names = [field.name for field in line_class._meta.fields]
+        
+        if 'requested_quantity' in field_names:
             return 'requested_quantity'
-        elif hasattr(line_class, 'ordered_quantity'):
+        elif 'ordered_quantity' in field_names:
             return 'ordered_quantity'
-        elif hasattr(line_class, 'received_quantity'):
+        elif 'received_quantity' in field_names:
             return 'received_quantity'
         else:
             return 'quantity'  # fallback
+
+    @staticmethod
+    def _get_price_field(line_class):
+        """Намира primary price field за Line class"""
+        line_class_name = line_class.__name__
+        if 'Request' in line_class_name:
+            return 'estimated_price'
+        elif 'Order' in line_class_name:
+            return 'unit_price'
+        elif 'Delivery' in line_class_name:
+            return 'unit_price'
+        else:
+            return 'unit_price'  # fallback
 
     @staticmethod
     def _get_next_line_number(document) -> int:
@@ -214,15 +240,21 @@ class DocumentLineService:
         return (last_line.line_number + 1) if last_line else 1
 
     @staticmethod
-    def _can_modify_line(document, line) -> bool:
+    def _can_modify_line(document, line, user=None) -> bool:
         """Проверява дали може да се модифицира ред"""
-        # Използва DocumentService за проверка на permissions
+        # Use convenience function with proper Result handling
         try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.can_edit_document(document, None)  # TODO: добави user
+            from nomenclatures.services import can_edit_document
+            result = can_edit_document(document, user)
             return result.data.get('can_edit', False) if result.ok else False
-        except:
-            return document.status in ['draft', 'pending']
+        except ImportError:
+            # FIXED: Use dynamic status resolution instead of hardcoded
+            try:
+                from ._status_resolver import can_edit_in_status
+                return can_edit_in_status(document)
+            except Exception:
+                # Emergency fallback - more permissive
+                return document.status in ['draft', 'pending', 'created', '']
 
     @staticmethod
     @transaction.atomic
@@ -241,22 +273,69 @@ class DocumentLineService:
     @staticmethod
     def _post_line_creation(document, line):
         """Post-processing след създаване на ред"""
-        # Trigger document recalculations ако има financial data
+        
+        # 1. Calculate line-level VAT/financial fields first
+        try:
+            from .vat_calculation_service import VATCalculationService
+            
+            # Get entered price from line
+            entered_price = (
+                getattr(line, 'entered_price', None) or
+                getattr(line, 'estimated_price', None) or  
+                getattr(line, 'unit_price', None)
+            )
+            
+            if entered_price and entered_price > 0:
+                from decimal import Decimal
+                # Ensure entered_price is Decimal
+                if not isinstance(entered_price, Decimal):
+                    entered_price = Decimal(str(entered_price))
+                    
+                line_vat_result = VATCalculationService.calculate_line_vat(
+                    line=line, 
+                    entered_price=entered_price, 
+                    save=True
+                )
+                if not line_vat_result.ok:
+                    logger.warning(f"Line VAT calculation failed: {line_vat_result.msg}")
+                    
+        except ImportError:
+            logger.info("VATCalculationService not available - skipping line VAT calculations")
+        except Exception as e:
+            logger.warning(f"Failed to calculate line VAT: {e}")
+        
+        # 2. Then recalculate document totals
         if hasattr(document, 'recalculate_lines'):
             try:
-                document.recalculate_lines()
+                result = document.recalculate_lines()
+                if hasattr(result, 'ok') and not result.ok:
+                    logger.warning(f"Failed to recalculate document after line creation: {result.msg}")
             except Exception as e:
                 logger.warning(f"Failed to recalculate document after line creation: {e}")
+        else:
+            # Fallback - trigger save to update timestamps
+            try:
+                document.save(update_fields=['updated_at'])
+            except Exception as e:
+                logger.warning(f"Failed to update document after line creation: {e}")
 
     @staticmethod
     def _post_line_modification(document):
         """Post-processing след модификация на редове"""
-        # Същото като _post_line_creation но без line parameter
+        # Use model's recalculate_lines method (which delegates to DocumentService)
         if hasattr(document, 'recalculate_lines'):
             try:
-                document.recalculate_lines()
+                result = document.recalculate_lines()
+                if hasattr(result, 'ok') and not result.ok:
+                    logger.warning(f"Failed to recalculate document after line modification: {result.msg}")
             except Exception as e:
                 logger.warning(f"Failed to recalculate document after line modification: {e}")
+        else:
+            # Fallback - trigger save to update timestamps
+            try:
+                document.save(update_fields=['updated_at'])
+            except Exception as e:
+                logger.warning(f"Failed to update document after line modification: {e}")
 
 
 # =====================

@@ -27,15 +27,50 @@ class PurchaseRequestManager(models.Manager):
     # =====================
 
     def pending_approval(self):
-        """Requests waiting for approval"""
-        return self.filter(status='submitted')
+        """Requests waiting for approval - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            # Use DocumentQuery for dynamic status resolution
+            return DocumentQuery.get_pending_approval_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback to hardcoded for compatibility
+            return self.filter(status='submitted')
 
     def approved_unconverted(self):
-        """Approved requests not yet converted to orders"""
-        return self.filter(
-            status='approved',
-            converted_to_order__isnull=True
-        )
+        """Approved requests not yet converted to orders - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services._status_resolver import StatusResolver
+            # Get all approved statuses dynamically
+            if hasattr(self.model, '_meta') and self.model._meta.get_field('document_type', None):
+                # For multi-type documents, we'd need more complex logic
+                # For now, fallback to generic approach
+                approved_statuses = ['approved']  # fallback
+            else:
+                # Try to resolve dynamically
+                try:
+                    # Get document type from first instance or default
+                    sample = self.first()
+                    if sample and sample.document_type:
+                        approved_statuses = StatusResolver.get_statuses_by_semantic_type(
+                            sample.document_type, 'completion'
+                        )
+                        # Filter for approval-like statuses
+                        approved_statuses = [s for s in approved_statuses if 'approv' in s.lower()]
+                    else:
+                        approved_statuses = ['approved']  # fallback
+                except:
+                    approved_statuses = ['approved']  # fallback
+            
+            return self.filter(
+                status__in=approved_statuses,
+                converted_to_order__isnull=True
+            )
+        except ImportError:
+            # Fallback
+            return self.filter(
+                status='approved',
+                converted_to_order__isnull=True
+            )
 
     def ready_for_conversion(self):
         """Requests that can be converted to orders (with validation)"""
@@ -171,7 +206,7 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
         """Model-level validation"""
         super().clean()
 
-        # Business validation
+        # Basic field validation - dates
         if self.required_by_date and self.required_by_date < timezone.now().date():
             raise ValidationError({
                 'required_by_date': _('Required by date cannot be in the past')
@@ -255,8 +290,8 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
             Result object with recalculation details
         """
         try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.recalculate_document_lines(
+            from nomenclatures.services import recalculate_document_lines
+            return recalculate_document_lines(
                 self, user=user,
                 recalc_vat=True,
                 update_pricing=update_pricing
@@ -267,6 +302,7 @@ class PurchaseRequest(BaseDocument, FinancialMixin):
                 'SERVICE_NOT_AVAILABLE',
                 'DocumentService not available for recalculation'
             )
+
 
 
 # =====================

@@ -84,16 +84,47 @@ class DocumentManager(models.Manager):
         return self.filter(status=status)
 
     def drafts(self):
-        """Draft documents"""
-        return self.filter(status__in=['draft', ''])
+        """Draft documents - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services._status_resolver import StatusResolver
+            # Get all document types in queryset and find their draft statuses
+            document_types = self.values_list('document_type', flat=True).distinct()
+            draft_statuses = set()
+            for doc_type_id in document_types:
+                if doc_type_id:
+                    try:
+                        from nomenclatures.models import DocumentType
+                        doc_type = DocumentType.objects.get(pk=doc_type_id)
+                        initial_status = StatusResolver.get_initial_status(doc_type)
+                        if initial_status:
+                            draft_statuses.add(initial_status)
+                    except:
+                        continue
+            
+            # Add empty status as draft
+            draft_statuses.add('')
+            return self.filter(status__in=list(draft_statuses))
+        except ImportError:
+            # Fallback
+            return self.filter(status__in=['draft', ''])
 
     def submitted(self):
-        """Submitted documents"""
-        return self.filter(status='submitted')
+        """Submitted documents - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            return DocumentQuery.get_pending_approval_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback
+            return self.filter(status='submitted')
 
     def approved(self):
-        """Approved documents"""
-        return self.filter(status='approved')
+        """Approved documents - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            return DocumentQuery.get_ready_for_processing_documents(queryset=self.get_queryset())
+        except ImportError:
+            # Fallback
+            return self.filter(status='approved')
 
 
 class LineManager(models.Manager):
@@ -369,9 +400,8 @@ class BaseDocument(models.Model):
                     'location': f'Location must implement ILocation protocol: {e}'
                 })
 
-        # Валидирай че document_type съответства на location rules
-        if self.document_type and self.location:
-            self._validate_document_type_location_compatibility()
+        # NOTE: Document type <-> location compatibility business rules
+        # are handled in DocumentValidator._validate_business_rules()
 
     def save(self, *args, **kwargs):
 
@@ -411,14 +441,9 @@ class BaseDocument(models.Model):
     # READ-ONLY HELPERS
     # =====================
 
-    def _validate_document_type_location_compatibility(self):
-        """Провери дали document_type е compatiblen с location type"""
-        # Пример: Purchase документи могат да използват само InventoryLocation
-        if hasattr(self, '_meta') and 'purchase' in self._meta.app_label.lower():
-            if not self.get_inventory_location():
-                raise ValidationError({
-                    'location': _('Purchase documents require InventoryLocation')
-                })
+    # NOTE: _validate_document_type_location_compatibility() moved to
+    # DocumentValidator._validate_document_type_location_compatibility()
+    # This is business logic, not model validation
 
     def get_document_prefix(self):
         """Get document prefix from DocumentType or fallback"""
@@ -449,191 +474,32 @@ class BaseDocument(models.Model):
         }
         return type_key_map.get(model_name, 'document')
 
-    # =====================
-    # WORKFLOW AND STATUS METHODS
-    # =====================
 
-    def can_edit(self, user=None):
-        """
-        ✅ FIXED: Check if document can be edited - RESULT-COMPATIBLE
-
-        FIXED: Правилно извлича от Result object
-        """
-        try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.can_edit_document(self, user)
-            return result.data.get('can_edit', False) if result.ok else False
-        except Exception as e:
-            logger.warning(f"DocumentService failed, using enhanced fallback: {e}")
-
-            # ✅ ENHANCED FALLBACK - respects configuration instead of hardcoded lists
-            try:
-                from nomenclatures.models import DocumentTypeStatus
-
-                if not self.document_type:
-                    return self.status in ['draft', 'pending', '']
-
-                status_config = DocumentTypeStatus.objects.filter(
-                    document_type=self.document_type,
-                    status__code=self.status,
-                    is_active=True
-                ).first()
-
-                if status_config:
-                    # ✅ USE CONFIGURATION-BASED DECISION
-                    base_allows = status_config.allows_editing
-
-                    # Check final document rules
-                    if status_config.is_final:
-                        return base_allows and self.document_type.allow_edit_completed
-
-                    return base_allows
-                else:
-                    logger.warning(f"No status configuration found for {self.document_type.name}.{self.status}")
-
-            except Exception as fallback_error:
-                logger.error(f"Enhanced fallback failed: {fallback_error}")
-
-            # ✅ ULTIMATE FALLBACK - more permissive than hardcoded
-            return self.status in ['draft', 'pending', 'submitted', '']
-
-    def can_delete(self, user=None):
-        """
-        ✅ FIXED: Check if document can be deleted - RESULT-COMPATIBLE
-
-        FIXED: Правилно извлича от Result object
-        """
-        try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.can_delete_document(self, user)
-            return result.data.get('can_delete', False) if result.ok else False
-        except Exception as e:
-            logger.warning(f"DocumentService failed, using enhanced fallback: {e}")
-
-            # ✅ ENHANCED FALLBACK
-            try:
-                from nomenclatures.models import DocumentTypeStatus
-
-                if not self.document_type:
-                    return (self.status in ['draft', ''] and
-                            not (hasattr(self, 'lines') and self.lines.exists()))
-
-                status_config = DocumentTypeStatus.objects.filter(
-                    document_type=self.document_type,
-                    status__code=self.status,
-                    is_active=True
-                ).first()
-
-                if status_config:
-                    # ✅ USE CONFIGURATION
-                    if not status_config.allows_deletion:
-                        return False
-
-                    # Final documents can't be deleted (business rule)
-                    if status_config.is_final:
-                        return False
-
-                    # Check for dependent data
-                    if hasattr(self, 'lines') and self.lines.exists():
-                        return False
-
-                    return True
-                else:
-                    logger.warning(f"No status configuration found for {self.document_type.name}.{self.status}")
-
-            except Exception as fallback_error:
-                logger.error(f"Enhanced fallback failed: {fallback_error}")
-
-            # ✅ ULTIMATE FALLBACK
-            return (self.status in ['draft', ''] and
-                    not (hasattr(self, 'lines') and self.lines.exists()))
-
-    def get_available_actions(self, user=None):
-        """
-        ✅ ENHANCED: Get available actions - USES CONFIGURATION
-        """
-        actions = []
-
-        try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.get_document_permissions(self, user)
-
-            if result.ok:
-                permissions = result.data
-
-                if permissions.get('can_edit', False):
-                    actions.append({
-                        'key': 'edit',
-                        'name': _('Edit'),
-                        'icon': 'edit',
-                        'reason': permissions.get('edit_reason', '')
-                    })
-
-                if permissions.get('can_delete', False):
-                    actions.append({
-                        'key': 'delete',
-                        'name': _('Delete'),
-                        'icon': 'trash',
-                        'reason': permissions.get('delete_reason', '')
-                    })
-
-                if permissions.get('can_transition', False):
-                    actions.append({
-                        'key': 'change_status',
-                        'name': _('Change Status'),
-                        'icon': 'arrow-right',
-                        'reason': 'Status transition available'
-                    })
-
-            return actions
-
-        except Exception as e:
-            logger.warning(f"DocumentService failed for actions, using fallback: {e}")
-
-        # ✅ FALLBACK - basic actions using enhanced can_edit/can_delete
-        if self.can_edit(user):
-            actions.append({'key': 'edit', 'name': _('Edit'), 'icon': 'edit'})
-        if self.can_delete(user):
-            actions.append({'key': 'delete', 'name': _('Delete'), 'icon': 'trash'})
-
-        return actions
-
-    def transition_to(self, new_status, user, comments=''):
-        """
-        ✅ ENHANCED: Transition to new status - USES DocumentService
-        """
-        try:
-            from nomenclatures.services import DocumentService
-            result = DocumentService.transition_document(self, new_status, user, comments)
-            return result  # Return the Result object directly
-
-        except ImportError:
-            logger.warning("DocumentService not available, using simple fallback")
-            # Simple fallback - just change status
-            old_status = self.status
-            self.status = new_status
-            if hasattr(self, 'updated_by'):
-                self.updated_by = user
-            self.save(update_fields=['status'] + (['updated_by'] if hasattr(self, 'updated_by') else []))
-
-            # Return Result-compatible object
-            from core.utils.result import Result
-            return Result.success(
-                data={'old_status': old_status, 'new_status': new_status},
-                msg=f'Status changed from {old_status} to {new_status}'
-            )
-        except Exception as e:
-            from core.utils.result import Result
-            return Result.error(
-                code='TRANSITION_ERROR',
-                msg=f'Status transition failed: {str(e)}'
-            )
 
     def __str__(self):
         partner_info = ""
         if self.partner:
             partner_info = f" ({self.get_partner_display()})"
         return f"{self.document_number or 'Draft'}{partner_info}"
+
+    def recalculate_lines(self, user=None, recalc_vat=True, update_pricing=False):
+        """
+        Recalculate document lines - delegates to DocumentService
+        """
+        try:
+            from nomenclatures.services import recalculate_document_lines
+            return recalculate_document_lines(
+                document=self,
+                user=user,
+                recalc_vat=recalc_vat,
+                update_pricing=update_pricing
+            )
+        except ImportError:
+            from core.utils.result import Result
+            return Result.error('SERVICE_NOT_AVAILABLE', 'DocumentService not available')
+        except Exception as e:
+            from core.utils.result import Result
+            return Result.error('RECALCULATION_FAILED', f'Failed to recalculate: {str(e)}')
 
 
 # =================================================================
@@ -665,7 +531,8 @@ class BaseDocumentLine(models.Model):
     unit = models.ForeignKey(
         'nomenclatures.UnitOfMeasure',
         on_delete=models.PROTECT,
-        verbose_name=_('Unit of Measure')
+        verbose_name=_('Unit of Measure'),
+        help_text=_('Unit in which quantity is measured (piece, box, kg, etc.)')
     )
 
     # =====================

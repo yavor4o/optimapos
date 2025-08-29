@@ -51,11 +51,50 @@ class DocumentValidator:
                         return Result.error('BUSINESS_RULE_VIOLATION', result.get('message', 'Business rule failed'))
                 return result
 
-            # Default: Basic validation
-            return Result.success(msg='No specific business rules')
+            # Default: Universal business validation for all documents
+            # Check document type <-> location compatibility (moved from BaseDocument.clean())
+            if document.document_type and document.location:
+                compatibility_result = DocumentValidator._validate_document_type_location_compatibility(
+                    document.document_type, document.location
+                )
+                if not compatibility_result.ok:
+                    return compatibility_result
+
+            return Result.success(msg='Universal business rules passed')
 
         except Exception as e:
             return Result.error('BUSINESS_VALIDATION_ERROR', str(e))
+
+    @staticmethod 
+    def _validate_document_type_location_compatibility(document_type, location) -> Result:
+        """
+        Validate document type <-> location compatibility
+        Moved from BaseDocument.clean() - this is business logic, not model validation
+        """
+        try:
+            from django.core.exceptions import ValidationError
+            
+            # Business rule: Purchase documents require InventoryLocation
+            if document_type and document_type.type_key and 'purchase' in document_type.type_key.lower():
+                if not (hasattr(location, '__class__') and location.__class__.__name__ == 'InventoryLocation'):
+                    return Result.error(
+                        'INCOMPATIBLE_LOCATION',
+                        'Purchase documents require InventoryLocation'
+                    )
+            
+            # Business rule: Sales documents can use OnlineStore or CustomerSite
+            if document_type and document_type.type_key and 'sale' in document_type.type_key.lower():
+                valid_location_types = ['OnlineStore', 'CustomerSite', 'InventoryLocation']
+                if location.__class__.__name__ not in valid_location_types:
+                    return Result.error(
+                        'INCOMPATIBLE_LOCATION', 
+                        f'Sales documents require {valid_location_types}'
+                    )
+            
+            return Result.success(msg='Document type and location are compatible')
+            
+        except Exception as e:
+            return Result.error('VALIDATION_ERROR', f'Location compatibility check failed: {str(e)}')
 
 
 
@@ -66,14 +105,22 @@ class DocumentValidator:
         """
         try:
 
-            target_config = DocumentTypeStatus.objects.filter(
-                document_type=document.document_type,
-                status__code=to_status,
-                is_active=True
-            ).first()
+            # FIXED: Use StatusResolver for cancellation detection
+            try:
+                from ._status_resolver import StatusResolver
+                cancellation_status = StatusResolver.get_cancellation_status(document.document_type)
+                if to_status == cancellation_status:
+                    return Result.success(msg="Cancellation allowed")
+            except Exception:
+                # Fallback to configuration check
+                target_config = DocumentTypeStatus.objects.filter(
+                    document_type=document.document_type,
+                    status__code=to_status,
+                    is_active=True
+                ).first()
 
-            if target_config and target_config.is_cancellation:
-                return Result.success(msg="Cancellation allowed")
+                if target_config and target_config.is_cancellation:
+                    return Result.success(msg="Cancellation allowed")
 
             return Result.success(msg="Simple transition allowed")
 
@@ -101,7 +148,7 @@ class DocumentValidator:
             # =====================
             # STEP 1: Find Status Configuration
             # =====================
-            from ...models import DocumentTypeStatus
+            from ..models import DocumentTypeStatus
 
             status_config = DocumentTypeStatus.objects.filter(
                 document_type=document.document_type,
@@ -170,7 +217,7 @@ class DocumentValidator:
         ✅ FINAL: CONFIGURATION-DRIVEN document deletion validation
         """
         try:
-            from ...models import DocumentTypeStatus
+            from ..models import DocumentTypeStatus
 
             # Find status configuration
             status_config = DocumentTypeStatus.objects.filter(
@@ -219,7 +266,7 @@ class DocumentValidator:
         Returns all computed permissions in one place for UI/API use
         """
         try:
-            from ...models import DocumentTypeStatus
+            from ..models import DocumentTypeStatus
 
             status_config = DocumentTypeStatus.objects.filter(
                 document_type=document.document_type,
@@ -285,16 +332,34 @@ class DocumentValidator:
         КОПИРАНО от старата версия за backward compatibility
         """
         try:
+            # FIXED: Use StatusResolver for semantic status detection
+            try:
+                from ._status_resolver import StatusResolver
+                approval_statuses = StatusResolver.get_statuses_by_semantic_type(document.document_type, 'approval')
+                is_approval_transition = to_status in approval_statuses
+            except Exception:
+                # Fallback to word matching
+                is_approval_transition = any(word in to_status.lower() for word in ['submit', 'pending', 'review'])
+                
             # Submission validation
-            if any(word in to_status.lower() for word in ['submit', 'pending', 'review']):
+            if is_approval_transition:
                 if not document.lines.exists():
                     return Result.error(
                         'NO_LINES',
                         'Cannot submit request without lines'
                     )
 
+            # FIXED: Use StatusResolver for completion detection
+            try:
+                from ._status_resolver import StatusResolver
+                final_statuses = StatusResolver.get_final_statuses(document.document_type)
+                is_completion_transition = to_status in final_statuses
+            except Exception:
+                # Fallback to word matching
+                is_completion_transition = 'complet' in to_status.lower()
+                
             # Completion validation
-            if 'complet' in to_status.lower():
+            if is_completion_transition:
                 if not document.lines.exists():
                     return Result.error(
                         'NO_LINES',
@@ -324,17 +389,35 @@ class DocumentValidator:
         НОВИ правила за PurchaseOrder
         """
         try:
+            # FIXED: Use StatusResolver for confirmation detection
+            try:
+                from ._status_resolver import StatusResolver
+                processing_statuses = StatusResolver.get_statuses_by_semantic_type(document.document_type, 'processing')
+                is_confirmation_transition = to_status in processing_statuses
+            except Exception:
+                # Fallback to word matching
+                is_confirmation_transition = 'confirm' in to_status.lower()
+                
             # Confirmation validation
-            if 'confirm' in to_status.lower():
-                if not document.supplier_confirmed:
+            if is_confirmation_transition:
+                if hasattr(document, 'supplier_confirmed') and not document.supplier_confirmed:
                     return Result.error(
                         'NOT_CONFIRMED',
                         'Supplier confirmation required'
                     )
 
+            # FIXED: Use StatusResolver for delivery status detection
+            try:
+                from ._status_resolver import StatusResolver
+                completion_statuses = StatusResolver.get_statuses_by_semantic_type(document.document_type, 'completion')
+                is_delivery_transition = to_status in completion_statuses
+            except Exception:
+                # Fallback to word matching
+                is_delivery_transition = 'deliver' in to_status.lower() or 'receiv' in to_status.lower()
+                
             # Delivery validation
-            if 'deliver' in to_status.lower() or 'receiv' in to_status.lower():
-                if not hasattr(document, 'expected_delivery_date'):
+            if is_delivery_transition:
+                if hasattr(document, 'expected_delivery_date') and not document.expected_delivery_date:
                     return Result.error(
                         'NO_DELIVERY_DATE',
                         'Expected delivery date required'
@@ -353,8 +436,18 @@ class DocumentValidator:
         НОВИ правила за DeliveryReceipt
         """
         try:
+            # FIXED: Use StatusResolver for receiving status detection
+            try:
+                from ._status_resolver import StatusResolver
+                final_statuses = StatusResolver.get_final_statuses(document.document_type)
+                movement_creating_statuses = StatusResolver.get_movement_creating_statuses(document.document_type)
+                is_receiving_transition = to_status in final_statuses or to_status in movement_creating_statuses
+            except Exception:
+                # Fallback to word matching
+                is_receiving_transition = 'receiv' in to_status.lower() or 'complet' in to_status.lower()
+                
             # Receiving validation
-            if 'receiv' in to_status.lower() or 'complet' in to_status.lower():
+            if is_receiving_transition:
                 # Check all lines have received quantities
                 if hasattr(document, 'lines'):
                     lines_without_qty = document.lines.filter(
@@ -366,6 +459,15 @@ class DocumentValidator:
                             'NO_RECEIVED_QTY',
                             f'{lines_without_qty.count()} lines without received quantity'
                         )
+                    
+                    # Quality business rules validation (moved from DeliveryLine.clean())
+                    for line in document.lines.all():
+                        if hasattr(line, 'quality_approved') and hasattr(line, 'quality_issue_type'):
+                            if line.quality_approved is False and not line.quality_issue_type:
+                                return Result.error(
+                                    'QUALITY_ISSUE_TYPE_REQUIRED',
+                                    f'Line {line.line_number}: Quality issue type required when quality is rejected'
+                                )
 
             return Result.success()
 

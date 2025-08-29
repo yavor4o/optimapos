@@ -128,27 +128,31 @@ class DocumentCreator:
     @staticmethod
     def _get_initial_status(document_type) -> str:
         """
-        Намери начален статус от DocumentTypeStatus
+        Намери начален статус ДИНАМИЧНО от конфигурацията
 
-        СЪЩАТА логика като преди - НЕ променяме
+        FIXED: Използва StatusResolver вместо hardcoded 'draft'
         """
         try:
-            from ...models.statuses import DocumentTypeStatus
-
-            initial_config = DocumentTypeStatus.objects.filter(
-                document_type=document_type,
-                is_initial=True,
-                is_active=True
-            ).first()
-
-            if initial_config:
-                return initial_config.status.code
-
-            # Fallback
-            return 'draft'
+            from ._status_resolver import StatusResolver
+            
+            initial_status = StatusResolver.get_initial_status(document_type)
+            return initial_status or 'draft'  # 'draft' само като последен fallback
 
         except Exception as e:
             logger.error(f"Error getting initial status: {e}")
+            # Emergency fallback - try to find ANY initial status
+            try:
+                from ..models.statuses import DocumentTypeStatus
+                any_initial = DocumentTypeStatus.objects.filter(
+                    document_type=document_type,
+                    is_initial=True,
+                    is_active=True
+                ).first()
+                if any_initial:
+                    return any_initial.status.code
+            except:
+                pass
+            
             return 'draft'
 
     @staticmethod
@@ -159,7 +163,7 @@ class DocumentCreator:
         СЪЩАТА логика като преди - НЕ променяме
         """
         try:
-            from ...models.documents import get_document_type_by_key
+            from ..models.documents import get_document_type_by_key
 
             # Get app and model info
             app_name = model_class._meta.app_label
@@ -192,7 +196,7 @@ class DocumentCreator:
             if not document_type:
                 return "NO_DOCTYPE"
 
-            from ..numbering_service import NumberingService
+            from .numbering_service import NumberingService
             return NumberingService.get_next_preview_number(document_type, location, user)
 
         except Exception as e:
@@ -211,7 +215,7 @@ class DocumentCreator:
             if not document_type:
                 return {'error': 'No DocumentType found'}
 
-            from ..numbering_service import NumberingService
+            from .numbering_service import NumberingService
             return NumberingService.get_numbering_info(document_type, location, user)
 
         except Exception as e:

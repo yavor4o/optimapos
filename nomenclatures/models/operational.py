@@ -74,6 +74,7 @@ class UnitOfMeasure(BaseNomenclature):
 
 
 
+
 class PaymentType(BaseNomenclature):
     """Типове плащания"""
     # Системни ключове

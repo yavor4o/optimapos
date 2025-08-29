@@ -49,14 +49,29 @@ class DocumentQuery:
                 )
                 pending_statuses.update(rules.values_list('from_status_obj__code', flat=True))
 
-            # Fallback if no rules
+            # FIXED: Use StatusResolver instead of hardcoded statuses
             if not pending_statuses:
-                pending_statuses = {'submitted', 'pending_approval', 'pending_review'}
+                try:
+                    from ._status_resolver import StatusResolver
+                    # Get approval semantic statuses
+                    approval_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'approval')
+                    pending_statuses = approval_statuses if approval_statuses else {'submitted', 'pending_approval'}
+                except Exception:
+                    pending_statuses = {'submitted', 'pending_approval', 'pending_review'}
 
             return queryset.filter(status__in=pending_statuses)
 
         except ImportError:
-            # Fallback without ApprovalRule
+            # Fallback without ApprovalRule - use basic semantic matching
+            try:
+                from ._status_resolver import StatusResolver
+                doc_type = DocumentCreator._get_document_type_for_model(queryset.model)
+                if doc_type:
+                    approval_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'approval')
+                    if approval_statuses:
+                        return queryset.filter(status__in=approval_statuses)
+            except:
+                pass
             return queryset.filter(status__in=['submitted', 'pending_approval'])
 
     @staticmethod
@@ -101,32 +116,49 @@ class DocumentQuery:
                 )
                 processing_statuses.update(type_statuses.values_list('status__code', flat=True))
 
-            # === FALLBACK BY MODEL TYPE ===
+            # FIXED: Use StatusResolver for semantic type matching instead of hardcoded
             if not processing_statuses:
-                model_name = queryset.model.__name__.lower()
-
-                if 'request' in model_name:
-                    # PurchaseRequest: approved = ready for conversion to order
-                    processing_statuses = {'approved'}
-                elif 'order' in model_name:
-                    # PurchaseOrder: confirmed = ready for delivery creation
-                    processing_statuses = {'confirmed', 'sent'}
-                elif 'delivery' in model_name or 'receipt' in model_name:
-                    # DeliveryReceipt: received = ready for completion
-                    processing_statuses = {'received', 'partial'}
-                elif 'invoice' in model_name:
-                    # Invoice: approved = ready for payment
-                    processing_statuses = {'approved', 'sent'}
-                else:
-                    # Generic fallback
-                    processing_statuses = {'approved', 'confirmed', 'ready'}
+                try:
+                    from ._status_resolver import StatusResolver
+                    # Get processing semantic statuses
+                    processing_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'processing')
+                    
+                    # If no processing statuses, try completion statuses minus final ones
+                    if not processing_statuses:
+                        completion_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'completion')
+                        final_statuses = StatusResolver.get_final_statuses(doc_type)
+                        processing_statuses = completion_statuses - final_statuses
+                        
+                except Exception:
+                    # Emergency fallback with model type detection
+                    model_name = queryset.model.__name__.lower()
+                    if 'request' in model_name:
+                        processing_statuses = {'approved'}
+                    elif 'order' in model_name:
+                        processing_statuses = {'confirmed', 'sent'}
+                    elif 'delivery' in model_name or 'receipt' in model_name:
+                        processing_statuses = {'received', 'partial'}
+                    elif 'invoice' in model_name:
+                        processing_statuses = {'approved', 'sent'}
+                    else:
+                        processing_statuses = {'approved', 'confirmed', 'ready'}
 
             return queryset.filter(status__in=processing_statuses)
 
         except ImportError:
-            # === COMPLETE FALLBACK WITHOUT NOMENCLATURES ===
+            # FIXED: Try StatusResolver even without nomenclatures
+            try:
+                from ._status_resolver import StatusResolver
+                doc_type = DocumentCreator._get_document_type_for_model(queryset.model)
+                if doc_type:
+                    processing_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'processing')
+                    if processing_statuses:
+                        return queryset.filter(status__in=processing_statuses)
+            except:
+                pass
+                
+            # === COMPLETE FALLBACK WITH MODEL TYPE DETECTION ===
             model_name = queryset.model.__name__.lower()
-
             if 'request' in model_name:
                 return queryset.filter(status='approved')
             elif 'order' in model_name:
@@ -165,10 +197,36 @@ class DocumentQuery:
                     # Exclude final statuses
                     return queryset.exclude(status__in=final_statuses)
 
-            # Fallback
-            return queryset.exclude(status__in=['cancelled', 'completed', 'rejected'])
+            # FIXED: Use StatusResolver for dynamic fallback
+            try:
+                from ._status_resolver import StatusResolver
+                final_statuses = StatusResolver.get_final_statuses(doc_type)
+                cancellation_status = StatusResolver.get_cancellation_status(doc_type)
+                
+                exclude_statuses = list(final_statuses)
+                if cancellation_status:
+                    exclude_statuses.append(cancellation_status)
+                    
+                return queryset.exclude(status__in=exclude_statuses)
+            except Exception:
+                return queryset.exclude(status__in=['cancelled', 'completed', 'rejected'])
 
         except ImportError:
+            # FIXED: Try StatusResolver even without full nomenclatures
+            try:
+                from ._status_resolver import StatusResolver
+                doc_type = DocumentCreator._get_document_type_for_model(queryset.model)
+                if doc_type:
+                    final_statuses = StatusResolver.get_final_statuses(doc_type)
+                    cancellation_status = StatusResolver.get_cancellation_status(doc_type)
+                    
+                    exclude_statuses = list(final_statuses)
+                    if cancellation_status:
+                        exclude_statuses.append(cancellation_status)
+                        
+                    return queryset.exclude(status__in=exclude_statuses)
+            except:
+                pass
             # Simple fallback
             return queryset.exclude(status__in=['cancelled', 'completed', 'rejected'])
 

@@ -45,6 +45,7 @@ class StatusManager:
             logger.info(f"🔄 Transitioning {document.document_number}: {from_status} → {to_status}")
 
             # Refresh document data (without locking for PostgreSQL compatibility)
+            # Get fresh copy to ensure data consistency across concurrent operations
             document = document.__class__.objects.get(pk=document.pk)
             logger.debug(f"📄 Document retrieved: {document.document_number}")
 
@@ -179,7 +180,7 @@ class StatusManager:
         ✅ БЕЗ ПРОМЯНА - работи перфектно
         """
         try:
-            from ...models.statuses import DocumentStatus, DocumentTypeStatus
+            from ..models.statuses import DocumentStatus, DocumentTypeStatus
 
             # Check if to_status exists
             status_obj = DocumentStatus.objects.filter(
@@ -282,15 +283,25 @@ class StatusManager:
                 except Exception as e:
                     logger.error(f"❌ Movement creation error: {str(e)}")
 
-            # 🔄 Обръщане на движения
+            # 🔄 Обръщане на движения (DIRECT DELETION - bypasses correction permission checks)
             if new_status_config.reverses_inventory_movements:
                 logger.info(f"↩️ Reversing inventory movements for {document.document_number} → {new_status}")
                 try:
-                    from inventory.services import MovementService
-                    # TODO: Implement reverse_movements_for_document method
-                    logger.info("✅ Movement reversal completed")
-                except ImportError:
-                    logger.warning("⚠️ MovementService not available")
+                    from inventory.models import InventoryMovement
+                    
+                    # Direct deletion - reversal is not the same as correction
+                    # reverses_inventory_movements means "delete all movements on status entry"
+                    movements_to_delete = InventoryMovement.objects.filter(
+                        source_document_number=document.document_number
+                    )
+                    deleted_count = movements_to_delete.count()
+                    
+                    if deleted_count > 0:
+                        movements_to_delete.delete()
+                        logger.info(f"✅ Movement reversal completed: {deleted_count} movements deleted")
+                    else:
+                        logger.info(f"✅ No movements to reverse for {document.document_number}")
+                        
                 except Exception as e:
                     logger.error(f"❌ Movement reversal error: {str(e)}")
 
@@ -475,12 +486,11 @@ class StatusManager:
         except Exception as e:
             logger.warning(f"Error getting next statuses: {e}")
             # Fallback to basic transitions
-            transitions_map = {
-                'draft': ['submitted', 'cancelled'],
-                'submitted': ['approved', 'rejected', 'cancelled'],
-                'approved': ['completed', 'cancelled'],
-                'rejected': ['draft', 'cancelled'],
-                'completed': [],
-                'cancelled': []
-            }
-            return transitions_map.get(document.status.lower(), [])
+            # FIXED: Use dynamic status resolution instead of hardcoded map
+            try:
+                from ._status_resolver import StatusResolver
+                return StatusResolver.get_next_possible_statuses(document.document_type, document.status)
+            except Exception as fallback_error:
+                logger.error(f"StatusResolver also failed: {fallback_error}")
+                # Emergency fallback - return empty list (no transitions allowed)
+                return []

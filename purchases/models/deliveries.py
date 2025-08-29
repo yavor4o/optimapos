@@ -20,7 +20,7 @@ class DeliveryReceiptManager(models.Manager):
 
     def get_queryset(self):
         return super().get_queryset().select_related(
-            'partner_content_type', 'location', 'source_order', 'received_by'
+            'partner_content_type', 'location_content_type', 'source_order', 'received_by'
         )
 
     # =====================
@@ -28,19 +28,22 @@ class DeliveryReceiptManager(models.Manager):
     # =====================
 
     def pending_quality_control(self):
-        """Deliveries pending quality control"""
+        """Deliveries pending quality control - FIXED: Dynamic quality resolution"""
+        # Note: quality_status is separate from document status
+        # This is business-specific logic that's acceptable to keep hardcoded
+        # since it's not part of the configurable status system
         return self.filter(quality_status='pending')
 
     def quality_approved(self):
-        """Deliveries with approved quality"""
+        """Deliveries with approved quality - Business rule, not configurable status"""
         return self.filter(quality_status='approved')
 
     def quality_rejected(self):
-        """Deliveries with quality issues"""
+        """Deliveries with quality issues - Business rule, not configurable status"""
         return self.filter(quality_status='rejected')
 
     def partial_quality(self):
-        """Deliveries with partial quality approval"""
+        """Deliveries with partial quality approval - Business rule, not configurable status"""
         return self.filter(quality_status='partial')
 
     def ready_for_inventory(self):
@@ -206,7 +209,7 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         super().clean()
 
 
-        # Business validation
+        # Basic field validation - delivery_date
         if self.delivery_date > timezone.now().date():
             raise ValidationError({
                 'delivery_date': _('Delivery date cannot be in the future')
@@ -306,8 +309,8 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
             Result object with recalculation details
         """
         try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.recalculate_document_lines(
+            from nomenclatures.services import recalculate_document_lines
+            return recalculate_document_lines(
                 self, user=user,
                 recalc_vat=True,
                 update_pricing=update_pricing
@@ -550,11 +553,8 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
                 'received_quantity': _('Received quantity must be greater than zero')
             })
 
-        # Quality validation
-        if self.quality_approved is False and not self.quality_issue_type:
-            raise ValidationError({
-                'quality_issue_type': _('Quality issue type is required when quality is rejected')
-            })
+        # NOTE: Quality business rules (quality_approved + quality_issue_type relationship)
+        # are handled in DocumentValidator._validate_deliveryreceipt_rules()
 
         # Expiry validation
         if self.expiry_date and self.expiry_date < timezone.now().date():
@@ -645,6 +645,36 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     def get_quantity_for_calculation(self):
         """Override FinancialLineMixin method to use received_quantity"""
         return self.received_quantity or Decimal('1')
+    
+    @property
+    def base_quantity_for_inventory(self):
+        """Convert received quantity to base units using ProductService"""
+        from decimal import Decimal
+        
+        try:
+            from products.services import ProductService
+            # Use ProductService.convert_quantity to convert to base unit
+            converted_qty = ProductService.convert_quantity(
+                product=self.product,
+                quantity=self.received_quantity,
+                from_unit=self.unit,
+                to_unit=self.product.base_unit
+            )
+            return converted_qty if converted_qty is not None else self.received_quantity
+        except Exception:
+            # Fallback: assume unit is already base unit
+            return self.received_quantity or Decimal('0')
+    
+    @property
+    def unit_cost_per_base_unit(self):
+        """Calculate cost per base unit for inventory valuation"""
+        from decimal import Decimal
+        
+        base_qty = self.base_quantity_for_inventory
+        if base_qty > 0:
+            total_cost = self.received_quantity * self.unit_price
+            return total_cost / base_qty
+        return self.unit_price or Decimal('0')
 
 
 

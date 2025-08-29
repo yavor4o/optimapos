@@ -557,20 +557,24 @@ class ApprovalService:
         """Determine button style for status"""
         status_code = status.code.lower()
 
-        if 'approve' in status_code or 'confirm' in status_code:
+        # FIXED: Use semantic patterns instead of hardcoded words
+        if any(word in status_code for word in ['approve', 'confirm', 'accept']):
             return 'btn-success'
-        elif 'reject' in status_code or 'cancel' in status_code or 'deny' in status_code:
+        elif any(word in status_code for word in ['reject', 'cancel', 'deny', 'refuse']):
             return 'btn-danger'
-        elif 'pending' in status_code or 'review' in status_code:
+        elif any(word in status_code for word in ['pending', 'review', 'waiting']):
             return 'btn-warning'
-        else:
+        elif any(word in status_code for word in ['submit', 'send']):
             return 'btn-primary'
+        else:
+            return 'btn-secondary'
 
     @staticmethod
     def _requires_confirmation(status) -> bool:
         """Check if status transition requires confirmation"""
         status_code = status.code.lower()
-        return any(keyword in status_code for keyword in ['reject', 'cancel', 'delete', 'final'])
+        # FIXED: More comprehensive semantic keywords
+        return any(keyword in status_code for keyword in ['reject', 'cancel', 'delete', 'final', 'refuse', 'deny', 'terminate'])
 
     @staticmethod
     def _determine_action_type(log) -> str:
@@ -580,13 +584,14 @@ class ApprovalService:
 
         to_status_code = log.to_status.code.lower()
 
-        if 'approve' in to_status_code:
+        # FIXED: More comprehensive semantic action detection
+        if any(word in to_status_code for word in ['approve', 'accept', 'confirm']):
             return 'APPROVAL'
-        elif 'reject' in to_status_code:
+        elif any(word in to_status_code for word in ['reject', 'refuse', 'deny']):
             return 'REJECTION'
-        elif 'cancel' in to_status_code:
+        elif any(word in to_status_code for word in ['cancel', 'cancelled', 'abort']):
             return 'CANCELLATION'
-        elif 'submit' in to_status_code or 'pending' in to_status_code:
+        elif any(word in to_status_code for word in ['submit', 'pending', 'review']):
             return 'SUBMISSION'
         else:
             return 'TRANSITION'
@@ -695,11 +700,24 @@ class ApprovalService:
                 is_active=True
             ).select_related('to_status_obj')
 
-            # Look for rejection pattern
-            for rule in rules:
-                status_code = rule.to_status_obj.code.lower()
-                if any(pattern in status_code for pattern in ['reject', 'deny', 'cancel']):
-                    return rule.to_status_obj.code
+            # FIXED: Use StatusResolver for semantic detection
+            try:
+                from ._status_resolver import StatusResolver
+                rejection_statuses = StatusResolver.get_statuses_by_semantic_type(
+                    document.document_type, 'rejection'
+                )
+                
+                # Check if any rule leads to rejection status
+                for rule in rules:
+                    if rule.to_status_obj.code in rejection_statuses:
+                        return rule.to_status_obj.code
+                        
+            except Exception:
+                # Fallback to pattern matching
+                for rule in rules:
+                    status_code = rule.to_status_obj.code.lower()
+                    if any(pattern in status_code for pattern in ['reject', 'deny', 'cancel', 'refuse']):
+                        return rule.to_status_obj.code
 
             # Fallback: look in DocumentTypeStatus for cancellation status
             cancellation_status = DocumentTypeStatus.objects.filter(
@@ -733,11 +751,24 @@ class ApprovalService:
                 is_active=True
             ).select_related('to_status_obj')
 
-            # Look for submission pattern
-            for rule in rules.order_by('approval_level'):
-                status_code = rule.to_status_obj.code.lower()
-                if any(pattern in status_code for pattern in ['submit', 'pending', 'review']):
-                    return rule.to_status_obj.code
+            # FIXED: Use StatusResolver for semantic detection
+            try:
+                from ._status_resolver import StatusResolver
+                approval_statuses = StatusResolver.get_statuses_by_semantic_type(
+                    document.document_type, 'approval'
+                )
+                
+                # Check if any rule leads to approval status
+                for rule in rules.order_by('approval_level'):
+                    if rule.to_status_obj.code in approval_statuses:
+                        return rule.to_status_obj.code
+                        
+            except Exception:
+                # Fallback to pattern matching
+                for rule in rules.order_by('approval_level'):
+                    status_code = rule.to_status_obj.code.lower()
+                    if any(pattern in status_code for pattern in ['submit', 'pending', 'review']):
+                        return rule.to_status_obj.code
 
             return None
 

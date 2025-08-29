@@ -20,7 +20,6 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.utils import timezone
 from decimal import Decimal
 
 User = get_user_model()

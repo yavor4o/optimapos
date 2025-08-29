@@ -31,12 +31,19 @@ class PurchaseOrderManager(models.Manager):
     # =====================
 
     def ready_to_send(self):
-        """Orders ready to send to supplier"""
-        return self.filter(
-            status='draft'
-        ).exclude(
-            lines__isnull=True
-        )
+        """Orders ready to send to supplier - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            # Use DocumentQuery for dynamic status resolution
+            ready_docs = DocumentQuery.get_ready_for_processing_documents(queryset=self.get_queryset())
+            return ready_docs.exclude(lines__isnull=True)
+        except ImportError:
+            # Fallback to hardcoded for compatibility
+            return self.filter(
+                status='draft'
+            ).exclude(
+                lines__isnull=True
+            )
 
     def by_partner(self, partner):
         return self.filter(partner=partner)
@@ -160,7 +167,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         """Model-level validation - ONLY simple field validations"""
         super().clean()
 
-        # PurchaseOrder ИМА expected_delivery_date
+        # Basic field validation - expected_delivery_date
         if self.expected_delivery_date and self.expected_delivery_date < timezone.now().date():
             raise ValidationError({
                 'expected_delivery_date': _('Expected delivery date cannot be in the past')
@@ -234,8 +241,8 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
             Result object with recalculation details
         """
         try:
-            from nomenclatures.services import DocumentService
-            return DocumentService.recalculate_document_lines(
+            from nomenclatures.services import recalculate_document_lines
+            return recalculate_document_lines(
                 self, user=user,
                 recalc_vat=True,
                 update_pricing=update_pricing
@@ -260,12 +267,30 @@ class PurchaseOrderLineManager(models.Manager):
         return super().get_queryset().select_related('document', 'product', 'source_request_line')
 
     def pending_orders(self):
-        """Lines in pending orders"""
-        return self.filter(document__status='pending')
+        """Lines in pending orders - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            # Get pending documents and filter lines
+            pending_docs = DocumentQuery.get_pending_approval_documents(
+                model_class=self.model._meta.get_field('document').related_model
+            )
+            return self.filter(document__in=pending_docs)
+        except ImportError:
+            # Fallback
+            return self.filter(document__status='pending')
 
     def confirmed_orders(self):
-        """Lines in confirmed orders"""
-        return self.filter(document__status='confirmed')
+        """Lines in confirmed orders - FIXED: Dynamic status resolution"""
+        try:
+            from nomenclatures.services.query import DocumentQuery
+            # Get ready for processing documents and filter lines  
+            ready_docs = DocumentQuery.get_ready_for_processing_documents(
+                model_class=self.model._meta.get_field('document').related_model
+            )
+            return self.filter(document__in=ready_docs)
+        except ImportError:
+            # Fallback
+            return self.filter(document__status='confirmed')
 
     def for_supplier(self, supplier):
         """Lines for specific supplier"""

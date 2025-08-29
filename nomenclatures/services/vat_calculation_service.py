@@ -65,10 +65,24 @@ class VATCalculationService:
 
             # Apply calculated values to line if requested
             if save:
-                for field, value in calc_result.items():
-                    if hasattr(line, field) and field not in ['calculation_reason', 'vat_applicable',
-                                                              'prices_include_vat']:
-                        setattr(line, field, value)
+                # Direct field mapping
+                direct_fields = ['vat_rate', 'unit_price', 'entered_price']
+                for field in direct_fields:
+                    if field in calc_result and hasattr(line, field):
+                        setattr(line, field, calc_result[field])
+                
+                # Custom field mapping for FinancialLineMixin
+                field_mapping = {
+                    'vat_amount_per_unit': 'vat_amount',
+                    'line_total_without_vat': 'net_amount', 
+                    'line_total_with_vat': 'gross_amount',
+                    'unit_price': 'unit_price_with_vat'  # Map calculated unit_price to unit_price_with_vat
+                }
+                
+                for calc_field, line_field in field_mapping.items():
+                    if calc_field in calc_result and hasattr(line, line_field):
+                        setattr(line, line_field, calc_result[calc_field])
+                
                 line.save()
 
             return Result.success(
@@ -107,8 +121,8 @@ class VATCalculationService:
             totals = cls._recalculate_document_totals_internal(document)
 
             # Apply totals to document if requested
-            if save and hasattr(document, 'recalculate_totals'):
-                document.recalculate_totals()
+            if save:
+                cls._apply_totals_to_document(document, totals)
 
             return Result.success(
                 data=totals,
@@ -367,19 +381,66 @@ class VATCalculationService:
         }
 
         if hasattr(document, 'lines'):
-            lines_data = document.lines.aggregate(
-                sum_subtotal=Sum('net_amount'),  # ПРАВИЛНО
-                sum_vat=Sum('vat_amount'),  # ПРАВИЛНО
-                sum_discount=Sum('discount_amount')  # ПРАВИЛНО
-            )
-
-            totals['subtotal'] = lines_data['sum_subtotal'] or Decimal('0')
-            totals['vat_total'] = lines_data['sum_vat'] or Decimal('0')
-            totals['discount_total'] = lines_data['sum_discount'] or Decimal('0')
-            totals['total'] = totals['subtotal'] + totals['vat_total']
-            totals['lines_count'] = document.lines.count()
+            # Calculate totals from line_total properties (works for all line types)
+            subtotal = Decimal('0')
+            lines_count = 0
+            
+            for line in document.lines.all():
+                if hasattr(line, 'line_total'):
+                    line_total = line.line_total
+                    if line_total:
+                        subtotal += line_total
+                        lines_count += 1
+                        
+            # Calculate VAT based on document settings
+            if subtotal > 0:
+                # Default VAT rate for Bulgaria is 20%
+                vat_rate = Decimal('0.20')
+                prices_include_vat = getattr(document, 'prices_entered_with_vat', False)
+                
+                if prices_include_vat:
+                    # Extract VAT from total
+                    vat_total = (subtotal - (subtotal / (Decimal('1') + vat_rate))).quantize(Decimal('0.01'))
+                    subtotal_without_vat = subtotal - vat_total
+                    total = subtotal  # Total is the same as subtotal when prices include VAT
+                else:
+                    # Add VAT to subtotal
+                    vat_total = (subtotal * vat_rate).quantize(Decimal('0.01'))
+                    subtotal_without_vat = subtotal
+                    total = (subtotal + vat_total).quantize(Decimal('0.01'))
+                    
+                totals['subtotal'] = subtotal_without_vat.quantize(Decimal('0.01'))
+                totals['vat_total'] = vat_total
+                totals['total'] = total
+            else:
+                totals['subtotal'] = Decimal('0')
+                totals['vat_total'] = Decimal('0')
+                totals['total'] = Decimal('0')
+                
+            totals['lines_count'] = lines_count
 
         return totals
+
+    @classmethod
+    def _apply_totals_to_document(cls, document, totals: Dict):
+        """Apply calculated totals to document fields and save"""
+        try:
+            # Update document financial fields
+            if hasattr(document, 'subtotal'):
+                document.subtotal = totals.get('subtotal', Decimal('0'))
+            if hasattr(document, 'vat_total'):
+                document.vat_total = totals.get('vat_total', Decimal('0'))
+            if hasattr(document, 'discount_total'):
+                document.discount_total = totals.get('discount_total', Decimal('0'))
+            if hasattr(document, 'total'):
+                document.total = totals.get('total', Decimal('0'))
+            
+            # Save with only financial fields
+            document.save(update_fields=['subtotal', 'vat_total', 'discount_total', 'total'])
+            
+        except Exception as e:
+            logger.error(f"Failed to apply totals to document: {e}")
+            raise
 
     @classmethod
     def _validate_line_vat_setup(cls, line) -> List[str]:

@@ -334,3 +334,38 @@ class FinancialLineMixin(models.Model):
             if hasattr(self.document, 'recalculate_totals'):
                 self.document.recalculate_totals(save=True)
 
+    # =================================================================
+    # CALCULATED PROPERTIES - За VATCalculationService compatibility
+    # =================================================================
+    
+    @property
+    def line_total(self):
+        """
+        Line total property - required by VATCalculationService
+        Returns total line amount (per-unit amount × quantity)
+        """
+        quantity = self._get_quantity_value()
+        if not quantity:
+            return None
+            
+        # Предпочитай gross_amount (включва ДДС) ако е налично
+        if self.gross_amount:
+            return self.gross_amount * quantity
+        
+        # Fallback към unit_price или entered_price
+        unit_price = self.unit_price or self.entered_price
+        if unit_price:
+            return unit_price * quantity
+        
+        return None
+    
+    def _get_quantity_value(self):
+        """Get quantity value from different quantity field names"""
+        # Try different quantity field names (depends on line type)
+        for field_name in ['ordered_quantity', 'requested_quantity', 'received_quantity', 'quantity']:
+            if hasattr(self, field_name):
+                value = getattr(self, field_name)
+                if value:
+                    return value
+        return None
+
