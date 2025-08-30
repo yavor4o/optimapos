@@ -8,6 +8,12 @@ from typing import Dict, List
 from django.db.models import Sum
 
 from core.utils.result import Result
+# FIXED: Import standardized decimal utilities for consistent Bulgarian tax compliance
+from core.utils.decimal_utils import (
+    round_currency, round_vat_amount, round_tax_base,
+    calculate_vat_from_gross, calculate_vat_from_net,
+    validate_currency_precision, is_valid_vat_rate
+)
 
 logger = logging.getLogger(__name__)
 
@@ -340,9 +346,9 @@ class VATCalculationService:
                 line_vat_amount = line_total_without_vat * vat_rate
                 line_total_with_vat = line_total_without_vat + line_vat_amount
 
-            # Стъпка 2: Закръгли ФИНАЛНИТЕ line totals - това е ключът!
-            line_total_without_vat = line_total_without_vat.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            line_vat_amount = line_vat_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            # Стъпка 2: Закръгли ФИНАЛНИТЕ line totals - FIXED: Use standardized utilities
+            line_total_without_vat = round_tax_base(line_total_without_vat)
+            line_vat_amount = round_vat_amount(line_vat_amount)
             line_total_with_vat = (line_total_without_vat + line_vat_amount)  # Ensure consistency
 
             # Стъпка 3: Backward calculate unit prices за display/storage
@@ -399,17 +405,19 @@ class VATCalculationService:
                 prices_include_vat = getattr(document, 'prices_entered_with_vat', False)
                 
                 if prices_include_vat:
-                    # Extract VAT from total
-                    vat_total = (subtotal - (subtotal / (Decimal('1') + vat_rate))).quantize(Decimal('0.01'))
-                    subtotal_without_vat = subtotal - vat_total
+                    # Extract VAT from total - FIXED: Use standardized tax calculations
+                    vat_calc_result = calculate_vat_from_gross(subtotal, vat_rate)
+                    subtotal_without_vat = vat_calc_result['net_amount']
+                    vat_total = vat_calc_result['vat_amount']
                     total = subtotal  # Total is the same as subtotal when prices include VAT
                 else:
-                    # Add VAT to subtotal
-                    vat_total = (subtotal * vat_rate).quantize(Decimal('0.01'))
-                    subtotal_without_vat = subtotal
-                    total = (subtotal + vat_total).quantize(Decimal('0.01'))
+                    # Add VAT to subtotal - FIXED: Use standardized tax calculations
+                    vat_calc_result = calculate_vat_from_net(subtotal, vat_rate)
+                    subtotal_without_vat = vat_calc_result['net_amount']
+                    vat_total = vat_calc_result['vat_amount']
+                    total = vat_calc_result['gross_amount']
                     
-                totals['subtotal'] = subtotal_without_vat.quantize(Decimal('0.01'))
+                totals['subtotal'] = subtotal_without_vat
                 totals['vat_total'] = vat_total
                 totals['total'] = total
             else:

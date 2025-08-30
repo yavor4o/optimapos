@@ -10,6 +10,11 @@ from django.core.exceptions import ValidationError
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 from core.utils.result import Result
+# FIXED: Import standardized decimal utilities for consistent inventory calculations
+from core.utils.decimal_utils import (
+    round_currency, round_cost_price, round_quantity,
+    validate_currency_precision, ensure_decimal
+)
 from ..models import InventoryLocation, InventoryMovement, InventoryItem, InventoryBatch
 from django.db.models import Sum, F
 logger = logging.getLogger(__name__)
@@ -62,7 +67,8 @@ class MovementService:
                     data={'cost_price': cost_price}
                 )
 
-            cost_price = cost_price.quantize(Decimal('0.0001'))
+            # FIXED: Use standardized cost price rounding
+            cost_price = round_cost_price(cost_price)
 
             # Set defaults
             if movement_date is None:
@@ -142,10 +148,10 @@ class MovementService:
                 return validation_result
 
             if sale_price is not None:
-                sale_price = sale_price.quantize(Decimal('0.01'))
+                sale_price = round_currency(sale_price)
 
             if manual_cost_price is not None:
-                manual_cost_price = manual_cost_price.quantize(Decimal('0.0001'))
+                manual_cost_price = round_cost_price(manual_cost_price)
 
             # Create movements using legacy method for full functionality
             movements = MovementService._create_outgoing_movement_internal(
@@ -629,10 +635,7 @@ class MovementService:
                 new_total_value = old_total_value + new_movement_value
                 new_total_qty = old_qty + quantity  # ← CONSISTENT calculation
 
-                from decimal import ROUND_HALF_UP
-                new_avg_cost = (new_total_value / new_total_qty).quantize(
-                    Decimal('0.01'), rounding=ROUND_HALF_UP
-                ) if new_total_qty > 0 else Decimal('0.00')
+                new_avg_cost = round_currency(new_total_value / new_total_qty) if new_total_qty > 0 else Decimal('0.00')
 
                 # ATOMIC UPDATE - използвай calculated new_total_qty
                 InventoryItem.objects.filter(pk=existing_item.pk).update(
@@ -745,18 +748,18 @@ class MovementService:
         # Ensure it's definitely a boolean
         allow_negative_stock = bool(allow_negative_stock)
 
-        # 🔧 CRITICAL FIX: Pre-quantize sale_price to avoid precision issues later
+        # 🔧 CRITICAL FIX: Pre-round prices to avoid precision issues later
         if sale_price is not None:
-            sale_price = sale_price.quantize(Decimal('0.01'))
+            sale_price = round_currency(sale_price)
 
         if manual_cost_price is not None:
-            manual_cost_price = manual_cost_price.quantize(Decimal('0.0001'))
+            manual_cost_price = round_cost_price(manual_cost_price)
 
         # Auto-detect sale price if not provided
         if sale_price is None and source_document_type in ['SALE', 'DELIVERY']:
             detected_price = MovementService._detect_sale_price(location, product, customer, quantity)
             if detected_price is not None:
-                sale_price = detected_price.quantize(Decimal('0.01'))  # Ensure quantization
+                sale_price = round_currency(detected_price)  # Ensure proper rounding
 
         # 🔒 CRITICAL FIX: Lock AND update atomically
         if not allow_negative_stock:
@@ -802,7 +805,7 @@ class MovementService:
         should_track_batches = MovementService._should_track_batches(location, product)
 
         if should_track_batches and use_fifo and manual_batch_number is None:
-            # 🔧 FIXED: Pass pre-quantized sale_price to FIFO method
+            # 🔧 FIXED: Pass pre-rounded sale_price to FIFO method
             movements = MovementService._create_fifo_outgoing_movements(
                 location, product, quantity, movement_date, source_document_type,
                 source_document_number, source_document_line_id, reason, created_by, sale_price
@@ -816,12 +819,12 @@ class MovementService:
             )
 
             # Round cost price
-            cost_price = cost_price.quantize(Decimal('0.01'))
+            cost_price = round_currency(cost_price)
 
-            # 🔧 FIXED: Proper quantization with null check
+            # 🔧 FIXED: Proper rounding with null check
             profit_amount = Decimal('0.00')
-            if sale_price is not None:  # sale_price is already quantized above
-                profit_amount = ((sale_price - cost_price) * quantity).quantize(Decimal('0.01'))
+            if sale_price is not None:  # sale_price is already rounded above
+                profit_amount = round_currency((sale_price - cost_price) * quantity)
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -829,8 +832,8 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=quantity,
                 cost_price=cost_price,
-                sale_price=sale_price,  # Already quantized
-                profit_amount=profit_amount,  # Already quantized
+                sale_price=sale_price,  # Already rounded
+                profit_amount=profit_amount,  # Already rounded
                 batch_number=manual_batch_number,
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
@@ -860,7 +863,7 @@ class MovementService:
         movements = []
         remaining_qty = quantity
 
-        # Note: sale_price is already quantized by caller - do not re-quantize here
+        # Note: sale_price is already rounded by caller - do not re-round here
 
         # 🔒 Lock batches with select_for_update()
         available_batches = InventoryBatch.objects.select_for_update().filter(
@@ -876,13 +879,13 @@ class MovementService:
             qty_from_batch = min(remaining_qty, batch.remaining_qty)
 
             # 🔧 COMPLETE FIX: Proper decimal handling
-            batch_cost = (batch.cost_price or Decimal('0.00')).quantize(Decimal('0.01'))
+            batch_cost = round_currency(batch.cost_price or Decimal('0.00'))
             profit_amount = Decimal('0.00')
 
-            if sale_price is not None:  # sale_price is already quantized
-                # Calculate profit with properly quantized components
-                profit_per_unit = (sale_price - batch_cost).quantize(Decimal('0.01'))
-                profit_amount = (profit_per_unit * qty_from_batch).quantize(Decimal('0.01'))
+            if sale_price is not None:  # sale_price is already rounded
+                # Calculate profit with properly rounded components
+                profit_per_unit = round_currency(sale_price - batch_cost)
+                profit_amount = round_currency(profit_per_unit * qty_from_batch)
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -922,13 +925,13 @@ class MovementService:
             logger.info(f"FIFO fallback: Creating non-batch movement for {remaining_qty} units")
 
             default_cost = MovementService._get_smart_cost_price(location, product, None, 'OUT')
-            default_cost = default_cost.quantize(Decimal('0.01'))
+            default_cost = round_currency(default_cost)
 
-            # 🔧 FIXED: Proper quantization for fallback case
+            # 🔧 FIXED: Proper rounding for fallback case
             profit_amount = Decimal('0.00')
-            if sale_price is not None:  # sale_price is already quantized
-                profit_per_unit = (sale_price - default_cost).quantize(Decimal('0.01'))
-                profit_amount = (profit_per_unit * remaining_qty).quantize(Decimal('0.01'))
+            if sale_price is not None:  # sale_price is already rounded
+                profit_per_unit = round_currency(sale_price - default_cost)
+                profit_amount = round_currency(profit_per_unit * remaining_qty)
 
             movement = InventoryMovement.objects.create(
                 location=location,
@@ -936,8 +939,8 @@ class MovementService:
                 movement_type=InventoryMovement.OUT,
                 quantity=remaining_qty,
                 cost_price=default_cost,
-                sale_price=sale_price,  # Already quantized
-                profit_amount=profit_amount,  # Now properly quantized
+                sale_price=sale_price,  # Already rounded
+                profit_amount=profit_amount,  # Now properly rounded
                 source_document_type=source_document_type,
                 source_document_number=source_document_number,
                 source_document_line_id=source_document_line_id,
