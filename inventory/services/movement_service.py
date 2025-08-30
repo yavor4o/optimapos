@@ -879,7 +879,7 @@ class MovementService:
             qty_from_batch = min(remaining_qty, batch.remaining_qty)
 
             # 🔧 COMPLETE FIX: Proper decimal handling
-            batch_cost = round_currency(batch.cost_price or Decimal('0.00'))
+            batch_cost = round_cost_price(batch.cost_price or Decimal('0.00'))
             profit_amount = Decimal('0.00')
 
             if sale_price is not None:  # sale_price is already rounded

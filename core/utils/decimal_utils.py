@@ -314,7 +314,8 @@ def calculate_vat_from_gross(gross_amount: Union[Decimal, str, float, int],
     """
     Изчисляване на ДДС от брутна сума (с включен ДДС).
     
-    Спазва българското законодателство за ДДС изчисления.
+    FIXED: Избягва compound rounding errors като изчислява всичко първо,
+    след това закръгля накрая.
     
     Args:
         gross_amount: Брутна сума (с ДДС)
@@ -339,15 +340,13 @@ def calculate_vat_from_gross(gross_amount: Union[Decimal, str, float, int],
         gross = Decimal(str(gross_amount))
         rate = Decimal(str(vat_rate))
         
-        # Нетна сума = Брутна сума / (1 + ДДС ставка)
+        # Изчисли без закръгляване
         net_amount = gross / (Decimal('1') + rate)
-        net_amount = round_tax_base(net_amount)
-        
-        # ДДС сума = Брутна сума - Нетна сума
         vat_amount = gross - net_amount
-        vat_amount = round_vat_amount(vat_amount)
         
-        # Проверка на брутната сума
+        # Закръгли накрая
+        net_amount = round_tax_base(net_amount)
+        vat_amount = round_vat_amount(vat_amount)
         calculated_gross = net_amount + vat_amount
         
         return {
@@ -370,6 +369,9 @@ def calculate_vat_from_net(net_amount: Union[Decimal, str, float, int],
     """
     Изчисляване на ДДС от нетна сума (без ДДС).
     
+    FIXED: Избягва compound rounding errors като не закръгля net_amount преди
+    изчисляването на VAT.
+    
     Args:
         net_amount: Нетна сума (без ДДС)
         vat_rate: ДДС ставка (напр. 0.20 за 20%)
@@ -386,14 +388,15 @@ def calculate_vat_from_net(net_amount: Union[Decimal, str, float, int],
         }
     """
     try:
-        net = round_tax_base(net_amount)
+        net = Decimal(str(net_amount))  # Без закръгляване
         rate = Decimal(str(vat_rate))
         
-        # ДДС сума = Нетна сума × ДДС ставка
+        # Изчисли без закръгляване
         vat_amount = net * rate
-        vat_amount = round_vat_amount(vat_amount)
         
-        # Брутна сума = Нетна сума + ДДС сума
+        # Закръгли накрая
+        net = round_tax_base(net)
+        vat_amount = round_vat_amount(vat_amount)
         gross_amount = net + vat_amount
         
         return {
@@ -416,6 +419,9 @@ def calculate_weighted_average_cost(quantities: list,
                                   round_result: bool = True) -> Decimal:
     """
     Изчисляване на средно претеглена cost price.
+    
+    FIXED: Добави intermediate rounding за да избегне безкрайни decimal места
+    при multiplication operations.
     
     Args:
         quantities: List от количества
@@ -440,13 +446,19 @@ def calculate_weighted_average_cost(quantities: list,
             qty_decimal = round_quantity(qty)
             cost_decimal = Decimal(str(cost))
             
-            total_value += qty_decimal * cost_decimal
+            # Intermediate rounding за line value за да избегне твърде много decimal места
+            line_value = round_cost_price(qty_decimal * cost_decimal)
+            total_value += line_value
             total_quantity += qty_decimal
             
         if total_quantity == 0:
             return Decimal('0.0000')
             
         avg_cost = total_value / total_quantity
+        
+        # Intermediate rounding ако division създаде твърде много decimal места  
+        if avg_cost.as_tuple().exponent < -6:  # Повече от 6 decimal места
+            avg_cost = avg_cost.quantize(Decimal('0.000001'))  # Intermediate precision
         
         if round_result:
             avg_cost = round_cost_price(avg_cost)
@@ -605,6 +617,72 @@ def get_context_config(context: str, document_type_id: Optional[int] = None) -> 
             'inventory': {'decimal_places': 4, 'rounding_strategy': ROUND_HALF_UP, 'source': 'hardcoded'},
         }
         return defaults.get(context, {'decimal_places': 2, 'rounding_strategy': ROUND_HALF_UP, 'source': 'hardcoded'})
+
+
+# =============================================================================
+# PRECISION BRIDGING AND CHAIN CALCULATION UTILITIES
+# =============================================================================
+
+def upgrade_to_calculation_precision(amount: Union[Decimal, str, float, int],
+                                   target_places: int = 4) -> Decimal:
+    """
+    Upgrade lower precision amount to higher precision for calculations.
+    
+    Полезна за смесване на 2dp currency amounts с 4dp cost calculations.
+    
+    Args:
+        amount: Amount to upgrade
+        target_places: Target decimal places (default 4 for cost calculations)
+        
+    Returns:
+        Decimal: Amount with increased precision
+        
+    Example:
+        >>> upgrade_to_calculation_precision(Decimal('12.35'), 4)
+        Decimal('12.3500')
+    """
+    try:
+        decimal_amount = Decimal(str(amount))
+        quantizer = Decimal('0.' + '0' * target_places)
+        return decimal_amount.quantize(quantizer)
+    except Exception as e:
+        logger.error(f"Precision upgrade failed for {amount}: {e}")
+        return Decimal('0.' + '0' * target_places)
+
+
+def calculate_chain(*operations) -> Decimal:
+    """
+    Execute multiple operations with final rounding only.
+    
+    Позволява chain от calculations без intermediate rounding.
+    
+    Args:
+        *operations: Functions to execute in sequence
+        
+    Returns:
+        Decimal: Final result
+        
+    Example:
+        >>> calculate_chain(
+        ...     lambda: Decimal('100') * Decimal('0.20'),  # VAT calculation
+        ...     lambda result: result + Decimal('5'),      # Add fee
+        ...     lambda result: round_currency(result)      # Final rounding
+        ... )
+    """
+    try:
+        if not operations:
+            return Decimal('0')
+            
+        result = operations[0]()
+        
+        for operation in operations[1:]:
+            result = operation(result)
+            
+        return result
+        
+    except Exception as e:
+        logger.error(f"Chain calculation failed: {e}")
+        return Decimal('0')
 
 
 # =============================================================================
