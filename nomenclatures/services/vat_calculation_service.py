@@ -353,13 +353,13 @@ class VATCalculationService:
 
             # Стъпка 3: Backward calculate unit prices за display/storage
             if quantity > 0:
-                unit_price_without_vat = line_total_without_vat / quantity
-                vat_amount_per_unit = line_vat_amount / quantity
-                unit_price_with_vat = line_total_with_vat / quantity
+                unit_price_without_vat = round_currency(line_total_without_vat / quantity)
+                vat_amount_per_unit = round_vat_amount(line_vat_amount / quantity)
+                unit_price_with_vat = round_currency(line_total_with_vat / quantity)
             else:
-                unit_price_without_vat = Decimal('0')
-                vat_amount_per_unit = Decimal('0')
-                unit_price_with_vat = Decimal('0')
+                unit_price_without_vat = Decimal('0.00')
+                vat_amount_per_unit = Decimal('0.00')
+                unit_price_with_vat = Decimal('0.00')
 
             result.update({
                 'unit_price': unit_price_with_vat,  # Може да има повече от 2 digits

@@ -818,8 +818,8 @@ class MovementService:
                 movement_type='OUT'
             )
 
-            # Round cost price
-            cost_price = round_currency(cost_price)
+            # FIXED: Round cost price with proper function
+            cost_price = round_cost_price(cost_price)
 
             # 🔧 FIXED: Proper rounding with null check
             profit_amount = Decimal('0.00')
@@ -925,11 +925,13 @@ class MovementService:
             logger.info(f"FIFO fallback: Creating non-batch movement for {remaining_qty} units")
 
             default_cost = MovementService._get_smart_cost_price(location, product, None, 'OUT')
-            default_cost = round_currency(default_cost)
+            # FIXED: Use proper cost rounding function
+            default_cost = round_cost_price(default_cost)
 
             # 🔧 FIXED: Proper rounding for fallback case
             profit_amount = Decimal('0.00')
             if sale_price is not None:  # sale_price is already rounded
+                # FIXED: Use currency rounding only for final profit (display value)
                 profit_per_unit = round_currency(sale_price - default_cost)
                 profit_amount = round_currency(profit_per_unit * remaining_qty)
 
@@ -1742,20 +1744,26 @@ class MovementService:
 
     @staticmethod
     def _get_smart_cost_price(location, product, batch_number=None, movement_type='OUT') -> Decimal:
-        """Get smart cost price based on movement type"""
+        """
+        Get smart cost price based on movement type
+        
+        FIXED: Returns properly rounded cost price with 4dp precision
+        """
         try:
             if batch_number:
                 # Try to get batch-specific cost
                 batch = InventoryBatch.objects.get(
                     location=location, product=product, batch_number=batch_number
                 )
-                return batch.cost_price or Decimal('0')
+                cost = batch.cost_price or Decimal('0')
+                return round_cost_price(cost)  # FIXED: Proper cost rounding
             else:
                 # Get location average cost
                 item = InventoryItem.objects.get(location=location, product=product)
-                return item.avg_cost or Decimal('0')
+                cost = item.avg_cost or Decimal('0')
+                return round_cost_price(cost)  # FIXED: Proper cost rounding
         except (InventoryItem.DoesNotExist, InventoryBatch.DoesNotExist):
-            return Decimal('0')
+            return round_cost_price(Decimal('0'))  # FIXED: Consistent rounding
 
     @staticmethod
     def _trigger_pricing_update(location, product, new_cost):

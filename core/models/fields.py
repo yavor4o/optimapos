@@ -32,10 +32,10 @@ class StandardizedDecimalField(models.DecimalField):
         super().__init__(*args, **kwargs)
         
     def to_python(self, value):
-        """Convert value to proper Decimal with rounding"""
+        """Convert value to proper Decimal - FIXED: No premature rounding"""
         value = super().to_python(value)
-        if value is not None:
-            return self.round_value(value)
+        # FIXED: Don't round on input - only validate and convert to Decimal
+        # Rounding happens only on database save via get_db_prep_value
         return value
         
     def round_value(self, value):
