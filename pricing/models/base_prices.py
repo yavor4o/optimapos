@@ -216,8 +216,9 @@ class ProductPrice(models.Model):
             else:
                 self.effective_price = Decimal('0')
 
-        # Round to 2 decimal places
-        self.effective_price = round(self.effective_price, 2)
+        # Round using standardized decimal utility
+        from core.utils.decimal_utils import round_currency
+        self.effective_price = round_currency(self.effective_price)
 
     def get_current_cost_price(self):
         """Get current cost price from inventory"""

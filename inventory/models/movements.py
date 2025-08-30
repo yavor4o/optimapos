@@ -368,8 +368,9 @@ class InventoryMovement(models.Model):
     def profit_margin_percentage(self):
         """NEW: Profit margin as percentage"""
         if self.sale_price and self.sale_price > 0:
+            from core.utils.decimal_utils import round_percentage
             margin = (self.profit_amount or Decimal('0')) / self.sale_price * 100
-            return round(margin, 2)
+            return round_percentage(margin)
         return None
 
     # === BUSINESS METHODS ===
@@ -471,7 +472,8 @@ class InventoryMovement(models.Model):
         total_profit = summary['total_profit'] or Decimal('0')
 
         if total_revenue > 0:
-            summary['profit_margin_percentage'] = (total_profit / total_revenue * 100).quantize(Decimal('0.01'))
+            from core.utils.decimal_utils import round_percentage
+            summary['profit_margin_percentage'] = round_percentage(total_profit / total_revenue * 100)
         else:
             summary['profit_margin_percentage'] = Decimal('0')
 

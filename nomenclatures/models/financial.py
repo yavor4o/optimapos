@@ -306,7 +306,8 @@ class TaxGroup(BaseNomenclature):
             # Цената е без данък - добавяме го
             tax = amount * self.rate / 100
 
-        return round(Decimal(str(tax)), 2)
+        from core.utils.decimal_utils import round_vat_amount
+        return round_vat_amount(tax)
 
     def get_amount_without_tax(self, amount_with_tax):
         """Връща сумата без данък"""
