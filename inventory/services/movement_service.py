@@ -1335,23 +1335,25 @@ class MovementService:
 
     @staticmethod
     def _create_from_delivery(delivery) -> List[InventoryMovement]:
-        """Enhanced delivery processing - full original logic"""
+        """Enhanced delivery processing - FIXED: Use dynamic field detection"""
         movements = []
         direction = getattr(delivery.document_type, 'inventory_direction', 'in')
 
         for line in delivery.lines.all():
-            if not line.received_quantity or line.received_quantity == 0:
+            quantity = MovementService._get_document_line_quantity(line)
+            if not quantity or quantity == 0:
                 continue
 
             try:
                 if direction == 'both':
-                    if line.received_quantity > 0:
+                    if quantity > 0:
                         # Positive = incoming
+                        line_price = MovementService._get_document_line_price(line) or Decimal('0.00')
                         movement = MovementService._create_incoming_movement_internal(
                             location=delivery.location,
                             product=line.product,
-                            quantity=abs(line.received_quantity),
-                            cost_price=line.unit_price or Decimal('0.00'),
+                            quantity=abs(quantity),
+                            cost_price=line_price,
                             source_document_type='DELIVERY',
                             source_document_number=delivery.document_number,
                             source_document_line_id=line.line_number,
@@ -1361,12 +1363,12 @@ class MovementService:
                         )
                         movements.append(movement)
 
-                    elif line.received_quantity < 0:
+                    elif quantity < 0:
                         # Negative = outgoing (return/correction)
                         outgoing_movements = MovementService._create_outgoing_movement_internal(
                             location=delivery.location,
                             product=line.product,
-                            quantity=abs(line.received_quantity),
+                            quantity=abs(quantity),
                             source_document_type='DELIVERY_RETURN',
                             source_document_number=delivery.document_number,
                             source_document_line_id=line.line_number,
@@ -1376,11 +1378,12 @@ class MovementService:
 
                 elif direction == 'in' or direction == 'both':
                     # Standard incoming delivery
+                    line_price = MovementService._get_document_line_price(line) or Decimal('0.00')
                     movement = MovementService._create_incoming_movement_internal(
                         location=delivery.location,
                         product=line.product,
-                        quantity=abs(line.received_quantity),
-                        cost_price=line.unit_price or Decimal('0.00'),
+                        quantity=abs(quantity),
+                        cost_price=line_price,
                         source_document_type='DELIVERY',
                         source_document_number=delivery.document_number,
                         source_document_line_id=line.line_number,
@@ -1395,7 +1398,7 @@ class MovementService:
                     outgoing_movements = MovementService._create_outgoing_movement_internal(
                         location=delivery.location,
                         product=line.product,
-                        quantity=abs(line.received_quantity),
+                        quantity=abs(quantity),
                         source_document_type='DELIVERY_OUT',
                         source_document_number=delivery.document_number,
                         source_document_line_id=line.line_number,
@@ -1437,15 +1440,17 @@ class MovementService:
 
         # Create movements for each line
         for line in order.lines.all():
-            if not line.ordered_quantity or line.ordered_quantity <= 0:
+            quantity = MovementService._get_document_line_quantity(line)
+            if not quantity or quantity <= 0:
                 continue
 
             try:
+                line_price = MovementService._get_document_line_price(line) or Decimal('0.00')
                 movement = MovementService._create_incoming_movement_internal(
                     location=order.location,
                     product=line.product,
-                    quantity=line.ordered_quantity,
-                    cost_price=line.unit_price or Decimal('0.00'),
+                    quantity=quantity,
+                    cost_price=line_price,
                     source_document_type='PURCHASE_AUTO',
                     source_document_number=order.document_number,
                     source_document_line_id=getattr(line, 'line_number', None),
@@ -1468,19 +1473,19 @@ class MovementService:
         movements = []
 
         for line in request.lines.all():
-            if not line.requested_quantity or line.requested_quantity == 0:
+            quantity = MovementService._get_document_line_quantity(line)
+            if not quantity or quantity == 0:
                 continue
 
             try:
-                # Use correct price field
-                cost_price = getattr(line, 'unit_price', None) or getattr(line, 'entered_price', None) or Decimal(
-                    '0.00')
+                # Use dynamic price detection
+                cost_price = MovementService._get_document_line_price(line) or Decimal('0.00')
 
                 # PurchaseRequest usually creates IN movement (planned receipt)
                 movement = MovementService._create_incoming_movement_internal(
                     location=request.location,
                     product=line.product,
-                    quantity=line.requested_quantity,
+                    quantity=quantity,
                     cost_price=cost_price,
                     source_document_type='PURCHASE_REQUEST',
                     source_document_number=request.document_number,
@@ -1501,7 +1506,8 @@ class MovementService:
         movements = []
 
         for line in transfer.lines.all():
-            if not line.quantity or line.quantity <= 0:
+            quantity = MovementService._get_document_line_quantity(line) 
+            if not quantity or quantity <= 0:
                 continue
 
             try:
@@ -1510,7 +1516,7 @@ class MovementService:
                     from_location=transfer.from_location,
                     to_location=transfer.to_location,
                     product=line.product,
-                    quantity=line.quantity,
+                    quantity=quantity,
                     source_document_type='TRANSFER',
                     source_document_number=transfer.document_number,
                     source_document_line_id=getattr(line, 'line_number', None),
@@ -1533,14 +1539,18 @@ class MovementService:
         movements = []
 
         for line in adjustment.lines.all():
-            if not line.adjustment_quantity or line.adjustment_quantity == 0:
+            # For adjustments, look for adjustment_quantity specifically first
+            quantity = getattr(line, 'adjustment_quantity', None)
+            if quantity is None:
+                quantity = MovementService._get_document_line_quantity(line)
+            if not quantity or quantity == 0:
                 continue
 
             try:
                 movement = MovementService._create_adjustment_movement_internal(
                     location=adjustment.location,
                     product=line.product,
-                    adjustment_qty=line.adjustment_quantity,
+                    adjustment_qty=quantity,
                     reason=f"Stock adjustment: {adjustment.reason} (line {getattr(line, 'line_number', '?')})",
                     movement_date=adjustment.document_date,
                     created_by=getattr(adjustment, 'created_by', None),
@@ -1558,6 +1568,40 @@ class MovementService:
     # =====================================================
     # UTILITY HELPER METHODS (FULL ORIGINAL IMPLEMENTATIONS)
     # =====================================================
+
+    @staticmethod
+    def _get_document_line_quantity(line):
+        """Get quantity from document line using dynamic field detection"""
+        try:
+            from nomenclatures.services.document_line_service import DocumentLineService
+            quantity_field = DocumentLineService._get_quantity_field(line.__class__)
+            return getattr(line, quantity_field, None)
+        except Exception as e:
+            logger.debug(f"Dynamic quantity field detection failed: {e}, falling back to hardcoded")
+            # Fallback to hardcoded detection
+            for field in ['received_quantity', 'ordered_quantity', 'requested_quantity', 'quantity']:
+                if hasattr(line, field):
+                    value = getattr(line, field)
+                    if value is not None:
+                        return value
+            return None
+
+    @staticmethod
+    def _get_document_line_price(line):
+        """Get price from document line using dynamic field detection"""
+        try:
+            from nomenclatures.services.document_line_service import DocumentLineService
+            price_field = DocumentLineService._get_price_field(line.__class__)
+            return getattr(line, price_field, None)
+        except Exception as e:
+            logger.debug(f"Dynamic price field detection failed: {e}, falling back to hardcoded")
+            # Fallback to hardcoded detection
+            for field in ['unit_price', 'estimated_price', 'entered_price', 'price']:
+                if hasattr(line, field):
+                    value = getattr(line, field)
+                    if value is not None:
+                        return value
+            return None
 
     @staticmethod
     def _validate_movement_inputs(location, product, quantity, movement_type) -> Result:

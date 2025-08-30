@@ -228,6 +228,26 @@ class DocumentLineService:
             return 'unit_price'
         else:
             return 'unit_price'  # fallback
+    
+    @staticmethod 
+    def _get_price_field_value(line):
+        """Get price value from line using dynamic field detection with fallbacks"""
+        try:
+            # First try dynamic detection
+            price_field = DocumentLineService._get_price_field(line.__class__)
+            value = getattr(line, price_field, None)
+            if value is not None:
+                return value
+        except Exception:
+            pass
+            
+        # Fallback to hardcoded detection in priority order
+        for field in ['entered_price', 'estimated_price', 'unit_price', 'price']:
+            if hasattr(line, field):
+                value = getattr(line, field, None)
+                if value is not None:
+                    return value
+        return None
 
     @staticmethod
     def _get_next_line_number(document) -> int:
@@ -278,12 +298,8 @@ class DocumentLineService:
         try:
             from .vat_calculation_service import VATCalculationService
             
-            # Get entered price from line
-            entered_price = (
-                getattr(line, 'entered_price', None) or
-                getattr(line, 'estimated_price', None) or  
-                getattr(line, 'unit_price', None)
-            )
+            # Get entered price from line using dynamic detection
+            entered_price = DocumentLineService._get_price_field_value(line)
             
             if entered_price and entered_price > 0:
                 from decimal import Decimal

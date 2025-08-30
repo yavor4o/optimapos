@@ -236,12 +236,9 @@ class VATCalculationService:
                         )
 
                         if needs_processing:
-                            # Get entered price
-                            entered_price = (
-                                    getattr(line, 'entered_price', None) or
-                                    getattr(line, 'estimated_price', None) or
-                                    Decimal('0')
-                            )
+                            # Get entered price using dynamic detection
+                            from .document_line_service import DocumentLineService
+                            entered_price = DocumentLineService._get_price_field_value(line) or Decimal('0')
 
                             if entered_price > 0:
                                 # Calculate using our Result-based method
@@ -296,7 +293,10 @@ class VATCalculationService:
 
         document = getattr(line, 'document', None)
         product = getattr(line, 'product', None)
-        quantity = getattr(line, 'quantity', Decimal('1'))
+        # Get quantity using dynamic detection
+        from .document_line_service import DocumentLineService
+        quantity_field = DocumentLineService._get_quantity_field(line.__class__)
+        quantity = getattr(line, quantity_field, Decimal('1'))
 
         # Get configuration
         prices_include_vat = cls.get_price_entry_mode(document)
@@ -456,12 +456,9 @@ class VATCalculationService:
         if not hasattr(line, 'quantity') or not line.quantity or line.quantity <= 0:
             issues.append('Invalid quantity')
 
-        # Check for missing prices
-        entered_price = (
-                getattr(line, 'entered_price', None) or
-                getattr(line, 'estimated_price', None) or
-                getattr(line, 'unit_price', None)
-        )
+        # Check for missing prices using dynamic detection
+        from .document_line_service import DocumentLineService
+        entered_price = DocumentLineService._get_price_field_value(line)
         if not entered_price or entered_price <= 0:
             issues.append('Missing or invalid price')
 
