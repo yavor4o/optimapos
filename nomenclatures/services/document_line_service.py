@@ -49,12 +49,11 @@ class DocumentLineService:
             # Генерирай следващия line_number
             next_line_number = DocumentLineService._get_next_line_number(document)
 
-            # Подготви данните за създаване
+            # Подготви данните за създаване - Start with base data, then add filtered kwargs
             line_data = {
                 'document': document,
                 'product': product,
                 'line_number': next_line_number,
-                **kwargs
             }
 
             # Добави количеството според типа ред
@@ -70,6 +69,35 @@ class DocumentLineService:
                 price_field = DocumentLineService._get_price_field(line_class)
                 if price_field and price_field != 'unit_price':
                     line_data[price_field] = kwargs.pop('unit_price')
+
+            # Handle VATCalculationService field mapping
+            # The VAT service returns 'unit_price_without_vat' but FinancialLineMixin expects 'unit_price'
+            if 'unit_price_without_vat' in kwargs:
+                line_data['unit_price'] = kwargs.pop('unit_price_without_vat')
+            
+            # Also handle other potential VAT service fields
+            if 'unit_price_with_vat' in kwargs:
+                line_data['unit_price_with_vat'] = kwargs.pop('unit_price_with_vat')
+            if 'vat_amount_per_unit' in kwargs:
+                line_data['vat_amount'] = kwargs.pop('vat_amount_per_unit')
+                
+            # Handle other VAT calculation result fields
+            if 'line_total_without_vat' in kwargs:
+                line_data['net_amount'] = kwargs.pop('line_total_without_vat')
+            if 'line_total_with_vat' in kwargs:
+                line_data['gross_amount'] = kwargs.pop('line_total_with_vat')
+            if 'line_vat_amount' in kwargs:
+                # This is handled by vat_amount_per_unit above, but just in case
+                kwargs.pop('line_vat_amount', None)
+
+            # Add remaining safe kwargs that match the model fields
+            # Get the actual field names for this line class
+            model_field_names = {field.name for field in line_class._meta.fields}
+            
+            # Add any remaining kwargs that correspond to actual model fields
+            for key, value in kwargs.items():
+                if key in model_field_names:
+                    line_data[key] = value
 
             # Създай реда
             line = line_class.objects.create(**line_data)
