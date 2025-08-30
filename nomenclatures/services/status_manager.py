@@ -287,20 +287,21 @@ class StatusManager:
             if new_status_config.reverses_inventory_movements:
                 logger.info(f"↩️ Reversing inventory movements for {document.document_number} → {new_status}")
                 try:
-                    from inventory.models import InventoryMovement
+                    # Use MovementService for proper movement reversal with cache updates
+                    from inventory.services import MovementService
                     
-                    # Direct deletion - reversal is not the same as correction
-                    # reverses_inventory_movements means "delete all movements on status entry"
-                    movements_to_delete = InventoryMovement.objects.filter(
-                        source_document_number=document.document_number
+                    # Proper reversal with inventory cache updates
+                    reverse_result = MovementService.reverse_document_movements(
+                        document.document_number,
+                        reason=f'Status change to {new_status}',
+                        created_by=user
                     )
-                    deleted_count = movements_to_delete.count()
                     
-                    if deleted_count > 0:
-                        movements_to_delete.delete()
-                        logger.info(f"✅ Movement reversal completed: {deleted_count} movements deleted")
+                    if reverse_result.ok:
+                        reversed_count = reverse_result.data.get('reversed_count', 0)
+                        logger.info(f"✅ Movement reversal completed: {reversed_count} movements reversed with cache updates")
                     else:
-                        logger.info(f"✅ No movements to reverse for {document.document_number}")
+                        logger.warning(f"⚠️ Movement reversal failed: {reverse_result.msg}")
                         
                 except Exception as e:
                     logger.error(f"❌ Movement reversal error: {str(e)}")

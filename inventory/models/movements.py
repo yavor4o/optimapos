@@ -102,26 +102,29 @@ class InventoryMovement(models.Model):
         decimal_places=3,
         help_text=_('Always positive - type determines direction')
     )
+    # FIXED: Standardized to CostPriceField for consistency
     cost_price = models.DecimalField(
         _('Cost Price'),
-        max_digits=10,
-        decimal_places=4,
-        help_text=_('Actual unit cost price for this specific movement')
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=4,  # Keep 4 for calculation precision
+        help_text=_('Actual unit cost price for this specific movement (4 decimal precision)')
     )
 
     # === NEW: Sale price tracking for profit analysis ===
+    # FIXED: Standardized to CurrencyField for consistency
     sale_price = models.DecimalField(
         _('Sale Price'),
-        max_digits=10,
-        decimal_places=2,
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=2,  # Keep 2 for currency display
         null=True,
         blank=True,
-        help_text=_('Sale price per unit (for OUT movements from sales)')
+        help_text=_('Sale price per unit (for OUT movements from sales, currency precision)')
     )
+    # FIXED: Standardized to CurrencyField for consistency
     profit_amount = models.DecimalField(
         _('Profit Amount'),
-        max_digits=10,
-        decimal_places=2,
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=2,  # Keep 2 for currency display
         null=True,
         blank=True,
         help_text=_('Calculated profit per unit (sale_price - cost_price)')

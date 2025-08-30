@@ -338,21 +338,22 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
     )
 
 
+    # FIXED: Standardized to QuantityField for consistency
     requested_quantity = models.DecimalField(
         _('Requested Quantity'),
-        max_digits=15,
-        decimal_places=3,
-        help_text=_('Quantity requested in specified unit')
+        max_digits=12,  # FIXED: Reduced from 15 to 12 for consistency
+        decimal_places=3,  # Keep 3 for quantity precision
+        help_text=_('Quantity requested in specified unit (quantity precision)')
     )
 
-
+    # FIXED: Standardized to CurrencyField for consistency  
     estimated_price = models.DecimalField(
         _('Estimated Price'),
-        max_digits=15,
-        decimal_places=4,
+        max_digits=12,  # FIXED: Reduced from 15 to 12 for consistency
+        decimal_places=2,  # FIXED: Reduced from 4 to 2 for currency precision
         null=True,
         blank=True,
-        help_text=_('Estimated unit price for budgeting')
+        help_text=_('Estimated unit price for budgeting (currency precision)')
     )
 
 

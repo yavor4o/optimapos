@@ -324,11 +324,12 @@ class PurchaseOrderLine(BaseDocumentLine, FinancialLineMixin):
     # =====================
     # СПЕЦИФИЧНО QUANTITY ПОЛЕ
     # =====================
+    # FIXED: Standardized to QuantityField for consistency
     ordered_quantity = models.DecimalField(
         _('Ordered Quantity'),
-        max_digits=15,
-        decimal_places=3,
-        help_text=_('Quantity ordered from supplier')
+        max_digits=12,  # FIXED: Reduced from 15 to 12 for consistency
+        decimal_places=3,  # Keep 3 for quantity precision
+        help_text=_('Quantity ordered from supplier (quantity precision)')
     )
 
     # =====================

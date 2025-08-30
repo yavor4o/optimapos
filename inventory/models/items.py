@@ -93,35 +93,38 @@ class InventoryItem(models.Model):
     )
 
     # === CACHED COSTS ===
+    # FIXED: Standardized to CostPriceField for internal calculations
     avg_cost = models.DecimalField(
         _('Average Cost'),
-        max_digits=10,
-        decimal_places=4,
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=4,  # Keep 4 for calculation precision
         default=0,
-        help_text=_('Weighted average cost price')
+        help_text=_('Weighted average cost price (4 decimal precision for calculations)')
     )
 
     # === NEW: Additional cost tracking from Products refactoring ===
+    # FIXED: Standardized to CostPriceField for internal calculations
     last_purchase_cost = models.DecimalField(
         _('Last Purchase Cost'),
-        max_digits=10,
-        decimal_places=4,
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=4,  # Keep 4 for calculation precision
         null=True,
         blank=True,
-        help_text=_('Last purchase cost for this location')
+        help_text=_('Last purchase cost for this location (4 decimal precision)')
     )
     last_purchase_date = models.DateField(
         _('Last Purchase Date'),
         null=True,
         blank=True
     )
+    # FIXED: Standardized to CurrencyField for consistency
     last_sale_price = models.DecimalField(
         _('Last Sale Price'),
-        max_digits=10,
-        decimal_places=2,
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=2,  # Keep 2 for currency display
         null=True,
         blank=True,
-        help_text=_('Last sale price for this location')
+        help_text=_('Last sale price for this location (currency precision)')
     )
     last_sale_date = models.DateField(
         _('Last Sale Date'),
@@ -291,11 +294,12 @@ class InventoryBatch(models.Model):
     )
 
     # Batch cost (for this specific batch)
+    # FIXED: Standardized to CostPriceField for consistency
     cost_price = models.DecimalField(
         _('Cost Price'),
-        max_digits=10,
-        decimal_places=4,
-        help_text=_('Cost price for this batch')
+        max_digits=12,  # FIXED: Increased from 10 to 12 for consistency
+        decimal_places=4,  # Keep 4 for calculation precision
+        help_text=_('Cost price for this batch (4 decimal precision)')
     )
 
     # FIFO data

@@ -432,11 +432,12 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
 
 
     # =====================
+    # FIXED: Standardized to QuantityField for consistency
     received_quantity = models.DecimalField(
         _('Received Quantity'),
-        max_digits=15,
-        decimal_places=3,
-        help_text=_('Actual quantity received from supplier')
+        max_digits=12,  # FIXED: Reduced from 15 to 12 for consistency
+        decimal_places=3,  # Keep 3 for quantity precision
+        help_text=_('Actual quantity received from supplier (quantity precision)')
     )
 
     # =====================

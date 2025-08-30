@@ -453,6 +453,75 @@ class MovementService:
             )
 
     @staticmethod
+    def reverse_document_movements(document_number: str, reason: str = '', created_by=None) -> Result:
+        """
+        🎯 REVERSAL API: Safely reverse all movements for a document with cache updates - NEW Method
+        """
+        try:
+            movements = InventoryMovement.objects.filter(
+                source_document_number=document_number
+            ).exclude(source_document_type='REVERSAL')
+            
+            if not movements.exists():
+                return Result.success(
+                    data={'reversed_count': 0},
+                    msg=f'No movements found for document {document_number}'
+                )
+            
+            reversed_movements = []
+            failed_reversals = []
+            
+            for movement in movements:
+                try:
+                    reverse_result = MovementService.reverse_stock_movement(
+                        original_movement=movement,
+                        reason=reason or f'Document reversal: {document_number}',
+                        created_by=created_by
+                    )
+                    if reverse_result.ok:
+                        reversed_movements.append(reverse_result.data['reverse_movement_id'])
+                    else:
+                        failed_reversals.append({
+                            'movement_id': movement.id,
+                            'error': reverse_result.msg
+                        })
+                except Exception as e:
+                    failed_reversals.append({
+                        'movement_id': movement.id,
+                        'error': str(e)
+                    })
+            
+            result_data = {
+                'document_number': document_number,
+                'original_movements_count': movements.count(),
+                'successfully_reversed': len(reversed_movements),
+                'failed_reversals': len(failed_reversals),
+                'reversed_movement_ids': reversed_movements,
+                'failures': failed_reversals
+            }
+            
+            if failed_reversals:
+                return Result.error(
+                    code='PARTIAL_REVERSAL_FAILURE',
+                    msg=f'Reversed {len(reversed_movements)} of {movements.count()} movements. {len(failed_reversals)} failed.',
+                    data=result_data
+                )
+            else:
+                logger.info(f"✅ Successfully reversed all {len(reversed_movements)} movements for document {document_number}")
+                return Result.success(
+                    data=result_data,
+                    msg=f'Successfully reversed all {len(reversed_movements)} movements for document {document_number}'
+                )
+                
+        except Exception as e:
+            logger.error(f"Error reversing document movements: {e}")
+            return Result.error(
+                code='REVERSAL_ERROR',
+                msg=f'Document movement reversal failed: {str(e)}',
+                data={'document_number': document_number}
+            )
+
+    @staticmethod
     def get_movement_analysis(
             location=None,
             product=None,
@@ -1153,24 +1222,33 @@ class MovementService:
 
     @staticmethod
     def _create_from_document_internal(document) -> List[InventoryMovement]:
-        """Internal document processing - full original logic"""
+        """FIXED: Use document type configuration instead of hardcoded model names"""
 
         movements = []
-        model_name = document._meta.model_name.lower()
-
+        
         try:
-            if model_name == 'deliveryreceipt':
+            # 🎯 USE DOCUMENT TYPE KEY instead of model name
+            document_type_key = getattr(document.document_type, 'type_key', None)
+            
+            if not document_type_key:
+                # Fallback to model name for backward compatibility
+                model_name = document._meta.model_name.lower()
+                logger.warning(f"No type_key found for document type, using model name: {model_name}")
+                document_type_key = model_name
+            
+            # Document type routing based on type_key
+            if document_type_key in ['delivery_receipt', 'deliveryreceipt']:
                 movements = MovementService._create_from_delivery(document)
-            elif model_name == 'purchaseorder':
+            elif document_type_key in ['purchase_order', 'purchaseorder']:
                 movements = MovementService._create_from_purchase_order(document)
-            elif model_name == 'stocktransfer':
-                movements = MovementService._create_from_stock_transfer(document)
-            elif model_name == 'purchaserequest':
+            elif document_type_key in ['purchase_request', 'purchaserequest']:
                 movements = MovementService._create_from_purchase_request(document)
-            elif model_name == 'stockadjustment':
+            elif document_type_key in ['stock_transfer', 'stocktransfer']:
+                movements = MovementService._create_from_stock_transfer(document)
+            elif document_type_key in ['stock_adjustment', 'stockadjustment']:
                 movements = MovementService._create_from_stock_adjustment(document)
             else:
-                logger.warning(f"No automation handler for: {model_name}")
+                logger.warning(f"No movement handler for document type: {document_type_key}")
 
         except Exception as e:
             logger.error(f"Error in document automation: {e}")
@@ -1433,10 +1511,9 @@ class MovementService:
                 return movements
 
         except ImportError:
-            # Fallback: Check auto_receive field (different from auto_create_movements)
-            if not getattr(order.document_type, 'auto_receive', False):
-                logger.debug(f"Order {order.document_number} does not have auto-receive enabled")
-                return movements
+            # FIXED: No fallback - fail closed if DocumentTypeStatus is not available
+            logger.error(f"DocumentTypeStatus not available - cannot determine movement creation for {order.document_number}")
+            return movements
 
         # Create movements for each line
         for line in order.lines.all():
@@ -1577,14 +1654,9 @@ class MovementService:
             quantity_field = DocumentLineService._get_quantity_field(line.__class__)
             return getattr(line, quantity_field, None)
         except Exception as e:
-            logger.debug(f"Dynamic quantity field detection failed: {e}, falling back to hardcoded")
-            # Fallback to hardcoded detection
-            for field in ['received_quantity', 'ordered_quantity', 'requested_quantity', 'quantity']:
-                if hasattr(line, field):
-                    value = getattr(line, field)
-                    if value is not None:
-                        return value
-            return None
+            logger.debug(f"Dynamic quantity field detection failed: {e}, using emergency fallback")
+            # Emergency fallback - try common quantity field
+            return getattr(line, 'quantity', None)
 
     @staticmethod
     def _get_document_line_price(line):
@@ -1594,14 +1666,14 @@ class MovementService:
             price_field = DocumentLineService._get_price_field(line.__class__)
             return getattr(line, price_field, None)
         except Exception as e:
-            logger.debug(f"Dynamic price field detection failed: {e}, falling back to hardcoded")
-            # Fallback to hardcoded detection
-            for field in ['unit_price', 'estimated_price', 'entered_price', 'price']:
-                if hasattr(line, field):
-                    value = getattr(line, field)
-                    if value is not None:
-                        return value
-            return None
+            logger.debug(f"Dynamic price field detection failed: {e}, using centralized fallback")
+            # Use centralized price field detection method
+            try:
+                from nomenclatures.services.document_line_service import DocumentLineService
+                return DocumentLineService._get_price_field_value(line)
+            except Exception:
+                # Emergency fallback
+                return getattr(line, 'unit_price', None)
 
     @staticmethod
     def _validate_movement_inputs(location, product, quantity, movement_type) -> Result:
