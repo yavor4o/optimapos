@@ -12,6 +12,7 @@ Purchase Services - ПЪЛЕН РЕФАКТОР КЪМ THIN WRAPPER
 """
 
 from typing import List, Dict, Optional
+from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db import transaction
@@ -254,8 +255,8 @@ class PurchaseDocumentService:
             line_data = {
                 'product': line['product'],
                 'quantity': line['quantity'],
-                'unit_price': line.get('unit_price', line['product'].selling_price),
-                'vat_rate': line.get('vat_rate', line['product'].vat_rate),
+                'unit_price': line.get('unit_price', 0),
+                'vat_rate': line.get('vat_rate', Decimal('0.20')),
                 'discount_rate': line.get('discount_rate', 0),
                 'notes': line.get('notes', '')
             }

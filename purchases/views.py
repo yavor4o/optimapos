@@ -296,6 +296,12 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
         }
 
     def form_valid(self, form):
+
+        # TEMPORARY DEBUG - добави това в самото начало
+        print("=== FULL POST DATA ===")
+        for key, value in self.request.POST.items():
+            print(f"{key}: {value}")
+        print("=== END POST DATA ===")
         """
         Handle form submission с clean semantic action handling
 
@@ -330,8 +336,8 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             # 2. ✅ Prepare line items (same as before)
             lines = self.prepare_lines_data()
             if not lines:
-                messages.warning(self.request, 'At least one line item is required')
-                lines = []  # Create document without lines for now
+                messages.error(self.request, 'At least one line item is required')
+                return self.form_invalid(form)
 
             # 3. ✅ Create delivery using service (same as before)
             result = DeliveryReceiptService.create(
@@ -378,7 +384,8 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                     f'Delivery Receipt {self.object.document_number} created with status: {final_status}'
                 )
 
-            return super().form_valid(form)
+            # Document already created and saved - redirect to success URL
+            return redirect(self.get_success_url())
 
         except Exception as e:
             logger.error(f"Form processing failed: {e}")
@@ -486,7 +493,8 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
                 # ✅ Validate and parse quantity
                 try:
-                    quantity_decimal = float(quantity)
+                    from decimal import Decimal
+                    quantity_decimal = Decimal(str(quantity))
                     if quantity_decimal <= 0:
                         logger.warning(f"Skipping line {index}: invalid quantity {quantity}")
                         continue
@@ -534,9 +542,10 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
                 # ✅ Parse unit price
                 try:
-                    unit_price_decimal = float(unit_price) if unit_price else product.selling_price
+                    from decimal import Decimal
+                    unit_price_decimal = Decimal(str(unit_price)) if unit_price else Decimal('0')
                 except (ValueError, TypeError):
-                    unit_price_decimal = product.selling_price or 0
+                    unit_price_decimal = Decimal('0')
 
                 # ✅ Build line data with ALL required fields
                 line_data = {
@@ -589,8 +598,8 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                     logger.debug("Creating one test line for debugging...")
                     test_line = {
                         'product': test_product,
-                        'quantity': 1.0,
-                        'unit_price': test_product.selling_price or 10.0,
+                        'quantity': Decimal('1.0'),
+                        'unit_price': Decimal('10.0'),
                         'unit': test_unit,
                         'received_quantity': 1.0,
                         'notes': 'Test line - no form data found',
@@ -653,7 +662,7 @@ class DeliveryReceiptApproveView(LoginRequiredMixin, PermissionRequiredMixin, Vi
     - Proper validation и permissions
     - Enhanced user feedback
     """
-    permission_required = 'purchases.approve_deliveryreceipt'
+    permission_required = 'purchases.change_deliveryreceipt'
 
     def post(self, request, pk):
         """Handle approval/rejection actions"""
@@ -799,7 +808,7 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
         context.update({
             'page_title': f'Delivery Receipt {delivery.document_number}',
             'can_edit': self.request.user.has_perm('purchases.change_deliveryreceipt'),
-            'can_approve': self.request.user.has_perm('purchases.approve_deliveryreceipt'),
+            'can_approve': self.request.user.has_perm('purchases.change_deliveryreceipt'),
 
             # Enhanced data
             'delivery_lines': self.get_enhanced_lines(delivery),
@@ -832,13 +841,13 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
             user = self.request.user
             final_actions = {}
 
-            if available_actions.get('can_approve') and user.has_perm('purchases.approve_deliveryreceipt'):
+            if available_actions.get('can_approve') and user.has_perm('purchases.change_deliveryreceipt'):
                 final_actions['approve'] = True
 
             if available_actions.get('can_submit') and user.has_perm('purchases.change_deliveryreceipt'):
                 final_actions['submit'] = True
 
-            if available_actions.get('can_reject') and user.has_perm('purchases.approve_deliveryreceipt'):
+            if available_actions.get('can_reject') and user.has_perm('purchases.change_deliveryreceipt'):
                 final_actions['reject'] = True
 
             if available_actions.get('can_return_to_draft') and user.has_perm('purchases.change_deliveryreceipt'):
