@@ -6,7 +6,13 @@ from django.urls import path, include
 from optimapos import settings
 
 urlpatterns = [
+    # Admin
     path('admin/', admin.site.urls),
+    
+    # Main dashboard
+    path('', include('core.urls')),
+    
+    # Apps
     path('purchases/', include('purchases.urls')),
     path('nomenclatures/', include('nomenclatures.urls')),
 ]

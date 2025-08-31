@@ -11,10 +11,10 @@
  <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
   <div class="flex flex-col justify-center gap-2">
    <h1 class="text-xl font-medium leading-none text-mono">
-	Dashboard
+	{{ dashboard_title|default:"OptimaPOS Dashboard" }}
    </h1>
    <div class="flex items-center gap-2 text-sm font-normal text-secondary-foreground">
-	Central Hub for Personal Customization
+	Добре дошли, {{ user.get_full_name|default:user.username }} | {{ today }}
    </div>
   </div>
   <div class="flex items-center gap-2.5">
@@ -40,48 +40,54 @@
    background-image: url('{% static "media/images/2600x1600/bg-3-dark.png" %}');
 }
 </style>
+	 <!-- Днешни продажби -->
 	 <div class="kt-card flex-col justify-between gap-6 h-full bg-cover rtl:bg-[left_top_-1.7rem] bg-[right_top_-1.7rem] bg-no-repeat channel-stats-bg">
-	  <img alt="" class="w-7 mt-4 ms-5" src="{% static 'media/brand-logos/linkedin-2.svg' %}"/>
+	  <i class="ki-filled ki-chart-line-up text-2xl mt-4 ms-5 text-success"></i>
 	  <div class="flex flex-col gap-1 pb-4 px-5">
 	   <span class="text-3xl font-semibold text-mono">
-		9.3k
+		{{ stats.sales_today.amount|floatformat:0 }} лв
 	   </span>
 	   <span class="text-sm font-normal text-secondary-foreground">
-		Amazing mates
+		Днешни продажби
 	   </span>
 	  </div>
 	 </div>
+	 
+	 <!-- Активни документи -->
 	 <div class="kt-card flex-col justify-between gap-6 h-full bg-cover rtl:bg-[left_top_-1.7rem] bg-[right_top_-1.7rem] bg-no-repeat channel-stats-bg">
-	  <img alt="" class="w-7 mt-4 ms-5" src="assets/media/brand-logos/youtube-2.svg"/>
+	  <i class="ki-filled ki-document text-2xl mt-4 ms-5 text-primary"></i>
 	  <div class="flex flex-col gap-1 pb-4 px-5">
 	   <span class="text-3xl font-semibold text-mono">
-		24k
+		{{ stats.documents_today.count }}
 	   </span>
 	   <span class="text-sm font-normal text-secondary-foreground">
-		Lessons Views
+		Днешни документи
 	   </span>
 	  </div>
 	 </div>
+	 
+	 <!-- Алерти за инвентар -->
 	 <div class="kt-card flex-col justify-between gap-6 h-full bg-cover rtl:bg-[left_top_-1.7rem] bg-[right_top_-1.7rem] bg-no-repeat channel-stats-bg">
-	  <img alt="" class="w-7 mt-4 ms-5" src="assets/media/brand-logos/instagram-03.svg"/>
+	  <i class="ki-filled ki-package text-2xl mt-4 ms-5 text-warning"></i>
 	  <div class="flex flex-col gap-1 pb-4 px-5">
 	   <span class="text-3xl font-semibold text-mono">
-		608
+		{{ stats.inventory_alerts.low_stock }}
 	   </span>
 	   <span class="text-sm font-normal text-secondary-foreground">
-		New subscribers
+		Алерти инвентар
 	   </span>
 	  </div>
 	 </div>
+	 
+	 <!-- Системно здраве -->
 	 <div class="kt-card flex-col justify-between gap-6 h-full bg-cover rtl:bg-[left_top_-1.7rem] bg-[right_top_-1.7rem] bg-no-repeat channel-stats-bg">
-	  <img alt="" class="dark:hidden w-7 mt-4 ms-5" src="assets/media/brand-logos/tiktok.svg"/>
-	  <img alt="" class="hidden dark:block w-7 mt-4 ms-5" src="assets/media/brand-logos/tiktok-dark.svg"/>
+	  <i class="ki-filled ki-heart text-2xl mt-4 ms-5 text-success"></i>
 	  <div class="flex flex-col gap-1 pb-4 px-5">
 	   <span class="text-3xl font-semibold text-mono">
-		2.5k
+		{{ stats.system_health.uptime }}
 	   </span>
 	   <span class="text-sm font-normal text-secondary-foreground">
-		Stream audience
+		System Uptime
 	   </span>
 	  </div>
 	 </div>

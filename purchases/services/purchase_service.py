@@ -55,6 +55,8 @@ class PurchaseDocumentService:
                 partner, location, lines_data
             )
             if not validation.ok:
+                logger.error(f"Validation failed for {doc_type}: {validation.msg}")
+                logger.error(f"Validation data: {validation.data}")
                 return validation
             
             # 3. Създай document instance
@@ -93,16 +95,17 @@ class PurchaseDocumentService:
     
     def _create_instance(self, doc_type: str, partner, location, **kwargs):
         """Create document instance with correct fields"""
+        base_data = {
+            'partner': partner,
+            'location': location,
+            'document_date': kwargs.get('document_date', timezone.now().date()),
+            'notes': kwargs.get('comments', ''),
+            'status': 'draft',
+            'created_by': self.user,
+            'updated_by': self.user  # BaseDocument требует updated_by
+        }
+        
         try:
-            base_data = {
-                'partner': partner,
-                'location': location,
-                'document_date': kwargs.get('document_date', timezone.now().date()),
-                'notes': kwargs.get('comments', ''),
-                'status': 'draft',
-                'created_by': self.user,
-                'updated_by': self.user  # BaseDocument требует updated_by
-            }
             
             if doc_type == 'request':
                 from purchases.models import PurchaseRequest
@@ -120,12 +123,16 @@ class PurchaseDocumentService:
                 # DeliveryReceipt има задължителни полета
                 base_data.update({
                     'received_by': self.user,  # Who received the delivery
-                    'received_at': kwargs.get('document_date', timezone.now().date())
+                    'delivery_date': kwargs.get('document_date', timezone.now().date())
                 })
+                # Note: received_at has auto_now_add=True so Django sets it automatically
                 return DeliveryReceipt.objects.create(**base_data)
                 
         except Exception as e:
-            logger.error(f"Instance creation failed: {e}")
+            logger.error(f"Instance creation failed for {doc_type}: {e}")
+            logger.error(f"Base data was: {base_data}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return None
     
     # =================================================
@@ -136,10 +143,34 @@ class PurchaseDocumentService:
         return self.facade.transition_to('pending_approval', comments)
     
     def approve(self, comments='') -> Result:
-        return self.facade.transition_to('approved', comments)
+        """Approve document - for Delivery Receipt use 'completed' status"""
+        try:
+            # For Delivery Receipt documents, approval means completion
+            # Based on available statuses: draft, completed, cancelled
+            target_status = 'completed'
+            
+            logger.info(f"Approving {self.document.document_type.name} {self.document.document_number} -> {target_status}")
+            
+            return self.facade.transition_to(target_status, comments)
+            
+        except Exception as e:
+            logger.error(f"Approval failed for {self.document.document_number}: {e}")
+            return Result.error('APPROVAL_ERROR', str(e))
     
     def reject(self, comments='') -> Result:
-        return self.facade.transition_to('rejected', comments)
+        """Reject document - for Delivery Receipt use 'cancelled' status"""
+        try:
+            # For Delivery Receipt documents, rejection means cancellation
+            # Based on available statuses: draft, completed, cancelled
+            target_status = 'cancelled'
+            
+            logger.info(f"Rejecting {self.document.document_type.name} {self.document.document_number} -> {target_status}")
+            
+            return self.facade.transition_to(target_status, comments)
+            
+        except Exception as e:
+            logger.error(f"Rejection failed for {self.document.document_number}: {e}")
+            return Result.error('REJECTION_ERROR', str(e))
     
     def add_line(self, product, quantity, **kwargs) -> Result:
         return self.facade.add_line(product, Decimal(str(quantity)), **kwargs)

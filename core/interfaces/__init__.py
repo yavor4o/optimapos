@@ -18,6 +18,9 @@ from .vat_interface import IVATCalculationService
 # NEW: Location interface за pricing dependency resolution
 from .location_interface import ILocation
 
+# NEW: Service Registry pattern за dependency injection
+from .service_registry import ServiceRegistry, ServiceResolverMixin, get_service_with_fallback
+
 __all__ = [
     # Document system
     'IDocumentService',
@@ -41,6 +44,11 @@ __all__ = [
     'ILocation',  # NEW
 
     'IPartner',
+    
+    # Service Registry
+    'ServiceRegistry',
+    'ServiceResolverMixin',
+    'get_service_with_fallback',
 ]
 
 # Version info

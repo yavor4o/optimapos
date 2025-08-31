@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from nomenclatures.models import BaseDocument, BaseDocumentLine
 from nomenclatures.mixins import FinancialMixin, FinancialLineMixin
+from core.interfaces import ServiceResolverMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -322,7 +323,7 @@ class PurchaseRequestLineManager(models.Manager):
         )
 
 
-class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
+class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin, ServiceResolverMixin):
     """
     Purchase Request Line - Simple data model
 
@@ -417,9 +418,9 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
     def get_current_market_price(self):
         """Get current market price - delegates to PricingService"""
         try:
-            from pricing.services import PricingService
-
-            result = PricingService.get_product_pricing(
+            # Use ServiceResolverMixin to get PricingService
+            pricing_service = self.get_pricing_service()
+            result = pricing_service.get_product_pricing(
                 self.document.location,
                 self.product,
                 quantity=self.requested_quantity
@@ -430,21 +431,21 @@ class PurchaseRequestLine(BaseDocumentLine, FinancialLineMixin):
             else:
                 return None
 
-        except ImportError:
+        except Exception:
             return None
 
     def validate_product_availability(self):
         """Validate product can be purchased - delegates to ProductValidationService"""
         try:
-            from products.services import ProductValidationService
-
-            return ProductValidationService.validate_purchase(
+            # Use ServiceResolverMixin to get ProductValidationService
+            validation_service = self.get_validation_service()
+            return validation_service.validate_purchase(
                 self.product,
                 self.requested_quantity,
                 self.document.partner
             )
 
-        except ImportError:
+        except Exception:
             from core.utils.result import Result
             return Result.success({}, 'ProductValidationService not available')
 

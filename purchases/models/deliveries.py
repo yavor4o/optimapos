@@ -9,6 +9,7 @@ from django.utils.translation import gettext_lazy as _
 
 from nomenclatures.models import BaseDocument, BaseDocumentLine
 from nomenclatures.mixins import FinancialMixin, PaymentMixin, FinancialLineMixin
+from core.interfaces import ServiceResolverMixin
 import logging
 
 logger = logging.getLogger(__name__)
@@ -209,8 +210,8 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         super().clean()
 
 
-        # Basic field validation - delivery_date
-        if self.delivery_date > timezone.now().date():
+        # Basic field validation - delivery_date (allow today)
+        if self.delivery_date and self.delivery_date > timezone.now().date():
             raise ValidationError({
                 'delivery_date': _('Delivery date cannot be in the future')
             })
@@ -418,7 +419,7 @@ class DeliveryLineManager(models.Manager):
         return self.exclude(batch_number='')
 
 
-class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
+class DeliveryLine(BaseDocumentLine, FinancialLineMixin, ServiceResolverMixin):
 
     # =====================
     # PARENT DOCUMENT
@@ -653,9 +654,9 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
         from decimal import Decimal
         
         try:
-            from products.services import ProductService
-            # Use ProductService.convert_quantity to convert to base unit
-            converted_qty = ProductService.convert_quantity(
+            # Use ServiceResolverMixin to get ProductService
+            product_service = self.get_product_service()
+            converted_qty = product_service.convert_quantity(
                 product=self.product,
                 quantity=self.received_quantity,
                 from_unit=self.unit,
@@ -685,9 +686,9 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
     def get_current_market_price(self):
         """Get current market price - delegates to PricingService"""
         try:
-            from pricing.services import PricingService
-
-            result = PricingService.get_product_pricing(
+            # Use ServiceResolverMixin to get PricingService
+            pricing_service = self.get_pricing_service()
+            result = pricing_service.get_product_pricing(
                 self.document.location,
                 self.product,
                 quantity=self.received_quantity
@@ -698,7 +699,7 @@ class DeliveryLine(BaseDocumentLine, FinancialLineMixin):
             else:
                 return None
 
-        except ImportError:
+        except Exception:
             return None
 
 
