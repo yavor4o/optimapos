@@ -19,7 +19,7 @@ USAGE:
     DocumentService.bulk_status_transition(documents, 'approved', user)
 """
 
-from typing import  Dict, List
+from typing import Dict, List, Optional
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -566,7 +566,348 @@ class DocumentService:
         user_info = f"{self.user.username}" if self.user else "No user"
         return f"DocumentService({doc_info}, {user_info})"
 
+        # =================================================
+        # SEMANTIC ACTION METHODS - NEW ADDITION
+        # =================================================
 
+    def approve(self, comments: str = '') -> Result:
+        """
+        🎯 SEMANTIC ACTION: Approve document
+
+        Automatically finds appropriate completion/approval status for the document type
+        and performs the transition with proper validation.
+
+        Args:
+            comments: Optional approval comments
+
+        Returns:
+            Result with transition details or error
+        """
+        try:
+            logger.info(f"Approving document {self.document.document_number}")
+
+            if not self.document.document_type:
+                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
+
+            # Find appropriate completion status using StatusResolver
+            target_status = self._find_completion_status()
+            if not target_status:
+                return Result.error(
+                    'NO_COMPLETION_STATUS',
+                    'No suitable completion status configured for this document type'
+                )
+
+            # Perform the transition
+            return self.transition_to(target_status, comments)
+
+        except Exception as e:
+            logger.error(f"Document approval failed: {e}")
+            return Result.error('APPROVAL_FAILED', f'Approval failed: {str(e)}')
+
+    def submit_for_approval(self, comments: str = '') -> Result:
+        """
+        🎯 SEMANTIC ACTION: Submit document for approval
+
+        Automatically finds appropriate approval/pending status for the document type
+        and performs the transition with proper validation.
+
+        Args:
+            comments: Optional submission comments
+
+        Returns:
+            Result with transition details or error
+        """
+        try:
+            logger.info(f"Submitting document {self.document.document_number} for approval")
+
+            if not self.document.document_type:
+                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
+
+            # Find appropriate approval status using StatusResolver
+            target_status = self._find_approval_status()
+            if not target_status:
+                return Result.error(
+                    'NO_APPROVAL_STATUS',
+                    'No suitable approval status configured for this document type'
+                )
+
+            # Perform the transition
+            return self.transition_to(target_status, comments)
+
+        except Exception as e:
+            logger.error(f"Document submission failed: {e}")
+            return Result.error('SUBMISSION_FAILED', f'Submission failed: {str(e)}')
+
+    def reject(self, comments: str = '') -> Result:
+        """
+        🎯 SEMANTIC ACTION: Reject/Cancel document
+
+        Automatically finds appropriate rejection/cancellation status for the document type
+        and performs the transition with proper validation.
+
+        Args:
+            comments: Optional rejection reason (usually required)
+
+        Returns:
+            Result with transition details or error
+        """
+        try:
+            logger.info(f"Rejecting document {self.document.document_number}")
+
+            if not self.document.document_type:
+                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
+
+            if not comments:
+                return Result.error('REJECTION_REASON_REQUIRED', 'Rejection reason is required')
+
+            # Find appropriate rejection status using StatusResolver
+            target_status = self._find_rejection_status()
+            if not target_status:
+                return Result.error(
+                    'NO_REJECTION_STATUS',
+                    'No suitable rejection status configured for this document type'
+                )
+
+            # Perform the transition
+            return self.transition_to(target_status, comments)
+
+        except Exception as e:
+            logger.error(f"Document rejection failed: {e}")
+            return Result.error('REJECTION_FAILED', f'Rejection failed: {str(e)}')
+
+    def return_to_draft(self, comments: str = '') -> Result:
+        """
+        🎯 SEMANTIC ACTION: Return document to draft status
+
+        Returns document to editable draft state, usually from approval/pending status.
+
+        Args:
+            comments: Optional reason for returning to draft
+
+        Returns:
+            Result with transition details or error
+        """
+        try:
+            logger.info(f"Returning document {self.document.document_number} to draft")
+
+            if not self.document.document_type:
+                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
+
+            # Find initial status (should be draft-like)
+            target_status = self._find_initial_status()
+            if not target_status:
+                return Result.error(
+                    'NO_INITIAL_STATUS',
+                    'No initial status configured for this document type'
+                )
+
+            # Perform the transition
+            return self.transition_to(target_status, comments)
+
+        except Exception as e:
+            logger.error(f"Return to draft failed: {e}")
+            return Result.error('DRAFT_RETURN_FAILED', f'Return to draft failed: {str(e)}')
+
+    # =================================================
+    # PRIVATE HELPER METHODS FOR STATUS RESOLUTION
+    # =================================================
+
+    def _find_completion_status(self) -> Optional[str]:
+        """Find appropriate completion status for document type"""
+        try:
+            from ._status_resolver import StatusResolver
+
+            # First try: Look for semantic completion statuses
+            completion_statuses = StatusResolver.get_statuses_by_semantic_type(
+                self.document.document_type, 'completion'
+            )
+            if completion_statuses:
+                return list(completion_statuses)[0]
+
+            # Second try: Look in final statuses for completion-like names
+            final_statuses = StatusResolver.get_final_statuses(self.document.document_type)
+            for status in final_statuses:
+                status_lower = status.lower()
+                if any(word in status_lower for word in ['complet', 'finish', 'done', 'approved', 'received']):
+                    return status
+
+            # Third try: Get any final status
+            if final_statuses:
+                return list(final_statuses)[0]
+
+            # Fallback
+            return 'completed'
+
+        except Exception as e:
+            logger.warning(f"Failed to find completion status: {e}")
+            return 'completed'
+
+    def _find_approval_status(self) -> Optional[str]:
+        """Find appropriate approval/pending status for document type"""
+        try:
+            from ._status_resolver import StatusResolver
+
+            # First try: Look for semantic approval statuses
+            approval_statuses = StatusResolver.get_statuses_by_semantic_type(
+                self.document.document_type, 'approval'
+            )
+            if approval_statuses:
+                return list(approval_statuses)[0]
+
+            # Second try: Look for statuses with approval-like names
+            # Get next possible statuses from current status
+            next_statuses = StatusResolver.get_next_possible_statuses(
+                self.document.document_type, self.document.status
+            )
+            for status in next_statuses:
+                status_lower = status.lower()
+                if any(word in status_lower for word in ['pending', 'review', 'approval', 'submit']):
+                    return status
+
+            # Fallback
+            return 'pending_approval'
+
+        except Exception as e:
+            logger.warning(f"Failed to find approval status: {e}")
+            return 'pending_approval'
+
+    def _find_rejection_status(self) -> Optional[str]:
+        """Find appropriate rejection/cancellation status for document type"""
+        try:
+            from ._status_resolver import StatusResolver
+
+            # First try: Look for semantic rejection statuses
+            rejection_statuses = StatusResolver.get_statuses_by_semantic_type(
+                self.document.document_type, 'rejection'
+            )
+            if rejection_statuses:
+                return list(rejection_statuses)[0]
+
+            # Second try: Look for cancellation status
+            cancellation_status = StatusResolver.get_cancellation_status(self.document.document_type)
+            if cancellation_status:
+                return cancellation_status
+
+            # Third try: Look in next possible statuses for rejection-like names
+            next_statuses = StatusResolver.get_next_possible_statuses(
+                self.document.document_type, self.document.status
+            )
+            for status in next_statuses:
+                status_lower = status.lower()
+                if any(word in status_lower for word in ['reject', 'cancel', 'deny', 'refuse']):
+                    return status
+
+            # Fallback
+            return 'rejected'
+
+        except Exception as e:
+            logger.warning(f"Failed to find rejection status: {e}")
+            return 'rejected'
+
+    def _find_initial_status(self) -> Optional[str]:
+        """Find initial status for document type"""
+        try:
+            from ._status_resolver import StatusResolver
+            return StatusResolver.get_initial_status(self.document.document_type)
+        except Exception as e:
+            logger.warning(f"Failed to find initial status: {e}")
+            return 'draft'
+
+    # =================================================
+    # STATUS INQUIRY METHODS
+    # =================================================
+
+    def get_available_semantic_actions(self) -> Dict[str, bool]:
+        """
+        Get available semantic actions for current document state
+
+        Returns:
+            Dict with action availability: {
+                'can_approve': bool,
+                'can_submit': bool,
+                'can_reject': bool,
+                'can_return_to_draft': bool
+            }
+        """
+        try:
+            from ._status_resolver import StatusResolver
+
+            current_status = self.document.status
+            doc_type = self.document.document_type
+
+            if not doc_type:
+                return {'can_approve': False, 'can_submit': False, 'can_reject': False,
+                        'can_return_to_draft': False}
+
+            # Get available transitions from current status
+            available_statuses = StatusResolver.get_next_possible_statuses(doc_type, current_status)
+
+            # Check what semantic actions are possible
+            completion_status = self._find_completion_status()
+            approval_status = self._find_approval_status()
+            rejection_status = self._find_rejection_status()
+            initial_status = self._find_initial_status()
+
+            return {
+                'can_approve': completion_status in available_statuses if completion_status else False,
+                'can_submit': approval_status in available_statuses if approval_status else False,
+                'can_reject': rejection_status in available_statuses if rejection_status else False,
+                'can_return_to_draft': initial_status in available_statuses if initial_status else False
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get semantic actions: {e}")
+            return {'can_approve': False, 'can_submit': False, 'can_reject': False, 'can_return_to_draft': False}
+
+    def get_semantic_action_labels(self) -> Dict[str, str]:
+        """
+        Get user-friendly labels for semantic actions
+
+        Returns:
+            Dict with action labels: {
+                'approve': 'Complete Delivery',
+                'submit': 'Submit for Review',
+                'reject': 'Cancel Delivery',
+                'return_to_draft': 'Return to Draft'
+            }
+        """
+        try:
+            doc_type = self.document.document_type
+
+            if not doc_type:
+                return {}
+
+            # Get status configurations via DocumentType methods (which exist)
+            completion_status = self._find_completion_status()
+            approval_status = self._find_approval_status()
+            rejection_status = self._find_rejection_status()
+            initial_status = self._find_initial_status()
+
+            # Build labels from status codes (simple approach since we can't get status names easily)
+            labels = {}
+
+            if completion_status:
+                labels['approve'] = completion_status.replace('_', ' ').title()
+
+            if approval_status:
+                labels['submit'] = approval_status.replace('_', ' ').title()
+
+            if rejection_status:
+                labels['reject'] = rejection_status.replace('_', ' ').title()
+
+            if initial_status:
+                labels['return_to_draft'] = f"Return to {initial_status.replace('_', ' ').title()}"
+
+            return labels
+
+        except Exception as e:
+            logger.error(f"Failed to get action labels: {e}")
+            return {
+                'approve': 'Approve',
+                'submit': 'Submit for Approval',
+                'reject': 'Reject',
+                'return_to_draft': 'Return to Draft'
+            }
 # =================================================================
 # CONVENIENCE FUNCTIONS FOR BACKWARD COMPATIBILITY
 # =================================================================
@@ -731,3 +1072,6 @@ def recalculate_document_lines(document, user=None, recalc_vat=True, update_pric
         
     except Exception as e:
         return Result.error('RECALCULATION_FAILED', f'Failed to recalculate document lines: {str(e)}')
+
+
+

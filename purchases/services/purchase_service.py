@@ -1,20 +1,20 @@
-# purchases/services/purchase_service.py - REFACTORED TO WORK THROUGH DocumentService
-
+# purchases/services/purchase_service.py
 """
-Purchase Services - TRUE FACADE PATTERN
+Purchase Services - ПЪЛЕН РЕФАКТОР КЪМ THIN WRAPPER
 
-ПРИНЦИП:
-- DocumentService създава и управлява ВСИЧКО
-- PurchaseDocumentService САМО подготвя purchase-specific данни
-- НЕ bypass-ва nomenclatures архитектурата
-- НЕ hardcode-ва статуси, номера или business logic
+ПРИНЦИПИ:
+✅ 100% delegation към DocumentService
+✅ САМО purchase-specific логика (conversions, domain fields)
+✅ 0% дублирана validation/status/numbering логика
+✅ Semantic методи от DocumentService
+❌ НЕ hardcode-ва нищо
+❌ НЕ bypass-ва nomenclatures architecture
 """
 
-from typing import List, Dict
-from decimal import Decimal
-from django.db import transaction
+from typing import List, Dict, Optional
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.db import transaction
 import logging
 
 from core.utils.result import Result
@@ -26,129 +26,140 @@ logger = logging.getLogger(__name__)
 
 class PurchaseDocumentService:
     """
-    TRUE thin wrapper за purchase documents
+    THIN WRAPPER around DocumentService for Purchase domain
 
-    Подготвя purchase-specific данни и делегира ВСИЧКО към DocumentService
+    RESPONSIBILITIES:
+    - Purchase-specific field mapping and validation
+    - Document type routing (delivery/order/request)
+    - Purchase domain conversions
+    - Pure delegation to DocumentService
     """
 
-    def __init__(self, document=None, user: User = None):
+    def __init__(self, document, user: User):
         self.document = document
         self.user = user
-
-        # Facade се създава при нужда, не винаги
-        self._facade = None
+        self._facade: Optional[DocumentService] = None
 
     @property
     def facade(self) -> DocumentService:
-        """Lazy facade creation"""
+        """Lazy DocumentService facade creation"""
         if self._facade is None:
             self._facade = DocumentService(self.document, self.user)
         return self._facade
 
-    def create_document(self, doc_type: str, partner, location, lines: List[dict], **kwargs) -> Result:
-        """
-        Create purchase document using PURE DocumentService delegation
+    # =================================================
+    # DOCUMENT CREATION - ТОЛЬКО purchase field mapping
+    # =================================================
 
-        АРХИТЕКТУРЕН ПРИНЦИП:
-        - DocumentService създава документа с правилен статус
-        - PurchaseDocumentService САМО подготвя данните
+    @transaction.atomic
+    def create_document(
+            self,
+            doc_type: str,
+            partner,
+            location,
+            lines: List[dict],
+            **kwargs
+    ) -> Result:
+        """
+        Create purchase document with proper DocumentService integration
+
+        CHANGED:
+        - БЕЗ hardcoded status
+        - БЕЗ manual save в DB
+        - DocumentService контролира lifecycle
         """
         try:
-            # 1. Подготви данни за DocumentService
-            lines_data = self._prepare_lines_data(lines)
+            logger.info(f"Creating {doc_type} document for partner {partner}")
 
-            # 2. Създай EMPTY model instance (БЕЗ save в database)
+            # 1. ✅ Purchase-specific validation
+            lines_data = self._prepare_lines_data(lines)
+            if not lines_data:
+                return Result.error('INVALID_LINES', 'No valid lines provided')
+
+            # 2. ✅ Create EMPTY instance (БЕЗ save!)
             doc_instance = self._create_empty_instance(doc_type, partner, location, **kwargs)
             if not doc_instance:
-                return Result.error('INSTANCE_CREATION_FAILED', f'Could not create {doc_type} instance')
+                return Result.error('INSTANCE_CREATION_FAILED', f'Failed to create {doc_type} instance')
 
-            # 3. DocumentService управлява ЦЕЛИЯ lifecycle
+            # 3. ✅ DocumentService управлява всичко
             doc_facade = DocumentService(doc_instance, self.user)
 
-            # 4. DocumentService се грижи за validation, status, numbering, save
-            creation_result = doc_facade.create(**kwargs)
+            # Create document (sets proper status via StatusResolver)
+            creation_result = doc_facade.create()
             if not creation_result.ok:
                 return creation_result
 
-            # 5. Add lines чрез DocumentService
-            added_lines = []
+            # 4. ✅ Add lines чрез facade
             for line_data in lines_data:
                 line_result = doc_facade.add_line(**line_data)
-                if line_result.ok:
-                    added_lines.append(line_result.data['line'])
-                else:
-                    logger.warning(f"Line add failed: {line_result.msg}")
+                if not line_result.ok:
+                    logger.warning(f"Failed to add line: {line_result.msg}")
 
-            # 6. Calculate totals чрез DocumentService
+            # 5. ✅ Calculate totals чрез facade
             totals_result = doc_facade.calculate_totals()
             if not totals_result.ok:
-                logger.warning(f"Failed to calculate totals: {totals_result.msg}")
+                logger.warning(f"Totals calculation failed: {totals_result.msg}")
 
-            # Update our facade reference
-            self.document = doc_instance
-            self._facade = doc_facade
+            logger.info(f"Successfully created {doc_type} {doc_instance.document_number}")
 
-            return Result.success(
-                data={'document': doc_instance, 'lines': added_lines},
-                msg=f'{doc_type.title()} created with {len(added_lines)} lines'
-            )
+            return Result.success({
+                'document': doc_instance,
+                'status': doc_instance.status,
+                'number': doc_instance.document_number
+            })
 
         except Exception as e:
-            logger.error(f"Error creating {doc_type}: {e}")
-            return Result.error('CREATION_ERROR', str(e))
-
-    def _prepare_lines_data(self, lines: List[dict]) -> List[dict]:
-        """Prepare line items data for DocumentService"""
-        lines_data = []
-        for line in lines:
-            line_data = {
-                'product': line['product'],
-                'quantity': Decimal(str(line['quantity'])),
-                **{k: v for k, v in line.items() if k not in ['product', 'quantity']}
-            }
-            lines_data.append(line_data)
-        return lines_data
+            logger.error(f"Document creation failed: {e}")
+            return Result.error('CREATION_FAILED', f'Document creation failed: {str(e)}')
 
     def _create_empty_instance(self, doc_type: str, partner, location, **kwargs):
         """
-        Create model instance WITHOUT saving to database
+        Create document instance WITHOUT saving to database
 
-        КЛЮЧОВ ПРИНЦИП: САМО подготвя instance, DocumentService go save-ва
+        CHANGED:
+        - БЕЗ 'status': 'draft' hardcoding!
+        - БЕЗ .objects.create() calls
+        - САМО purchase-specific fields
         """
         try:
-            # Base data БЕЗ status! DocumentService го сеща от конфигурация
+            # Common fields for all purchase documents
             base_data = {
                 'partner': partner,
                 'location': location,
                 'document_date': kwargs.get('document_date', timezone.now().date()),
                 'notes': kwargs.get('comments', ''),
                 'created_by': self.user,
-                'updated_by': self.user,
-                # НЕ СЕТАЙ STATUS! DocumentService използва StatusResolver!
+                'updated_by': self.user
+                # ✅ НЕ сетай status! DocumentService go прави!
             }
 
-            if doc_type == 'request':
-                from purchases.models import PurchaseRequest
-                base_data['required_by_date'] = (
-                        kwargs.get('required_by_date') or
-                        kwargs.get('expected_delivery_date')
-                )
-                return PurchaseRequest(**base_data)  # БЕЗ .objects.create()!
-
-            elif doc_type == 'order':
-                from purchases.models import PurchaseOrder
-                base_data['expected_delivery_date'] = kwargs.get('expected_delivery_date')
-                return PurchaseOrder(**base_data)  # БЕЗ .objects.create()!
-
-            elif doc_type == 'delivery':
+            # Document-specific fields
+            if doc_type == 'delivery':
                 from purchases.models import DeliveryReceipt
-                # САМО delivery-specific полета
                 base_data.update({
-                    'received_by': self.user,
+                    'received_by': kwargs.get('received_by', self.user),
                     'delivery_date': kwargs.get('delivery_date', kwargs.get('document_date', timezone.now().date())),
                     'supplier_delivery_reference': kwargs.get('supplier_delivery_reference', ''),
                 })
-                return DeliveryReceipt(**base_data)  # БЕЗ .objects.create()!
+                return DeliveryReceipt(**base_data)  # ✅ БЕЗ .create()!
+
+            elif doc_type == 'order':
+                from purchases.models import PurchaseOrder
+                base_data.update({
+                    'expected_delivery_date': kwargs.get('expected_delivery_date'),
+                    'supplier_order_reference': kwargs.get('supplier_order_reference', ''),
+                })
+                return PurchaseOrder(**base_data)  # ✅ БЕЗ .create()!
+
+            elif doc_type == 'request':
+                from purchases.models import PurchaseRequest
+                base_data.update({
+                    'requested_by': kwargs.get('requested_by', self.user),
+                    'priority': kwargs.get('priority', 'normal'),
+                    'justification': kwargs.get('justification', ''),
+                })
+                return PurchaseRequest(**base_data)  # ✅ БЕЗ .create()!
+
             else:
                 logger.error(f"Unknown document type: {doc_type}")
                 return None
@@ -158,244 +169,147 @@ class PurchaseDocumentService:
             return None
 
     # =================================================
-    # PURE DELEGATION METHODS - НЕ hardcode-ват нищо
+    # SEMANTIC ACTIONS - PURE DELEGATION
     # =================================================
 
-    def submit_for_approval(self, comments='') -> Result:
-        """Submit for approval using dynamic status resolution"""
-        try:
-            # Let DocumentService determine the approval status
-            from nomenclatures.services._status_resolver import StatusResolver
+    def approve(self, comments: str = '') -> Result:
+        """✅ PURE DELEGATION: Approve document"""
+        return self.facade.approve(comments)
 
-            if self.document.document_type:
-                approval_statuses = StatusResolver.get_statuses_by_semantic_type(
-                    self.document.document_type, 'approval'
-                )
-                if approval_statuses:
-                    target_status = list(approval_statuses)[0]  # First approval status
-                else:
-                    target_status = 'pending_approval'  # Fallback
-            else:
-                target_status = 'pending_approval'  # Fallback
+    def submit_for_approval(self, comments: str = '') -> Result:
+        """✅ PURE DELEGATION: Submit for approval"""
+        return self.facade.submit_for_approval(comments)
 
-            return self.facade.transition_to(target_status, comments)
+    def reject(self, comments: str = '') -> Result:
+        """✅ PURE DELEGATION: Reject document"""
+        return self.facade.reject(comments)
 
-        except Exception as e:
-            logger.warning(f"Dynamic approval status failed: {e}, using fallback")
-            return self.facade.transition_to('pending_approval', comments)
-
-    def approve(self, comments='') -> Result:
-        """Approve document using dynamic status resolution"""
-        try:
-            # Let StatusResolver determine completion status
-            from nomenclatures.services._status_resolver import StatusResolver
-
-            if self.document.document_type:
-                final_statuses = StatusResolver.get_final_statuses(self.document.document_type)
-                if final_statuses:
-                    # Find a completion-like status
-                    for status in final_statuses:
-                        if any(word in status.lower() for word in ['complet', 'finish', 'done']):
-                            target_status = status
-                            break
-                    else:
-                        target_status = list(final_statuses)[0]  # First final status
-                else:
-                    target_status = 'completed'  # Fallback
-            else:
-                target_status = 'completed'  # Fallback
-
-            logger.info(f"Approving {self.document.document_number} -> {target_status}")
-            return self.facade.transition_to(target_status, comments)
-
-        except Exception as e:
-            logger.warning(f"Dynamic approval status failed: {e}, using fallback")
-            return self.facade.transition_to('completed', comments)
-
-    def reject(self, comments='') -> Result:
-        """Reject document using dynamic status resolution"""
-        try:
-            # Let StatusResolver determine cancellation status
-            from nomenclatures.services._status_resolver import StatusResolver
-
-            if self.document.document_type:
-                cancellation_statuses = StatusResolver.get_statuses_by_semantic_type(
-                    self.document.document_type, 'cancellation'
-                )
-                if cancellation_statuses:
-                    target_status = list(cancellation_statuses)[0]  # First cancellation status
-                else:
-                    target_status = 'cancelled'  # Fallback
-            else:
-                target_status = 'cancelled'  # Fallback
-
-            logger.info(f"Rejecting {self.document.document_number} -> {target_status}")
-            return self.facade.transition_to(target_status, comments)
-
-        except Exception as e:
-            logger.warning(f"Dynamic rejection status failed: {e}, using fallback")
-            return self.facade.transition_to('cancelled', comments)
-
-    # Pure delegation methods - no business logic
-    def add_line(self, product, quantity, **kwargs) -> Result:
-        return self.facade.add_line(product, Decimal(str(quantity)), **kwargs)
-
-    def remove_line(self, line_number: int) -> Result:
-        return self.facade.remove_line(line_number)
-
-    def calculate_totals(self) -> Result:
-        return self.facade.calculate_totals()
-
-    def can_edit(self) -> bool:
-        return self.facade.can_edit()
-
-    def can_delete(self) -> bool:
-        return self.facade.can_delete()
-
-    def transition_to(self, status: str, comments='') -> Result:
-        return self.facade.transition_to(status, comments)
+    def return_to_draft(self, comments: str = '') -> Result:
+        """✅ PURE DELEGATION: Return to draft"""
+        return self.facade.return_to_draft(comments)
 
     # =================================================
-    # DOMAIN-SPECIFIC: Purchase conversions (unchanged)
+    # PURCHASE-SPECIFIC BUSINESS LOGIC
     # =================================================
 
-    @transaction.atomic
-    def convert_to_order(self, **order_data) -> Result:
-        """Convert Request → Order using facade operations"""
+    def convert_to_delivery(self, delivery_data: Dict) -> Result:
+        """
+        Convert PurchaseOrder → DeliveryReceipt
+        ТОВА е purchase-specific логика която ОСТАВА тук
+        """
         try:
-            if not self.document:
-                return Result.error('INVALID_CONVERSION', 'No document provided')
+            if not hasattr(self.document, 'lines'):
+                return Result.error('NO_LINES', 'Source document has no lines')
 
-            doc_type_key = getattr(self.document.document_type, 'type_key', None)
-            if doc_type_key not in ['purchase_request', 'purchaserequest']:
-                if self.document.__class__.__name__ != 'PurchaseRequest':
-                    return Result.error('INVALID_CONVERSION', 'Only PurchaseRequest can convert to Order')
-
-            if not self.facade.can_edit():
-                return Result.error('CANNOT_CONVERT', 'Request cannot be modified')
-
-            # Подготви order data
-            lines = []
-            for req_line in self.document.lines.all():
-                lines.append({
-                    'product': req_line.product,
-                    'quantity': req_line.requested_quantity,
-                    'unit_price': order_data.get('unit_price_override') or req_line.estimated_price or Decimal('0'),
-                    'unit': req_line.unit
-                })
-
-            # Създай order чрез service
-            order_result = self.create_document(
-                'order',
-                self.document.partner,
-                self.document.location,
-                lines,
-                expected_delivery_date=order_data.get('expected_delivery_date') or self.document.expected_delivery_date,
-                comments=f'Converted from request {self.document.document_number}'
-            )
-
-            if order_result.ok:
-                self.transition_to('converted', 'Converted to order')
-                return Result.success(
-                    data={'order': order_result.data['document'], 'request': self.document},
-                    msg=f'Request converted to order'
+            # Validate conversion is allowed
+            if self.document.status not in ['approved', 'confirmed', 'sent']:
+                return Result.error(
+                    'INVALID_STATUS_FOR_CONVERSION',
+                    f'Cannot convert document with status: {self.document.status}'
                 )
-            else:
-                return order_result
 
-        except Exception as e:
-            logger.error(f"Conversion failed: {e}")
-            return Result.error('CONVERSION_ERROR', str(e))
-
-    @transaction.atomic
-    def convert_to_delivery(self, **delivery_data) -> Result:
-        """Convert Order → Delivery using facade operations"""
-        try:
-            if not self.document:
-                return Result.error('INVALID_CONVERSION', 'No document provided')
-
-            doc_type_key = getattr(self.document.document_type, 'type_key', None)
-            if doc_type_key not in ['purchase_order', 'purchaseorder']:
-                if self.document.__class__.__name__ != 'PurchaseOrder':
-                    return Result.error('INVALID_CONVERSION', 'Only PurchaseOrder can convert to Delivery')
-
-            if not self.facade.can_edit():
-                return Result.error('CANNOT_CONVERT', 'Order cannot be modified')
-
-            # Подготви delivery lines
-            lines = []
+            # Map order lines to delivery lines
+            delivery_lines = []
             for order_line in self.document.lines.all():
-                received_qty = delivery_data.get('received_quantities', {}).get(
-                    str(order_line.line_number), order_line.ordered_quantity
-                )
-                lines.append({
+                delivery_lines.append({
                     'product': order_line.product,
-                    'quantity': received_qty,
+                    'quantity': order_line.quantity,
                     'unit_price': order_line.unit_price,
-                    'entered_price': order_line.unit_price,
-                    'unit': order_line.unit
+                    'source_line': order_line  # Reference to original
                 })
 
-            # Създай delivery чрез service
-            delivery_result = self.create_document(
-                'delivery',
-                self.document.partner,
-                self.document.location,
-                lines,
-                delivery_date=delivery_data.get('delivery_date', timezone.now().date()),
-                comments=f'Converted from order {self.document.document_number}'
+            # Create delivery with proper linking - use class method!
+            result = DeliveryReceiptService.create(
+                user=self.user,  # ✅ Pass user as parameter
+                partner=self.document.partner,
+                location=self.document.location,
+                lines=delivery_lines,
+                source_document=self.document,  # Link to order
+                **delivery_data
             )
 
-            if delivery_result.ok:
-                self.transition_to('converted', 'Converted to delivery')
-                return Result.success(
-                    data={'delivery': delivery_result.data['document'], 'order': self.document},
-                    msg=f'Order converted to delivery'
-                )
-            else:
-                return delivery_result
+            if result.ok:
+                # Update order status to 'delivered' or similar
+                delivered_result = self.facade.transition_to('delivered', 'Converted to delivery')
+                if not delivered_result.ok:
+                    logger.warning(f"Failed to update order status: {delivered_result.msg}")
+
+            return result
 
         except Exception as e:
-            logger.error(f"Conversion failed: {e}")
-            return Result.error('CONVERSION_ERROR', str(e))
+            logger.error(f"Order to delivery conversion failed: {e}")
+            return Result.error('CONVERSION_FAILED', f'Conversion failed: {str(e)}')
+
+    def _prepare_lines_data(self, lines: List[dict]) -> List[dict]:
+        """
+        Purchase-specific line preparation
+        ТОВА също остава - purchase domain logic
+        """
+        prepared_lines = []
+
+        for line in lines:
+            if not line.get('product') or not line.get('quantity'):
+                continue
+
+            line_data = {
+                'product': line['product'],
+                'quantity': line['quantity'],
+                'unit_price': line.get('unit_price', line['product'].selling_price),
+                'vat_rate': line.get('vat_rate', line['product'].vat_rate),
+                'discount_rate': line.get('discount_rate', 0),
+                'notes': line.get('notes', '')
+            }
+
+            # Purchase-specific calculations
+            if hasattr(line['product'], 'purchase_price'):
+                line_data['cost_price'] = line['product'].purchase_price
+
+            prepared_lines.append(line_data)
+
+        return prepared_lines
 
 
-# =================================================================
-# CONVENIENCE SERVICES - Ultra-thin wrappers (unchanged)
-# =================================================================
+# =================================================
+# SPECIALIZED PURCHASE SERVICES - THIN WRAPPERS
+# =================================================
 
-class PurchaseRequestService:
-    """Convenience wrapper за requests"""
+class DeliveryReceiptService(PurchaseDocumentService):
+    """Delivery Receipt operations"""
 
-    @staticmethod
-    def create(user: User, partner, location, lines: List[dict], **kwargs) -> Result:
-        service = PurchaseDocumentService(user=user)
-        return service.create_document('request', partner, location, lines, **kwargs)
-
-    @staticmethod
-    def convert_to_order(request, user: User, **order_data) -> Result:
-        service = PurchaseDocumentService(request, user)
-        return service.convert_to_order(**order_data)
+    @classmethod
+    def create(cls, user: User, partner, location, lines: List[dict], **kwargs) -> Result:
+        """Create new delivery receipt"""
+        service = cls(None, user)  # No document yet
+        return service.create_document('delivery', partner, location, lines, **kwargs)
 
 
-class PurchaseOrderService:
-    """Convenience wrapper за orders"""
+class PurchaseOrderService(PurchaseDocumentService):
+    """Purchase Order operations"""
 
-    @staticmethod
-    def create(user: User, partner, location, lines: List[dict], **kwargs) -> Result:
-        service = PurchaseDocumentService(user=user)
+    @classmethod
+    def create(cls, user: User, partner, location, lines: List[dict], **kwargs) -> Result:
+        """Create new purchase order"""
+        service = cls(None, user)  # No document yet
         return service.create_document('order', partner, location, lines, **kwargs)
 
-    @staticmethod
-    def convert_to_delivery(order, user: User, **delivery_data) -> Result:
-        service = PurchaseDocumentService(order, user)
-        return service.convert_to_delivery(**delivery_data)
+
+class PurchaseRequestService(PurchaseDocumentService):
+    """Purchase Request operations"""
+
+    @classmethod
+    def create(cls, user: User, partner, location, lines: List[dict], **kwargs) -> Result:
+        """Create new purchase request"""
+        service = cls(None, user)  # No document yet
+        return service.create_document('request', partner, location, lines, **kwargs)
 
 
-class DeliveryReceiptService:
-    """Convenience wrapper за deliveries"""
+# =================================================
+# BACKWARD COMPATIBILITY EXPORTS
+# =================================================
 
-    @staticmethod
-    def create(user: User, partner, location, lines: List[dict], **kwargs) -> Result:
-        service = PurchaseDocumentService(user=user)
-        return service.create_document('delivery', partner, location, lines, **kwargs)
+__all__ = [
+    'PurchaseDocumentService',
+    'DeliveryReceiptService',
+    'PurchaseOrderService',
+    'PurchaseRequestService'
+]
