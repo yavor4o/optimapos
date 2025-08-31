@@ -138,146 +138,6 @@ class DeliveryReceiptListView(LoginRequiredMixin, PermissionRequiredMixin, ListV
             }
 
 
-class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, DetailView, ServiceResolverMixin):
-    """
-    Delivery Receipt Detail View с inventory tracking
-    
-    Features:
-    - Complete delivery information
-    - Line items with quality status
-    - Inventory movements tracking
-    - Action buttons (approve, reject, edit)
-    - Related documents links
-    """
-    model = DeliveryReceipt
-    template_name = 'frontend/purchases/deliveries/detail.html'
-    context_object_name = 'delivery_receipt'
-    permission_required = 'purchases.view_deliveryreceipt'
-    
-    def get_queryset(self):
-        return DeliveryReceipt.objects.select_related(
-            'partner_content_type',
-            'location_content_type',
-            'received_by',
-            'source_order'
-        ).prefetch_related(
-            'lines__product',
-            'lines__unit',
-            'lines__source_order_line'
-        )
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        delivery = self.object
-        
-        context.update({
-            'page_title': f'Delivery Receipt {delivery.document_number}',
-            'can_edit': self.request.user.has_perm('purchases.change_deliveryreceipt'),
-            'can_approve': self.request.user.has_perm('purchases.approve_deliveryreceipt'),
-            
-            # Line items with enhanced data
-            'delivery_lines': self.get_enhanced_lines(delivery),
-            
-            # Related information
-            'inventory_movements': self.get_inventory_movements(delivery),
-            'related_documents': self.get_related_documents(delivery),
-            
-            # Action availability
-            'actions_available': self.get_available_actions(delivery),
-        })
-        return context
-    
-    def get_enhanced_lines(self, delivery):
-        """Get delivery lines with calculated fields"""
-        lines = []
-        for line in delivery.lines.all():
-            # Determine quality status display
-            if line.quality_approved is True:
-                quality_display = 'Approved'
-            elif line.quality_approved is False:
-                quality_display = 'Rejected'
-            else:
-                quality_display = 'Pending'
-            
-            line_data = {
-                'line': line,
-                'variance_quantity': line.received_quantity - (line.ordered_quantity or 0),
-                'variance_percentage': self.calculate_variance_percentage(
-                    line.received_quantity, 
-                    line.ordered_quantity
-                ),
-                'quality_status_display': quality_display,
-                'total_value': line.received_quantity * (line.unit_price or 0),
-            }
-            lines.append(line_data)
-        return lines
-    
-    def calculate_variance_percentage(self, received, ordered):
-        """Calculate delivery variance percentage"""
-        if not ordered or ordered == 0:
-            return 0
-        return ((received - ordered) / ordered) * 100
-    
-    def get_inventory_movements(self, delivery):
-        """Get related inventory movements"""
-        # TODO: Integrate with InventoryService
-        try:
-            inventory_service = self.get_service('IInventoryService')
-            return inventory_service.get_movements_for_delivery(delivery)
-        except Exception:
-            return []
-    
-    def get_related_documents(self, delivery):
-        """Get related documents (PO, Invoices, etc.)"""
-        related = {}
-        if delivery.source_order:
-            related['purchase_order'] = delivery.source_order
-        return related
-    
-    def get_available_actions(self, delivery):
-        """Determine which actions are available for this delivery using StatusResolver"""
-        from nomenclatures.services._status_resolver import StatusResolver, can_edit_in_status, can_delete_in_status
-        
-        user = self.request.user
-        actions = {
-            'can_edit': False,
-            'can_approve': False,
-            'can_reject': False,
-            'can_quality_check': False,
-        }
-        
-        try:
-            # Use StatusResolver for dynamic status checking
-            if can_edit_in_status(delivery) and user.has_perm('purchases.change_deliveryreceipt'):
-                actions['can_edit'] = True
-            
-            # Check if document is in editable status for approval actions
-            editable_statuses = StatusResolver.get_editable_statuses(delivery.document_type)
-            if delivery.status in editable_statuses:
-                if user.has_perm('purchases.approve_deliveryreceipt'):
-                    actions['can_approve'] = True
-                    actions['can_reject'] = True
-            
-            # Quality check availability - keep quality status logic as is (business specific)
-            if delivery.quality_status == 'pending':
-                if user.has_perm('purchases.quality_check_deliveryreceipt'):
-                    actions['can_quality_check'] = True
-                    
-        except Exception:
-            # Fallback to hardcoded logic if StatusResolver fails
-            if delivery.status == 'draft':
-                if user.has_perm('purchases.change_deliveryreceipt'):
-                    actions['can_edit'] = True
-                if user.has_perm('purchases.approve_deliveryreceipt'):
-                    actions['can_approve'] = True
-                    actions['can_reject'] = True
-            
-            if delivery.quality_status == 'pending':
-                if user.has_perm('purchases.quality_check_deliveryreceipt'):
-                    actions['can_quality_check'] = True
-        
-        return actions
-
 
 # purchases/views.py - DeliveryReceiptCreateView REFACTORED
 """
@@ -566,41 +426,122 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
     def prepare_lines_data(self):
         """
-        Prepare line items from form data
+        Prepare line items from form data - FIXED to match JavaScript
 
-        NOTE: This method остава същия - purchase-specific logic
+        PROBLEM: POST field names не match-ваха с JavaScript template
+        SOLUTION: Correct field name parsing и validation
         """
         lines = []
 
-        # Get line data from POST (assuming AJAX or formset)
-        line_count = 0
-        for key in self.request.POST:
+        # ✅ DEBUG: Log all POST data за debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("=== PREPARE_LINES_DATA DEBUG ===")
+        logger.debug(f"All POST keys: {list(self.request.POST.keys())}")
+
+        # ✅ FIXED: Correct field name pattern matching
+        # JavaScript създава полета като: line_product_0, line_quantity_0, etc.
+        line_indices = set()
+
+        # Find all line indices from POST data
+        for key in self.request.POST.keys():
             if key.startswith('line_product_'):
-                line_index = key.split('_')[-1]
-
                 try:
-                    product_id = self.request.POST.get(f'line_product_{line_index}')
-                    quantity = self.request.POST.get(f'line_quantity_{line_index}', '0')
-                    unit_price = self.request.POST.get(f'line_unit_price_{line_index}', '0')
-
-                    if product_id and float(quantity) > 0:
-                        from products.models import Product
-                        product = Product.objects.get(pk=product_id)
-
-                        lines.append({
-                            'product': product,
-                            'quantity': float(quantity),
-                            'unit_price': float(unit_price) if unit_price else product.selling_price,
-                            'received_quantity': float(quantity),  # Default для delivery
-                            'notes': self.request.POST.get(f'line_notes_{line_index}', '')
-                        })
-                        line_count += 1
-
-                except (ValueError, Product.DoesNotExist) as e:
-                    logger.warning(f"Invalid line data for index {line_index}: {e}")
+                    index = key.split('_')[-1]  # Get index from line_product_0
+                    line_indices.add(index)
+                except (IndexError, ValueError):
                     continue
 
-        logger.info(f"Prepared {line_count} line items for delivery creation")
+        logger.debug(f"Found line indices: {line_indices}")
+
+        # Process each line
+        for index in line_indices:
+            try:
+                # ✅ FIXED: Correct POST field names
+                product_id = self.request.POST.get(f'line_product_{index}')
+                quantity = self.request.POST.get(f'line_quantity_{index}')
+                unit_price = self.request.POST.get(f'line_unit_price_{index}')
+                notes = self.request.POST.get(f'line_notes_{index}', '')
+
+                logger.debug(f"Line {index}: product_id={product_id}, quantity={quantity}, price={unit_price}")
+
+                # ✅ Skip empty lines
+                if not product_id or not quantity:
+                    logger.debug(f"Skipping line {index}: missing product_id or quantity")
+                    continue
+
+                # ✅ Validate quantity
+                try:
+                    quantity_decimal = float(quantity)
+                    if quantity_decimal <= 0:
+                        logger.warning(f"Skipping line {index}: invalid quantity {quantity}")
+                        continue
+                except (ValueError, TypeError):
+                    logger.warning(f"Skipping line {index}: cannot parse quantity {quantity}")
+                    continue
+
+                # ✅ Get product object
+                try:
+                    from products.models import Product
+                    product = Product.objects.get(pk=product_id)
+                except Product.DoesNotExist:
+                    logger.warning(f"Skipping line {index}: product {product_id} not found")
+                    continue
+
+                # ✅ Parse unit price with fallback
+                try:
+                    unit_price_decimal = float(unit_price) if unit_price else product.selling_price
+                except (ValueError, TypeError):
+                    unit_price_decimal = product.selling_price
+
+                # ✅ Build line data for service
+                line_data = {
+                    'product': product,
+                    'quantity': quantity_decimal,  # Service expects 'quantity'
+                    'unit_price': unit_price_decimal,
+                    'received_quantity': quantity_decimal,  # For delivery-specific logic
+                    'notes': notes,
+                    # ✅ Add default unit if available
+                    'unit': getattr(product, 'base_unit', None),
+                    # ✅ Default quality status for new deliveries
+                    'quality_approved': None,  # Pending quality control
+                    'quality_notes': '',
+                }
+
+                lines.append(line_data)
+                logger.debug(f"Added line {index}: {product.code} x {quantity_decimal}")
+
+            except Exception as e:
+                logger.error(f"Error processing line {index}: {e}")
+                continue
+
+        logger.debug(f"Total lines prepared: {len(lines)}")
+
+        # ✅ Provide feedback about lines
+        if not lines:
+            logger.warning("No valid lines found in POST data")
+
+            # ✅ ENHANCED DEBUG: Show what we're looking for vs what we found
+            expected_patterns = ['line_product_*', 'line_quantity_*', 'line_unit_price_*']
+            found_patterns = []
+            for key in self.request.POST.keys():
+                if any(pattern.replace('*', '') in key for pattern in expected_patterns):
+                    found_patterns.append(key)
+
+            logger.debug(f"Expected patterns: {expected_patterns}")
+            logger.debug(f"Found matching keys: {found_patterns}")
+
+            # ✅ Try alternative field patterns (in case template is different)
+            alternative_patterns = ['item_product_', 'items-', 'product_', 'quantity_']
+            found_alternatives = []
+            for key in self.request.POST.keys():
+                if any(pattern in key for pattern in alternative_patterns):
+                    found_alternatives.append(key)
+
+            if found_alternatives:
+                logger.debug(f"Found alternative patterns: {found_alternatives}")
+                logger.debug("Template might be using different field naming convention")
+
         return lines
 
 
@@ -852,11 +793,79 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
                 'error': f'Failed to load actions: {str(e)}'
             }
 
-    # Existing methods остават същите...
     def get_enhanced_lines(self, delivery):
-        """Same as before - enhanced line data"""
-        # ... existing implementation
-        pass
+        """
+        Get delivery lines with calculated fields - FIXED
+
+        PROBLEM: Старата версия очакваше различна структура
+        SOLUTION: Правилна line structure и field access
+        """
+        lines = []
+
+        # ✅ Check if delivery has lines
+        if not hasattr(delivery, 'lines') or not delivery.lines.exists():
+            return lines
+
+        for line in delivery.lines.all():
+            try:
+                # ✅ FIXED: Правилен field access
+                # Check which fields actually exist on the model
+                product = line.product if hasattr(line, 'product') else None
+                if not product:
+                    continue  # Skip lines without products
+
+                # ✅ FIXED: Safe field access with defaults
+                received_quantity = getattr(line, 'received_quantity', 0) or 0
+                ordered_quantity = getattr(line, 'ordered_quantity', 0) or getattr(line, 'quantity', 0) or 0
+                unit_price = getattr(line, 'unit_price', 0) or 0
+
+                # Quality status - safe access
+                quality_approved = getattr(line, 'quality_approved', None)
+                if quality_approved is True:
+                    quality_display = 'Approved'
+                elif quality_approved is False:
+                    quality_display = 'Rejected'
+                else:
+                    quality_display = 'Pending'
+
+                # ✅ FIXED: Calculate variance safely
+                variance_quantity = received_quantity - ordered_quantity
+                variance_percentage = 0
+                if ordered_quantity and ordered_quantity > 0:
+                    variance_percentage = ((received_quantity - ordered_quantity) / ordered_quantity) * 100
+
+                # ✅ Build enhanced line data
+                line_data = {
+                    'product': product,
+                    'line_number': getattr(line, 'line_number', 0),
+                    'received_quantity': received_quantity,
+                    'ordered_quantity': ordered_quantity,
+                    'unit_price': unit_price,
+                    'unit': getattr(line, 'unit', None),
+                    'line_total': received_quantity * unit_price,
+                    'variance_quantity': variance_quantity,
+                    'variance_percentage': variance_percentage,
+                    'quality_status_display': quality_display,
+                    'quality_approved': quality_approved,
+                    'quality_notes': getattr(line, 'quality_notes', ''),
+                    'batch_number': getattr(line, 'batch_number', ''),
+                    'expiry_date': getattr(line, 'expiry_date', None),
+                    'source_order_line': getattr(line, 'source_order_line', None),
+
+                    # ✅ Keep original line object для template
+                    'line': line,
+                }
+
+                lines.append(line_data)
+
+            except Exception as e:
+                # ✅ Log errors but don't break the whole view
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error processing delivery line {getattr(line, 'id', 'unknown')}: {e}")
+                continue
+
+        return lines
 
     def get_inventory_movements(self, delivery):
         """Same as before - inventory tracking"""
