@@ -82,7 +82,7 @@ class VATCalculationService:
                     'vat_amount_per_unit': 'vat_amount',
                     'line_total_without_vat': 'net_amount', 
                     'line_total_with_vat': 'gross_amount',
-                    'unit_price': 'unit_price_with_vat'  # Map calculated unit_price to unit_price_with_vat
+                    'unit_price_with_vat': 'unit_price_with_vat'  # ✅ FIXED: правилен mapping
                 }
                 
                 for calc_field, line_field in field_mapping.items():
@@ -294,8 +294,12 @@ class VATCalculationService:
     # =====================================================
 
     @classmethod
-    def _calculate_line_totals_internal(cls, line, entered_price: Decimal) -> Dict:
+    def _calculate_line_totals_internal(cls, line, entered_price) -> Dict:
         """✅ FIXED VERSION - LINE-LEVEL ROUNDING според търговски стандарти"""
+
+        # ✅ ENSURE entered_price is Decimal
+        if not isinstance(entered_price, Decimal):
+            entered_price = Decimal(str(entered_price))
 
         document = getattr(line, 'document', None)
         product = getattr(line, 'product', None)
@@ -362,8 +366,8 @@ class VATCalculationService:
                 unit_price_with_vat = Decimal('0.00')
 
             result.update({
-                'unit_price': unit_price_with_vat,  # Може да има повече от 2 digits
-                'unit_price_without_vat': unit_price_without_vat,
+                'unit_price': unit_price_without_vat,  # ✅ FIXED: unit_price трябва да е БЕЗ ДДС
+                'unit_price_with_vat': unit_price_with_vat,
                 'vat_amount_per_unit': vat_amount_per_unit,
                 'line_total_without_vat': line_total_without_vat,  # ✅ ТОЧНО закръглен
                 'line_vat_amount': line_vat_amount,  # ✅ ТОЧНО закръглен
@@ -387,39 +391,32 @@ class VATCalculationService:
         }
 
         if hasattr(document, 'lines'):
-            # Calculate totals from line_total properties (works for all line types)
-            subtotal = Decimal('0')
+            # ✅ FIXED: Sum up net_amount and gross_amount directly from lines
+            subtotal_net = Decimal('0')  # Sum of net_amount (БЕЗ ДДС)
+            subtotal_gross = Decimal('0')  # Sum of gross_amount (С ДДС)
+            vat_total = Decimal('0')  # Sum of VAT amounts
             lines_count = 0
             
             for line in document.lines.all():
-                if hasattr(line, 'line_total'):
-                    line_total = line.line_total
-                    if line_total:
-                        subtotal += line_total
-                        lines_count += 1
-                        
-            # Calculate VAT based on document settings
-            if subtotal > 0:
-                # Default VAT rate for Bulgaria is 20%
-                vat_rate = Decimal('0.20')
-                prices_include_vat = getattr(document, 'prices_entered_with_vat', False)
+                if hasattr(line, 'net_amount') and line.net_amount:
+                    subtotal_net += line.net_amount
+                    lines_count += 1
                 
-                if prices_include_vat:
-                    # Extract VAT from total - FIXED: Use standardized tax calculations
-                    vat_calc_result = calculate_vat_from_gross(subtotal, vat_rate)
-                    subtotal_without_vat = vat_calc_result['net_amount']
-                    vat_total = vat_calc_result['vat_amount']
-                    total = subtotal  # Total is the same as subtotal when prices include VAT
-                else:
-                    # Add VAT to subtotal - FIXED: Use standardized tax calculations
-                    vat_calc_result = calculate_vat_from_net(subtotal, vat_rate)
-                    subtotal_without_vat = vat_calc_result['net_amount']
-                    vat_total = vat_calc_result['vat_amount']
-                    total = vat_calc_result['gross_amount']
-                    
-                totals['subtotal'] = subtotal_without_vat
-                totals['vat_total'] = vat_total
-                totals['total'] = total
+                if hasattr(line, 'gross_amount') and line.gross_amount:
+                    subtotal_gross += line.gross_amount
+                
+                # Add VAT amount if available
+                if hasattr(line, 'vat_amount') and line.vat_amount:
+                    # Get quantity using dynamic detection
+                    quantity = line._get_quantity_value() if hasattr(line, '_get_quantity_value') else Decimal('1')
+                    line_vat = round_vat_amount(line.vat_amount * quantity)
+                    vat_total += line_vat
+                        
+            # ✅ Use calculated totals directly - no more VAT calculation needed
+            if lines_count > 0:
+                totals['subtotal'] = subtotal_net  # БЕЗ ДДС
+                totals['vat_total'] = round_vat_amount(vat_total or (subtotal_gross - subtotal_net))  # ДДС разлика
+                totals['total'] = subtotal_gross  # С ДДС
             else:
                 totals['subtotal'] = Decimal('0')
                 totals['vat_total'] = Decimal('0')

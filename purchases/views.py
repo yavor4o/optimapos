@@ -601,7 +601,7 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                         'quantity': Decimal('1.0'),
                         'unit_price': Decimal('10.0'),
                         'unit': test_unit,
-                        'received_quantity': 1.0,
+                        'received_quantity': Decimal('1.0'),
                         'notes': 'Test line - no form data found',
                         'quality_approved': None,
                         'quality_notes': '',
@@ -805,15 +805,29 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
         # ✅ NEW: Get semantic actions for UI
         semantic_actions = self._get_semantic_actions_for_delivery(delivery)
 
+        # Calculate VAT breakdown grouped by rates
+        vat_breakdown = self._calculate_vat_breakdown(delivery)
+        
+        # Calculate EUR conversion (total ÷ 1.95583)
+        eur_total = None
+        if delivery.total:
+            from decimal import Decimal
+            eur_rate = Decimal('1.95583')
+            eur_total = round(delivery.total / eur_rate, 2)
+
         context.update({
             'page_title': f'Delivery Receipt {delivery.document_number}',
             'can_edit': self.request.user.has_perm('purchases.change_deliveryreceipt'),
             'can_approve': self.request.user.has_perm('purchases.change_deliveryreceipt'),
 
-            # Enhanced data
-            'delivery_lines': self.get_enhanced_lines(delivery),
+            # Enhanced data - FIXED: Use direct lines instead of processed version
+            'delivery_lines': delivery.lines.all(),
             'inventory_movements': self.get_inventory_movements(delivery),
             'related_documents': self.get_related_documents(delivery),
+
+            # Financial calculations
+            'vat_breakdown': vat_breakdown,
+            'eur_total': eur_total,
 
             # ✅ NEW: Semantic actions for dynamic UI
             'semantic_actions': semantic_actions,
@@ -821,6 +835,35 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
             'available_actions': semantic_actions.get('available', {}),
         })
         return context
+
+    def _calculate_vat_breakdown(self, delivery):
+        """
+        Calculate VAT breakdown grouped by rates - სუმარისა (group) by rate
+        """
+        from decimal import Decimal
+        vat_breakdown = {}
+        
+        for line in delivery.lines.all():
+            if not line.vat_rate or not line.vat_amount:
+                continue
+                
+            # Convert VAT rate to percentage for display (0.20 -> 20)
+            vat_rate_percent = int(line.vat_rate * 100)
+            
+            if vat_rate_percent not in vat_breakdown:
+                vat_breakdown[vat_rate_percent] = Decimal('0.00')
+            
+            # Get quantity for line total VAT calculation
+            quantity = getattr(line, 'received_quantity', Decimal('0'))
+            if not quantity:
+                quantity = Decimal('1')  # Fallback
+            
+            # Sum VAT amounts by rate (multiply by quantity for line total)
+            line_vat_total = line.vat_amount * quantity
+            vat_breakdown[vat_rate_percent] += line_vat_total
+        
+        # Sort by rate for consistent display
+        return dict(sorted(vat_breakdown.items()))
 
     def _get_semantic_actions_for_delivery(self, delivery) -> dict:
         """Get semantic actions available for this delivery"""

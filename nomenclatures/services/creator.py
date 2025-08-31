@@ -93,7 +93,7 @@ class DocumentCreator:
         """
         try:
             # НОВОТО: Използваме NumberingService
-            from ..numbering_service import NumberingService
+            from .numbering_service import NumberingService
 
             return NumberingService.generate_document_number(
                 document_type=document_type,

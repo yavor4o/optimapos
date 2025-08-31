@@ -342,20 +342,21 @@ class FinancialLineMixin(models.Model):
     def line_total(self):
         """
         Line total property - required by VATCalculationService
-        Returns total line amount (per-unit amount × quantity)
+        Returns total line amount (already calculated for full line)
         """
-        quantity = self._get_quantity_value()
-        if not quantity:
-            return None
-            
-        # Предпочитай gross_amount (включва ДДС) ако е налично
+        # ✅ FIXED: gross_amount and net_amount are ALREADY line totals, don't multiply again
         if self.gross_amount:
-            return self.gross_amount * quantity
+            return self.gross_amount  # Already includes quantity
         
-        # Fallback към unit_price или entered_price
-        unit_price = self.unit_price or self.entered_price
-        if unit_price:
-            return unit_price * quantity
+        if self.net_amount:
+            return self.net_amount  # Already includes quantity
+            
+        # Fallback: calculate from unit price and quantity
+        quantity = self._get_quantity_value()
+        if quantity:
+            unit_price = self.unit_price or self.entered_price
+            if unit_price:
+                return unit_price * quantity
         
         return None
     
