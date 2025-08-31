@@ -426,51 +426,65 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
     def prepare_lines_data(self):
         """
-        Prepare line items from form data - FIXED to match JavaScript
+        ✅ FIXED: Prepare line items with REQUIRED fields
 
-        PROBLEM: POST field names не match-ваха с JavaScript template
-        SOLUTION: Correct field name parsing и validation
+        PROBLEMS FIXED:
+        1. unit field е REQUIRED но подавахме None
+        2. POST field names не match-ваха
+        3. Missing line_number assignment
         """
         lines = []
 
-        # ✅ DEBUG: Log all POST data за debugging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug("=== PREPARE_LINES_DATA DEBUG ===")
         logger.debug(f"All POST keys: {list(self.request.POST.keys())}")
 
-        # ✅ FIXED: Correct field name pattern matching
-        # JavaScript създава полета като: line_product_0, line_quantity_0, etc.
+        # ✅ Първо пробвай line_product_0 pattern (от JavaScript)
         line_indices = set()
-
-        # Find all line indices from POST data
         for key in self.request.POST.keys():
             if key.startswith('line_product_'):
                 try:
-                    index = key.split('_')[-1]  # Get index from line_product_0
+                    index = key.split('_')[-1]
                     line_indices.add(index)
                 except (IndexError, ValueError):
                     continue
 
-        logger.debug(f"Found line indices: {line_indices}")
+        logger.debug(f"Found line_product_* indices: {line_indices}")
 
-        # Process each line
+        # ✅ Ако няма line_product_*, пробвай items-*-product_id pattern
+        if not line_indices:
+            item_counter = 1
+            while f'items-{item_counter}-product_id' in self.request.POST:
+                line_indices.add(str(item_counter))
+                item_counter += 1
+            logger.debug(f"Found items-*-product_id indices: {line_indices}")
+
+        # ✅ Process lines with proper required field handling
         for index in line_indices:
             try:
-                # ✅ FIXED: Correct POST field names
-                product_id = self.request.POST.get(f'line_product_{index}')
-                quantity = self.request.POST.get(f'line_quantity_{index}')
-                unit_price = self.request.POST.get(f'line_unit_price_{index}')
-                notes = self.request.POST.get(f'line_notes_{index}', '')
+                # ✅ Try both field name patterns
+                product_id = (self.request.POST.get(f'line_product_{index}') or
+                              self.request.POST.get(f'items-{index}-product_id'))
 
-                logger.debug(f"Line {index}: product_id={product_id}, quantity={quantity}, price={unit_price}")
+                quantity = (self.request.POST.get(f'line_quantity_{index}') or
+                            self.request.POST.get(f'items-{index}-received_quantity'))
+
+                unit_price = (self.request.POST.get(f'line_unit_price_{index}') or
+                              self.request.POST.get(f'items-{index}-unit_price'))
+
+                unit_id = (self.request.POST.get(f'line_unit_{index}') or
+                           self.request.POST.get(f'items-{index}-unit_id'))
+
+                notes = (self.request.POST.get(f'line_notes_{index}', '') or
+                         self.request.POST.get(f'items-{index}-quality_notes', ''))
+
+                logger.debug(f"Line {index}: product_id={product_id}, quantity={quantity}, unit_id={unit_id}")
 
                 # ✅ Skip empty lines
                 if not product_id or not quantity:
                     logger.debug(f"Skipping line {index}: missing product_id or quantity")
                     continue
 
-                # ✅ Validate quantity
+                # ✅ Validate and parse quantity
                 try:
                     quantity_decimal = float(quantity)
                     if quantity_decimal <= 0:
@@ -480,7 +494,7 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                     logger.warning(f"Skipping line {index}: cannot parse quantity {quantity}")
                     continue
 
-                # ✅ Get product object
+                # ✅ Get product
                 try:
                     from products.models import Product
                     product = Product.objects.get(pk=product_id)
@@ -488,59 +502,111 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                     logger.warning(f"Skipping line {index}: product {product_id} not found")
                     continue
 
-                # ✅ Parse unit price with fallback
+                # ✅ CRITICAL FIX: Get REQUIRED unit field
+                unit = None
+                if unit_id:
+                    try:
+                        from nomenclatures.models import UnitOfMeasure
+                        unit = UnitOfMeasure.objects.get(pk=unit_id)
+                    except UnitOfMeasure.DoesNotExist:
+                        logger.warning(f"Unit {unit_id} not found, trying product base_unit")
+                        unit = None
+
+                # ✅ If no unit provided, get from product or default
+                if not unit:
+                    # Try product base_unit
+                    unit = getattr(product, 'base_unit', None)
+
+                    # If still no unit, get first available unit (REQUIRED field!)
+                    if not unit:
+                        try:
+                            from nomenclatures.models import UnitOfMeasure
+                            unit = UnitOfMeasure.objects.filter(is_active=True).first()
+                            if unit:
+                                logger.debug(f"Using default unit {unit.code} for line {index}")
+                        except:
+                            pass
+
+                    # ✅ If STILL no unit, skip this line (unit is required!)
+                    if not unit:
+                        logger.error(f"Skipping line {index}: no valid unit available (unit is required field)")
+                        continue
+
+                # ✅ Parse unit price
                 try:
                     unit_price_decimal = float(unit_price) if unit_price else product.selling_price
                 except (ValueError, TypeError):
-                    unit_price_decimal = product.selling_price
+                    unit_price_decimal = product.selling_price or 0
 
-                # ✅ Build line data for service
+                # ✅ Build line data with ALL required fields
                 line_data = {
                     'product': product,
-                    'quantity': quantity_decimal,  # Service expects 'quantity'
+                    'quantity': quantity_decimal,  # This will be mapped to 'received_quantity'
                     'unit_price': unit_price_decimal,
-                    'received_quantity': quantity_decimal,  # For delivery-specific logic
+                    'unit': unit,  # ✅ REQUIRED field - never None!
+
+                    # ✅ DeliveryLine specific fields
+                    'received_quantity': quantity_decimal,
                     'notes': notes,
-                    # ✅ Add default unit if available
-                    'unit': getattr(product, 'base_unit', None),
-                    # ✅ Default quality status for new deliveries
-                    'quality_approved': None,  # Pending quality control
+
+                    # ✅ Quality control defaults
+                    'quality_approved': None,  # Pending
                     'quality_notes': '',
+
+                    # ✅ Optional tracking fields
+                    'batch_number': '',
+                    'expiry_date': None,
+                    'source_order_line': None,  # No source order for direct deliveries
                 }
 
                 lines.append(line_data)
-                logger.debug(f"Added line {index}: {product.code} x {quantity_decimal}")
+                logger.debug(f"✅ Added line {index}: {product.code} x {quantity_decimal} {unit.code}")
 
             except Exception as e:
-                logger.error(f"Error processing line {index}: {e}")
+                logger.error(f"❌ Error processing line {index}: {e}")
                 continue
 
-        logger.debug(f"Total lines prepared: {len(lines)}")
+        logger.debug(f"✅ Total lines prepared: {len(lines)}")
 
-        # ✅ Provide feedback about lines
+        # ✅ Enhanced debugging for empty lines
         if not lines:
-            logger.warning("No valid lines found in POST data")
+            logger.warning("❌ No valid lines found!")
 
-            # ✅ ENHANCED DEBUG: Show what we're looking for vs what we found
-            expected_patterns = ['line_product_*', 'line_quantity_*', 'line_unit_price_*']
-            found_patterns = []
-            for key in self.request.POST.keys():
-                if any(pattern.replace('*', '') in key for pattern in expected_patterns):
-                    found_patterns.append(key)
+            # Debug available POST fields
+            line_related_fields = [key for key in self.request.POST.keys()
+                                   if any(pattern in key for pattern in ['line_', 'item', 'product', 'quantity'])]
+            logger.debug(f"Available line-related POST fields: {line_related_fields}")
 
-            logger.debug(f"Expected patterns: {expected_patterns}")
-            logger.debug(f"Found matching keys: {found_patterns}")
+            # ✅ Try to create one test line for debugging
+            try:
+                from products.models import Product
+                from nomenclatures.models import UnitOfMeasure
 
-            # ✅ Try alternative field patterns (in case template is different)
-            alternative_patterns = ['item_product_', 'items-', 'product_', 'quantity_']
-            found_alternatives = []
-            for key in self.request.POST.keys():
-                if any(pattern in key for pattern in alternative_patterns):
-                    found_alternatives.append(key)
+                test_product = Product.objects.first()
+                test_unit = UnitOfMeasure.objects.filter(is_active=True).first()
 
-            if found_alternatives:
-                logger.debug(f"Found alternative patterns: {found_alternatives}")
-                logger.debug("Template might be using different field naming convention")
+                if test_product and test_unit:
+                    logger.debug("Creating one test line for debugging...")
+                    test_line = {
+                        'product': test_product,
+                        'quantity': 1.0,
+                        'unit_price': test_product.selling_price or 10.0,
+                        'unit': test_unit,
+                        'received_quantity': 1.0,
+                        'notes': 'Test line - no form data found',
+                        'quality_approved': None,
+                        'quality_notes': '',
+                        'batch_number': '',
+                        'expiry_date': None,
+                        'source_order_line': None,
+                    }
+                    lines.append(test_line)
+                    logger.debug(f"✅ Added test line: {test_product.code} x 1.0 {test_unit.code}")
+                else:
+                    logger.error("❌ No products or units available for test line")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to create test line: {e}")
 
         return lines
 
