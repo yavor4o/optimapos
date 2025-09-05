@@ -1,0 +1,234 @@
+{% extends 'frontend/base.html' %}
+{% load static %}
+{% block content %}
+
+<!-- Page Header -->
+<div class="kt-container-fixed">
+ <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+  <!-- Page Title -->
+  <div class="flex flex-col justify-center gap-2">
+   <h1 class="text-xl font-semibold leading-none text-gray-900">
+    Edit Delivery Receipt
+   </h1>
+   <div class="flex items-center gap-2 text-sm font-normal text-gray-600">
+    <i class="ki-filled ki-home-2 text-xs"></i>
+    <a href="{% url 'core:dashboard' %}" class="text-gray-600 hover:text-primary">Dashboard</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <a href="{% url 'purchases:index' %}" class="text-gray-600 hover:text-primary">Purchases</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <a href="{% url 'purchases:delivery_list' %}" class="text-gray-600 hover:text-primary">Delivery Receipts</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <a href="{% url 'purchases:delivery_detail' object.pk %}" class="text-gray-600 hover:text-primary">{{ object.document_number }}</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <span class="text-gray-800 font-medium">Edit</span>
+   </div>
+  </div>
+  
+  <!-- Action Buttons -->
+  <div class="flex items-center gap-2.5">
+   <a class="kt-btn kt-btn-outline kt-btn-outline-default kt-btn-sm" href="{% url 'purchases:delivery_detail' object.pk %}">
+    <i class="ki-filled ki-black-left"></i>
+    Back to Details
+   </a>
+  </div>
+ </div>
+</div>
+
+<!-- Form Content -->
+<div class="kt-container-fixed">
+ <form method="post" class="grid grid-cols-1 xl:grid-cols-3 gap-5 lg:gap-7.5">
+  {% csrf_token %}
+  
+  <!-- Left Column - Main Form -->
+  <div class="xl:col-span-2 flex flex-col gap-5 lg:gap-7.5">
+   
+   <!-- Basic Information -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Basic Information</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <!-- Document Number -->
+      <div class="flex flex-col gap-2">
+       <label class="form-label required">Document Number</label>
+       <input type="text" name="document_number" class="kt-input" value="{{ form.document_number.value }}" required>
+       {% if form.document_number.errors %}
+        <div class="text-danger text-xs">{{ form.document_number.errors.0 }}</div>
+       {% endif %}
+      </div>
+      
+      <!-- Document Date -->
+      <div class="flex flex-col gap-2">
+       <label class="form-label required">Document Date</label>
+       <input type="date" name="document_date" class="kt-input" value="{{ form.document_date.value|date:'Y-m-d' }}" required>
+       {% if form.document_date.errors %}
+        <div class="text-danger text-xs">{{ form.document_date.errors.0 }}</div>
+       {% endif %}
+      </div>
+      
+      <!-- Delivery Date -->
+      <div class="flex flex-col gap-2">
+       <label class="form-label required">Delivery Date</label>
+       <input type="date" name="delivery_date" class="kt-input" value="{{ form.delivery_date.value|date:'Y-m-d' }}" required>
+       {% if form.delivery_date.errors %}
+        <div class="text-danger text-xs">{{ form.delivery_date.errors.0 }}</div>
+       {% endif %}
+      </div>
+      
+      <!-- Supplier Reference -->
+      <div class="flex flex-col gap-2">
+       <label class="form-label">Supplier Reference</label>
+       <input type="text" name="supplier_delivery_reference" class="kt-input" value="{{ form.supplier_delivery_reference.value }}" placeholder="Supplier delivery note #">
+       {% if form.supplier_delivery_reference.errors %}
+        <div class="text-danger text-xs">{{ form.supplier_delivery_reference.errors.0 }}</div>
+       {% endif %}
+      </div>
+     </div>
+     
+     <!-- Notes -->
+     <div class="flex flex-col gap-2 mt-5">
+      <label class="form-label">Notes</label>
+      <textarea name="notes" class="kt-input" rows="3" placeholder="Additional notes about the delivery...">{{ form.notes.value }}</textarea>
+      {% if form.notes.errors %}
+       <div class="text-danger text-xs">{{ form.notes.errors.0 }}</div>
+      {% endif %}
+     </div>
+    </div>
+   </div>
+   
+   <!-- Current Line Items (Read-only) -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Current Line Items</h3>
+     <span class="kt-badge kt-badge-light-info">Read-only in edit mode</span>
+    </div>
+    <div class="kt-card-content">
+     {% if object.lines.exists %}
+     <div class="kt-table-responsive">
+      <table class="kt-table">
+       <thead>
+        <tr>
+         <th>Product</th>
+         <th>Received Qty</th>
+         <th>Unit</th>
+         <th>Unit Price</th>
+         <th>Total</th>
+         <th>Quality Status</th>
+        </tr>
+       </thead>
+       <tbody>
+        {% for line in object.lines.all %}
+        <tr>
+         <td>{{ line.product.name }}</td>
+         <td>{{ line.received_quantity }}</td>
+         <td>{{ line.unit.name|default:"—" }}</td>
+         <td>€{{ line.unit_price|floatformat:2 }}</td>
+         <td>€{{ line.received_quantity }}</td>
+         <td>
+          {% if line.quality_approved == True %}
+          <span class="kt-badge kt-badge-light-success">Approved</span>
+          {% elif line.quality_approved == False %}
+          <span class="kt-badge kt-badge-light-danger">Rejected</span>
+          {% else %}
+          <span class="kt-badge kt-badge-light-warning">Pending</span>
+          {% endif %}
+         </td>
+        </tr>
+        {% endfor %}
+       </tbody>
+      </table>
+     </div>
+     {% else %}
+     <div class="flex flex-col items-center justify-center py-8 text-gray-500">
+      <i class="ki-filled ki-package text-3xl mb-3"></i>
+      <span class="text-sm">No line items found</span>
+     </div>
+     {% endif %}
+    </div>
+   </div>
+   
+  </div>
+  
+  <!-- Right Column - Info & Actions -->
+  <div class="flex flex-col gap-5 lg:gap-7.5">
+   
+   <!-- Document Info -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Document Information</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="flex flex-col gap-3">
+      <div class="flex justify-between">
+       <span class="text-sm text-gray-600">Status:</span>
+       <span class="kt-badge kt-badge-light">{{ object.status }}</span>
+      </div>
+      
+      <div class="flex justify-between">
+       <span class="text-sm text-gray-600">Quality Status:</span>
+       <span class="kt-badge kt-badge-light">{{ object.quality_status }}</span>
+      </div>
+      
+      <div class="flex justify-between">
+       <span class="text-sm text-gray-600">Created:</span>
+       <span class="text-sm text-gray-900">{{ object.created_at|date:"d.m.Y H:i" }}</span>
+      </div>
+      
+      <div class="flex justify-between">
+       <span class="text-sm text-gray-600">Created By:</span>
+       <span class="text-sm text-gray-900">{{ object.created_by.username }}</span>
+      </div>
+      
+      {% if object.supplier %}
+      <div class="flex justify-between">
+       <span class="text-sm text-gray-600">Supplier:</span>
+       <span class="text-sm text-gray-900">{{ object.partner.name }}</span>
+      </div>
+      {% endif %}
+     </div>
+    </div>
+   </div>
+   
+   <!-- Actions -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Actions</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="flex flex-col gap-3">
+      <!-- Save Changes -->
+      <button type="submit" class="kt-btn kt-btn-primary w-full">
+       <i class="ki-filled ki-check"></i>
+       Save Changes
+      </button>
+      
+      <!-- Cancel -->
+      <a href="{% url 'purchases:delivery_detail' object.pk %}" class="kt-btn kt-btn-light w-full">
+       <i class="ki-filled ki-cross"></i>
+       Cancel
+      </a>
+     </div>
+    </div>
+   </div>
+   
+   <!-- Warning -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">⚠️ Important</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="flex flex-col gap-2 text-xs text-gray-600">
+      <p>• Only basic delivery information can be edited</p>
+      <p>• Line items cannot be modified in edit mode</p>
+      <p>• For line changes, create a new delivery receipt</p>
+     </div>
+    </div>
+   </div>
+   
+  </div>
+  
+ </form>
+</div>
+
+{% endblock %}

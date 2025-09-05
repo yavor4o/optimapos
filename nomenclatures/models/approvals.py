@@ -226,6 +226,27 @@ class ApprovalRule(models.Model):
     )
 
     # =====================
+    # SEMANTIC ACTION TYPE - NEW
+    # =====================
+
+    SEMANTIC_TYPE_CHOICES = [
+        ('submit', _('Submit for Approval')),
+        ('approve', _('Approve/Complete')),
+        ('reject', _('Reject/Decline')),
+        ('cancel', _('Cancel')),
+        ('return_draft', _('Return to Draft')),
+        ('generic', _('Generic Action')),
+    ]
+
+    semantic_type = models.CharField(
+        _('Semantic Action Type'),
+        max_length=20,
+        choices=SEMANTIC_TYPE_CHOICES,
+        default='generic',
+        help_text=_('Semantic meaning of this transition for UI purposes')
+    )
+
+    # =====================
     # FINANCIAL LIMITS
     # =====================
 

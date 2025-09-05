@@ -1,0 +1,771 @@
+{% extends 'frontend/base.html' %}
+{% load static %}
+{% block content %}
+
+<!-- Page Header -->
+<div class="kt-container-fixed">
+ <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+  <!-- Page Title -->
+  <div class="flex flex-col justify-center gap-2">
+   <h1 class="text-xl font-semibold leading-none text-gray-900">
+    Delivery Receipts
+   </h1>
+   <div class="flex items-center gap-2 text-sm font-normal text-gray-600">
+    <i class="ki-filled ki-home-2 text-xs"></i>
+    <a href="{% url 'core:dashboard' %}" class="text-gray-600 hover:text-primary">Dashboard</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <a href="{% url 'purchases:index' %}" class="text-gray-600 hover:text-primary">Purchases</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <span class="text-gray-800 font-medium">Delivery Receipts</span>
+   </div>
+  </div>
+  
+  <!-- Action Buttons -->
+  <div class="flex items-center gap-2.5">
+   <a class="kt-btn kt-btn-outline kt-btn-outline-default kt-btn-sm" href="#">
+    <i class="ki-filled ki-export"></i>
+    Export
+   </a>
+   <a class="kt-btn kt-btn-primary kt-btn-sm" href="{% url 'purchases:delivery_create' %}">
+    <i class="ki-filled ki-plus"></i>
+    New Delivery Receipt
+   </a>
+  </div>
+ </div>
+</div>
+
+
+<!-- Professional Filters Bar -->
+<div class="kt-container-fixed">
+ <div class="kt-card mb-7.5">
+  <div class="kt-card-content">
+   <!-- Filter Header -->
+   <div class="flex items-center justify-between mb-5">
+    <div class="flex items-center gap-3">
+     <div class="flex items-center justify-center size-8 rounded-lg bg-primary-light">
+      <i class="ki-filled ki-filter text-primary text-sm"></i>
+     </div>
+     <h3 class="text-lg font-semibold text-gray-900">Filter & Search</h3>
+    </div>
+    <div class="flex items-center gap-2">
+     <span class="text-sm text-gray-600">{{ delivery_receipts.count }} results</span>
+    </div>
+   </div>
+
+   <!-- Filter Controls -->
+   <form method="get">
+    <div class="flex flex-wrap items-end gap-4">
+     
+     <!-- Search Input -->
+     <div class="flex-1 min-w-[200px]">
+      <label class="block text-sm font-medium text-gray-700 mb-2">Search</label>
+      <div class="kt-input kt-input-sm w-full">
+       <i class="ki-filled ki-magnifier"></i>
+       <input type="text" 
+              name="search" 
+              value="{{ search_query }}" 
+              placeholder="Document #, supplier...">
+      </div>
+     </div>
+
+     <!-- Document Status -->
+     <div class="min-w-[160px]">
+      <label class="block text-sm font-medium text-gray-700 mb-2">Status</label>
+      <select name="status" class="kt-select kt-select-sm">
+       <option value="all" {% if current_status == 'all' %}selected{% endif %}>All Statuses</option>
+       <option value="draft" {% if current_status == 'draft' %}selected{% endif %}>Draft</option>
+       <option value="pending" {% if current_status == 'pending' %}selected{% endif %}>Pending</option>
+       <option value="approved" {% if current_status == 'approved' %}selected{% endif %}>Approved</option>
+       <option value="rejected" {% if current_status == 'rejected' %}selected{% endif %}>Rejected</option>
+      </select>
+     </div>
+
+     <!-- Quality Status -->
+     <div class="min-w-[160px]">
+      <label class="block text-sm font-medium text-gray-700 mb-2">Quality</label>
+      <select name="quality_status" class="kt-select kt-select-sm">
+       <option value="all" {% if current_quality_status == 'all' %}selected{% endif %}>All Quality</option>
+       <option value="pending" {% if current_quality_status == 'pending' %}selected{% endif %}>Pending</option>
+       <option value="approved" {% if current_quality_status == 'approved' %}selected{% endif %}>Approved</option>
+       <option value="rejected" {% if current_quality_status == 'rejected' %}selected{% endif %}>Rejected</option>
+      </select>
+     </div>
+
+     <!-- Date From -->
+     <div class="min-w-[140px]">
+      <label class="block text-sm font-medium text-gray-700 mb-2">From</label>
+      <input type="date" 
+             name="date_from" 
+             value="{{ date_from }}" 
+             class="kt-input kt-input-sm">
+     </div>
+
+     <!-- Date To -->
+     <div class="min-w-[140px]">
+      <label class="block text-sm font-medium text-gray-700 mb-2">To</label>
+      <input type="date" 
+             name="date_to" 
+             value="{{ date_to }}" 
+             class="kt-input kt-input-sm">
+     </div>
+
+     <!-- Action Buttons -->
+     <div class="flex gap-2 ml-4">
+      <button type="submit" class="kt-btn kt-btn-primary kt-btn-sm">
+       <i class="ki-filled ki-magnifier mr-2"></i>
+       Apply
+      </button>
+      <a href="{% url 'purchases:delivery_list' %}" class="kt-btn kt-btn-secondary kt-btn-sm">
+       <i class="ki-filled ki-arrows-circle mr-2"></i>
+       Reset
+      </a>
+      <button type="button" class="kt-btn kt-btn-outline kt-btn-sm" data-kt-drawer-show="#master-filter-drawer">
+       <i class="ki-filled ki-setting-4 mr-2"></i>
+       Advanced
+      </button>
+     </div>
+
+    </div>
+   </form>
+
+  </div>
+ </div>
+</div>
+
+<!-- Delivery Receipts Table -->
+<div class="kt-container-fixed">
+ <div class="kt-card">
+  <div class="kt-card-content">
+   {% if delivery_receipts %}
+   <div class="table-responsive">
+    <table class="kt-table">
+     <thead>
+      <tr>
+       <th class="min-w-[120px]">Document #</th>
+       <th class="min-w-[160px]">Supplier</th>
+       <th class="min-w-[120px]">Date</th>
+       <th class="min-w-[100px]">Status</th>
+       <th class="min-w-[120px]">Quality</th>
+       <th class="min-w-[80px]">Items</th>
+       <th class="min-w-[120px]">Total Value</th>
+       <th class="w-12">Actions</th>
+      </tr>
+     </thead>
+     <tbody>
+      {% for delivery in delivery_receipts %}
+      <tr class="cursor-pointer hover:bg-gray-50 transition-colors" data-document-id="{{ delivery.pk }}" data-selectable-row="true">
+       <td>
+        <a href="{% url 'purchases:delivery_detail' delivery.pk %}" class="font-medium text-gray-900 hover:text-primary">
+         {{ delivery.document_number }}
+        </a>
+       </td>
+       <td>
+        <div class="flex flex-col">
+         <span class="text-sm font-medium text-gray-900">{% if delivery.partner %}{{ delivery.partner.name }}{% else %}N/A{% endif %}</span>
+         <span class="text-xs text-gray-600">{% if delivery.partner %}{{ delivery.partner.code|default:"" }}{% endif %}</span>
+        </div>
+       </td>
+       <td>
+        <div class="flex flex-col">
+         <span class="text-sm text-gray-900">{{ delivery.document_date|date:"M j, Y" }}</span>
+         <span class="text-xs text-gray-600">{{ delivery.received_at|date:"H:i" }}</span>
+        </div>
+       </td>
+       <td>
+        <!-- Dynamic status display based on semantic types -->
+        {% with status_lower=delivery.status|lower %}
+         {% if 'draft' in status_lower or 'chernova' in status_lower %}
+          <div class="kt-badge kt-badge-light kt-badge-sm">{{ delivery.status|title }}</div>
+         {% elif 'pending' in status_lower or 'waiting' in status_lower or 'podadena' in status_lower %}
+          <div class="kt-badge kt-badge-warning kt-badge-sm">{{ delivery.status|title }}</div>
+         {% elif 'completed' in status_lower or 'finished' in status_lower or 'approved' in status_lower or 'zavrishena' in status_lower or 'odobrena' in status_lower %}
+          <div class="kt-badge kt-badge-success kt-badge-sm">{{ delivery.status|title }}</div>
+         {% elif 'cancelled' in status_lower or 'rejected' in status_lower or 'otkazana' in status_lower %}
+          <div class="kt-badge kt-badge-danger kt-badge-sm">{{ delivery.status|title }}</div>
+         {% else %}
+          <div class="kt-badge kt-badge-secondary kt-badge-sm">{{ delivery.status|title }}</div>
+         {% endif %}
+        {% endwith %}
+       </td>
+       <td>
+        {% if delivery.quality_status == 'pending' %}
+         <div class="kt-badge kt-badge-primary kt-badge-sm">Pending</div>
+        {% elif delivery.quality_status == 'approved' %}
+         <div class="kt-badge kt-badge-success kt-badge-sm">Approved</div>
+        {% elif delivery.quality_status == 'rejected' %}
+         <div class="kt-badge kt-badge-danger kt-badge-sm">Rejected</div>
+        {% else %}
+         <div class="kt-badge kt-badge-light kt-badge-sm">N/A</div>
+        {% endif %}
+       </td>
+       <td>
+        <span class="text-sm text-gray-900">{{ delivery.lines.count }}</span>
+       </td>
+       <td>
+        <span class="text-sm font-medium text-gray-900">€{{ delivery.total_amount|default:"0.00" }}</span>
+       </td>
+       <td>
+        <!-- Simple button approach -->
+        <div class="flex items-center gap-1">
+         <a href="{% url 'purchases:delivery_detail' delivery.pk %}" class="inline-flex items-center justify-center w-6 h-6 text-gray-500 hover:text-primary hover:bg-gray-100 rounded" title="View">
+          <i class="ki-filled ki-eye text-sm"></i>
+         </a>
+
+         <a href="{% url 'purchases:delivery_update' delivery.pk %}" class="inline-flex items-center justify-center w-6 h-6 text-gray-500 hover:text-primary hover:bg-gray-100 rounded" title="Edit">
+          <i class="ki-filled ki-pencil text-sm"></i>
+         </a>
+
+        </div>
+       </td>
+      </tr>
+      {% endfor %}
+     </tbody>
+    </table>
+   </div>
+   
+   <!-- Keyboard Hints -->
+   <div class="mt-4 px-4 py-2 bg-gray-50 rounded-lg border">
+    <div class="flex items-center gap-4 text-xs text-gray-600">
+     <span class="flex items-center gap-1">
+      <kbd class="px-2 py-1 bg-white border rounded text-xs font-mono">Ctrl</kbd>
+      <span>+</span>
+      <kbd class="px-2 py-1 bg-white border rounded text-xs font-mono">E</kbd>
+      <span>Edit selected document</span>
+     </span>
+     <span class="flex items-center gap-1">
+      <kbd class="px-2 py-1 bg-white border rounded text-xs font-mono">ESC</kbd>
+      <span>Deselect</span>
+     </span>
+    </div>
+   </div>
+   
+   <!-- Pagination -->
+   {% if is_paginated %}
+   <div class="flex items-center justify-between mt-5">
+    <div class="flex items-center gap-4 text-sm text-gray-600">
+     Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ paginator.count }} entries
+    </div>
+    <div class="pagination">
+     {% if page_obj.has_previous %}
+      <a class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm" href="?page=1{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">
+       <i class="ki-filled ki-black-left-line"></i>
+      </a>
+      <a class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm" href="?page={{ page_obj.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">
+       <i class="ki-filled ki-black-left"></i>
+      </a>
+     {% endif %}
+     
+     <span class="flex items-center px-3 py-1 text-sm font-medium text-gray-900">
+      Page {{ page_obj.number }} of {{ paginator.num_pages }}
+     </span>
+     
+     {% if page_obj.has_next %}
+      <a class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm" href="?page={{ page_obj.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">
+       <i class="ki-filled ki-black-right"></i>
+      </a>
+      <a class="kt-btn kt-btn-icon kt-btn-light kt-btn-sm" href="?page={{ paginator.num_pages }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}">
+       <i class="ki-filled ki-black-right-line"></i>
+      </a>
+     {% endif %}
+    </div>
+   </div>
+   {% endif %}
+   
+   {% else %}
+   <!-- Empty State -->
+   <div class="flex flex-col items-center justify-center py-12">
+    <div class="flex items-center justify-center size-16 rounded-full bg-gray-100 mb-4">
+     <i class="ki-filled ki-truck text-2xl text-gray-400"></i>
+    </div>
+    <h3 class="text-lg font-semibold text-gray-900 mb-2">No delivery receipts found</h3>
+    <p class="text-sm text-gray-600 mb-6">Get started by creating your first delivery receipt.</p>
+    <a href="{% url 'purchases:delivery_create' %}" class="kt-btn kt-btn-primary">
+     <i class="ki-filled ki-plus"></i>
+     New Delivery Receipt
+    </a>
+   </div>
+   {% endif %}
+  </div>
+ </div>
+</div>
+
+
+<!-- Master Filter Drawer -->
+<div class="kt-drawer kt-drawer-end hidden flex flex-col max-w-[90%] w-[400px] fixed top-5 bottom-5 right-5 rounded-xl border border-gray-200 bg-white shadow-lg z-50" 
+     data-kt-drawer="true" 
+     data-kt-drawer-container="body" 
+     id="master-filter-drawer" 
+     role="dialog" 
+     aria-modal="true" 
+     tabindex="-1">
+ 
+ <!-- Header -->
+ <div class="kt-card-header ps-5 pr-2">
+  <h3 class="kt-card-title">
+   <i class="ki-filled ki-setting-4 mr-2"></i>
+   Advanced Filters
+  </h3>
+  <button class="kt-btn kt-btn-sm kt-btn-icon kt-btn-ghost shrink-0" data-kt-drawer-dismiss="true">
+   <i class="ki-filled ki-cross text-base"></i>
+  </button>
+ </div>
+
+ <!-- Content -->
+ <div class="kt-card-content px-0 pt-3.5 kt-scrollable-y-auto">
+  <form id="master-filter-form" method="get">
+
+   <!-- Document Info Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Document Info</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Document Number -->
+    <div class="kt-input kt-input-sm">
+     <input type="text" name="document_number" placeholder="Document Number" value="">
+    </div>
+    <!-- Document Type -->
+    <select name="document_type" class="kt-select kt-select-sm">
+     <option value="">All Document Types</option>
+     <option value="delivery_receipt">Delivery Receipt</option>
+     <option value="purchase_order">Purchase Order</option>
+     <option value="invoice">Invoice</option>
+    </select>
+   </div>
+   
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Status & Workflow Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Status & Workflow</span>
+   </div>
+   <div class="px-5 mb-5">
+    <!-- Document Status Toggle Group -->
+    <div class="mb-3">
+     <label class="block text-xs font-medium text-gray-600 mb-2">Document Status</label>
+     <div class="kt-toggle-group flex flex-wrap gap-1">
+      <label class="kt-btn kt-btn-sm">
+       All
+       <input name="adv_status" type="radio" value="all" checked>
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Draft
+       <input name="adv_status" type="radio" value="draft">
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Submitted
+       <input name="adv_status" type="radio" value="submitted">
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Approved
+       <input name="adv_status" type="radio" value="approved">
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Rejected
+       <input name="adv_status" type="radio" value="rejected">
+      </label>
+     </div>
+    </div>
+
+    <!-- Quality Status -->
+    <div class="mb-3">
+     <label class="block text-xs font-medium text-gray-600 mb-2">Quality Status</label>
+     <div class="kt-toggle-group flex flex-wrap gap-1">
+      <label class="kt-btn kt-btn-sm">
+       All
+       <input name="adv_quality" type="radio" value="all" checked>
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Pending
+       <input name="adv_quality" type="radio" value="pending">
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Approved
+       <input name="adv_quality" type="radio" value="approved">
+      </label>
+      <label class="kt-btn kt-btn-sm">
+       Rejected
+       <input name="adv_quality" type="radio" value="rejected">
+      </label>
+     </div>
+    </div>
+
+    <!-- Payment Status -->
+    <div class="mb-3">
+     <label class="block text-xs font-medium text-gray-600 mb-2">Payment Status</label>
+     <div class="flex flex-col gap-2">
+      <label class="flex items-center gap-2">
+       <input class="kt-checkbox kt-checkbox-sm" name="payment_status" type="checkbox" value="paid">
+       <span class="text-sm">Paid</span>
+      </label>
+      <label class="flex items-center gap-2">
+       <input class="kt-checkbox kt-checkbox-sm" name="payment_status" type="checkbox" value="unpaid">
+       <span class="text-sm">Unpaid</span>
+      </label>
+      <label class="flex items-center gap-2">
+       <input class="kt-checkbox kt-checkbox-sm" name="payment_status" type="checkbox" value="partial">
+       <span class="text-sm">Partially Paid</span>
+      </label>
+     </div>
+    </div>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Partners Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Partners</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Supplier -->
+    <div class="kt-input kt-input-sm">
+     <i class="ki-filled ki-profile-user"></i>
+     <input type="text" name="supplier_name" placeholder="Supplier Name" value="">
+    </div>
+    <!-- Supplier Code -->
+    <div class="kt-input kt-input-sm">
+     <input type="text" name="supplier_code" placeholder="Supplier Code" value="">
+    </div>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Products Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Products</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Product Name -->
+    <div class="kt-input kt-input-sm">
+     <i class="ki-filled ki-package"></i>
+     <input type="text" name="product_name" placeholder="Product Name" value="">
+    </div>
+    <!-- Product Code -->
+    <div class="kt-input kt-input-sm">
+     <input type="text" name="product_code" placeholder="Product Code/SKU" value="">
+    </div>
+    <!-- Product Category -->
+    <select name="product_category" class="kt-select kt-select-sm">
+     <option value="">All Categories</option>
+     <option value="electronics">Electronics</option>
+     <option value="clothing">Clothing</option>
+     <option value="food">Food & Beverage</option>
+     <option value="furniture">Furniture</option>
+     <option value="books">Books</option>
+     <option value="tools">Tools</option>
+    </select>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Financial Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Financial</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Total Amount Range -->
+    <div class="grid grid-cols-2 gap-2">
+     <div class="kt-input-group">
+      <span class="kt-input-addon kt-input-addon-icon">
+       <i class="ki-filled ki-euro"></i>
+      </span>
+      <input class="kt-input kt-input-sm" name="total_from" placeholder="From" type="text" value="">
+     </div>
+     <div class="kt-input-group">
+      <span class="kt-input-addon kt-input-addon-icon">
+       <i class="ki-filled ki-euro"></i>
+      </span>
+      <input class="kt-input kt-input-sm" name="total_to" placeholder="To" type="text" value="">
+     </div>
+    </div>
+    <!-- Currency -->
+    <select name="currency" class="kt-select kt-select-sm">
+     <option value="">All Currencies</option>
+     <option value="EUR">EUR (Euro)</option>
+     <option value="BGN">BGN (Bulgarian Lev)</option>
+     <option value="USD">USD (US Dollar)</option>
+    </select>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Date Ranges Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Date Ranges</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Document Date Range -->
+    <div class="grid grid-cols-2 gap-2">
+     <input type="date" name="doc_date_from" class="kt-input kt-input-sm" placeholder="Doc Date From">
+     <input type="date" name="doc_date_to" class="kt-input kt-input-sm" placeholder="Doc Date To">
+    </div>
+    <!-- Created Date Range -->
+    <div class="grid grid-cols-2 gap-2">
+     <input type="date" name="created_from" class="kt-input kt-input-sm" placeholder="Created From">
+     <input type="date" name="created_to" class="kt-input kt-input-sm" placeholder="Created To">
+    </div>
+    <!-- Last Modified Range -->
+    <div class="grid grid-cols-2 gap-2">
+     <input type="date" name="modified_from" class="kt-input kt-input-sm" placeholder="Modified From">
+     <input type="date" name="modified_to" class="kt-input kt-input-sm" placeholder="Modified To">
+    </div>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- User & Assignment Section -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Users</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-5">
+    <!-- Created By -->
+    <div class="kt-input kt-input-sm">
+     <i class="ki-filled ki-user"></i>
+     <input type="text" name="created_by" placeholder="Created By User" value="">
+    </div>
+    <!-- Assigned To -->
+    <div class="kt-input kt-input-sm">
+     <i class="ki-filled ki-user-tick"></i>
+     <input type="text" name="assigned_to" placeholder="Assigned To User" value="">
+    </div>
+   </div>
+
+   <div class="border-b border-gray-200 mb-4"></div>
+
+   <!-- Additional Options -->
+   <div class="flex items-center gap-1 px-5 mb-3">
+    <span class="text-sm font-medium text-mono">Additional</span>
+   </div>
+   <div class="flex flex-col gap-3 px-5 mb-10">
+    <!-- Has Comments -->
+    <label class="flex items-center gap-2">
+     <input class="kt-checkbox kt-checkbox-sm" name="has_comments" type="checkbox" value="1">
+     <span class="text-sm">Has Comments</span>
+    </label>
+    <!-- Has Attachments -->
+    <label class="flex items-center gap-2">
+     <input class="kt-checkbox kt-checkbox-sm" name="has_attachments" type="checkbox" value="1">
+     <span class="text-sm">Has Attachments</span>
+    </label>
+    <!-- Is Priority -->
+    <label class="flex items-center gap-2">
+     <input class="kt-checkbox kt-checkbox-sm" name="is_priority" type="checkbox" value="1">
+     <span class="text-sm">Priority Documents</span>
+    </label>
+   </div>
+
+  </form>
+ </div>
+
+ <!-- Footer -->
+ <div class="kt-card-footer grid grid-cols-2 gap-2.5">
+  <button type="button" class="kt-btn kt-btn-outline" id="reset-master-filter">
+   <i class="ki-filled ki-arrows-circle mr-2"></i>
+   Reset All
+  </button>
+  <button type="button" class="kt-btn kt-btn-primary" id="apply-master-filter">
+   <i class="ki-filled ki-check mr-2"></i>
+   Apply Filters
+  </button>
+ </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded - checking KTDrawer availability');
+    
+    // Check if KTDrawer is available
+    if (typeof KTDrawer !== 'undefined') {
+        console.log('KTDrawer is available, initializing...');
+        // Initialize Metronic Drawers
+        KTDrawer.init();
+        
+        // Get drawer instance
+        const drawerEl = document.querySelector('#master-filter-drawer');
+        const advancedBtn = document.querySelector('[data-kt-drawer-show="#master-filter-drawer"]');
+        
+        if (drawerEl) {
+            console.log('Drawer element found:', drawerEl);
+            const drawer = KTDrawer.getInstance(drawerEl);
+            console.log('Drawer instance:', drawer);
+            
+            // Manual button control since data attributes might not work
+            if (advancedBtn) {
+                console.log('Advanced button found:', advancedBtn);
+                advancedBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    console.log('Advanced button clicked - calling drawer.show()');
+                    if (drawer) {
+                        drawer.show();
+                    }
+                });
+            }
+            
+            // Close button
+            const closeBtn = document.querySelector('[data-kt-drawer-dismiss="true"]');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    console.log('Close button clicked - calling drawer.hide()');
+                    if (drawer) {
+                        drawer.hide();
+                    }
+                });
+            }
+        }
+    } else {
+        console.log('KTDrawer not available, using manual approach');
+        
+        // Manual drawer toggle
+        const advancedBtn = document.querySelector('[data-kt-drawer-show="#master-filter-drawer"]');
+        const drawerEl = document.querySelector('#master-filter-drawer');
+        const closeBtn = document.querySelector('[data-kt-drawer-dismiss="true"]');
+        
+        if (advancedBtn && drawerEl) {
+            console.log('Setting up manual drawer controls');
+            
+            advancedBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                console.log('Advanced button clicked - showing drawer');
+                drawerEl.classList.remove('hidden');
+                drawerEl.classList.add('flex');
+            });
+            
+            if (closeBtn) {
+                closeBtn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    console.log('Close button clicked - hiding drawer');
+                    drawerEl.classList.add('hidden');
+                    drawerEl.classList.remove('flex');
+                });
+            }
+        }
+    }
+    
+    // Master filter reset
+    document.getElementById('reset-master-filter')?.addEventListener('click', function() {
+        const form = document.getElementById('master-filter-form');
+        form.reset();
+        // Reset radio buttons to "All" options
+        form.querySelectorAll('input[value="all"]').forEach(radio => radio.checked = true);
+    });
+    
+    // Master filter apply
+    document.getElementById('apply-master-filter')?.addEventListener('click', function() {
+        console.log('Advanced filters will be applied - backend integration needed');
+        
+        // Close drawer properly using KTDrawer if available
+        const drawerEl = document.querySelector('#master-filter-drawer');
+        if (typeof KTDrawer !== 'undefined' && drawerEl) {
+            const drawer = KTDrawer.getInstance(drawerEl);
+            if (drawer) {
+                console.log('Closing drawer using KTDrawer.hide()');
+                drawer.hide();
+            }
+        } else if (drawerEl) {
+            // Manual close
+            drawerEl.classList.add('hidden');
+            drawerEl.classList.remove('flex');
+            
+            // Remove backdrop manually
+            const backdrop = document.querySelector('.kt-drawer-backdrop');
+            if (backdrop) {
+                backdrop.remove();
+            }
+        }
+        
+        // Force remove any lingering backdrops
+        setTimeout(() => {
+            const allBackdrops = document.querySelectorAll('.kt-drawer-backdrop, [class*="backdrop"]');
+            allBackdrops.forEach(backdrop => backdrop.remove());
+            
+            // Re-enable body scroll
+            document.body.style.overflow = '';
+            document.body.classList.remove('overflow-hidden');
+        }, 100);
+    });
+    
+    // Row Selection & Keyboard Shortcuts
+    let selectedRow = null;
+    
+    // Row selection functionality
+    document.querySelectorAll('[data-selectable-row="true"]').forEach(row => {
+        row.addEventListener('click', function(e) {
+            // Don't select if clicking on a link
+            if (e.target.tagName === 'A' || e.target.closest('a')) {
+                return;
+            }
+            
+            // Remove previous selection
+            if (selectedRow) {
+                selectedRow.style.backgroundColor = '';
+                selectedRow.classList.add('hover:bg-gray-50');
+            }
+            
+            // Select new row
+            selectedRow = this;
+            selectedRow.style.backgroundColor = 'rgba(253,242,248,0.65)'; // Very light pink/rose
+            selectedRow.classList.remove('hover:bg-gray-50');
+            
+            console.log('Selected document ID:', selectedRow.getAttribute('data-document-id'));
+        });
+    });
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+E or Cmd+E - Edit selected document
+        if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+            e.preventDefault();
+            
+            if (!selectedRow) {
+                console.log('No row selected - please click on a document first');
+                // Show temporary message
+                const hint = document.createElement('div');
+                hint.className = 'fixed top-4 right-4 bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-2 rounded-lg shadow-lg z-50';
+                hint.textContent = 'Please select a document first by clicking on a row';
+                document.body.appendChild(hint);
+                
+                setTimeout(() => {
+                    hint.remove();
+                }, 3000);
+                return;
+            }
+            
+            const documentId = selectedRow.getAttribute('data-document-id');
+            const editUrl = `/purchases/deliveries/${documentId}/edit/`;
+            
+            console.log('Editing document ID:', documentId);
+            console.log('Redirect URL:', editUrl);
+            
+            // Show loading indicator
+            const loadingHint = document.createElement('div');
+            loadingHint.className = 'fixed top-4 right-4 bg-blue-100 border border-blue-400 text-blue-700 px-4 py-2 rounded-lg shadow-lg z-50';
+            loadingHint.innerHTML = '<i class="ki-filled ki-loading animate-spin mr-2"></i>Opening editor...';
+            document.body.appendChild(loadingHint);
+            
+            // Redirect to edit page
+            window.location.href = editUrl;
+        }
+        
+        // ESC - Deselect row
+        if (e.key === 'Escape' && selectedRow) {
+            selectedRow.style.backgroundColor = '';
+            selectedRow.classList.add('hover:bg-gray-50');
+            selectedRow = null;
+            
+            console.log('Row deselected');
+            
+            // Show brief confirmation
+            const hint = document.createElement('div');
+            hint.className = 'fixed top-4 right-4 bg-gray-100 border border-gray-400 text-gray-700 px-4 py-2 rounded-lg shadow-lg z-50';
+            hint.textContent = 'Selection cleared';
+            document.body.appendChild(hint);
+            
+            setTimeout(() => {
+                hint.remove();
+            }, 1500);
+        }
+    });
+});
+</script>
+
+{% endblock %}

@@ -377,13 +377,13 @@ class MovementService:
             )
 
     @staticmethod
-    def process_document_movements(document) -> Result:
+    def process_document_movements(document, created_by=None) -> Result:
         """
         🎯 AUTOMATION API: Process inventory movements from document - NEW Result-based method
         """
         try:
             # Use legacy method for full functionality
-            movements = MovementService._create_from_document_internal(document)
+            movements = MovementService._create_from_document_internal(document, created_by=created_by)
 
             processing_data = {
                 'document_id': getattr(document, 'id', None),
@@ -464,9 +464,24 @@ class MovementService:
         🎯 REVERSAL API: Safely reverse all movements for a document with cache updates - NEW Method
         """
         try:
-            movements = InventoryMovement.objects.filter(
-                source_document_number=document_number
-            ).exclude(source_document_type='REVERSAL')
+            # ✅ FIXED: Only reverse movements that haven't been reversed yet
+            # Find the latest reversal to determine which movements to exclude
+            latest_reversal = InventoryMovement.objects.filter(
+                source_document_number=document_number,
+                source_document_type='REVERSAL'
+            ).order_by('-created_at').first()
+            
+            if latest_reversal:
+                # Only reverse movements created after the latest reversal
+                movements = InventoryMovement.objects.filter(
+                    source_document_number=document_number,
+                    created_at__gt=latest_reversal.created_at
+                ).exclude(source_document_type='REVERSAL')
+            else:
+                # No previous reversals, reverse all non-reversal movements
+                movements = InventoryMovement.objects.filter(
+                    source_document_number=document_number
+                ).exclude(source_document_type='REVERSAL')
             
             if not movements.exists():
                 return Result.success(
@@ -477,8 +492,15 @@ class MovementService:
             reversed_movements = []
             failed_reversals = []
             
+            # Set batch mode flag to skip incremental updates for multiple reversals
+            batch_mode = movements.count() > 1
+            
             for movement in movements:
                 try:
+                    # Pass batch mode info to the reversal method
+                    if batch_mode:
+                        movement._batch_reversal_mode = True
+                        
                     reverse_result = MovementService.reverse_stock_movement(
                         original_movement=movement,
                         reason=reason or f'Document reversal: {document_number}',
@@ -501,6 +523,7 @@ class MovementService:
                 'document_number': document_number,
                 'original_movements_count': movements.count(),
                 'successfully_reversed': len(reversed_movements),
+                'reversed_count': len(reversed_movements),  # ✅ FIXED: Add reversed_count for StatusManager compatibility
                 'failed_reversals': len(failed_reversals),
                 'reversed_movement_ids': reversed_movements,
                 'failures': failed_reversals
@@ -513,7 +536,21 @@ class MovementService:
                     data=result_data
                 )
             else:
-                logger.info(f"✅ Successfully reversed all {len(reversed_movements)} movements for document {document_number}")
+                # ✅ CONDITIONAL BATCH UPDATE: Only recalculate if multiple movements reversed
+                # Single reversals use normal incremental updates in _reverse_movement_internal
+                if len(reversed_movements) > 1:
+                    try:
+                        affected_combinations = set()
+                        for movement in movements:
+                            affected_combinations.add((movement.location.id, movement.product.id))
+                        
+                        for location_id, product_id in affected_combinations:
+                            MovementService._recalculate_inventory_item(location_id, product_id)
+                            
+                        logger.info(f"✅ Batch recalculated {len(affected_combinations)} inventory items after {len(reversed_movements)} reversals")
+                    except Exception as e:
+                        logger.warning(f"Reversal succeeded but batch inventory update failed: {e}")
+                
                 return Result.success(
                     data=result_data,
                     msg=f'Successfully reversed all {len(reversed_movements)} movements for document {document_number}'
@@ -1154,13 +1191,15 @@ class MovementService:
             # Generate reversal document number
             reversal_doc_number = f"REV-{original_movement.source_document_number}"
 
-            # Check if reverse already exists
+            # Check if reverse already exists for THIS SPECIFIC movement
+            # FIXED: Include original movement ID to ensure uniqueness per movement
             existing_reverse = InventoryMovement.objects.filter(
                 source_document_type='REVERSAL',
                 source_document_number=reversal_doc_number,
                 product=original_movement.product,
                 location=original_movement.location,
-                source_document_line_id=original_movement.source_document_line_id
+                source_document_line_id=original_movement.source_document_line_id,
+                reason__contains=f'original_id:{original_movement.id}'  # Make it unique per movement
             ).first()
 
             if existing_reverse:
@@ -1180,53 +1219,118 @@ class MovementService:
                 source_document_type='REVERSAL',
                 source_document_number=reversal_doc_number,
                 source_document_line_id=original_movement.source_document_line_id,
-                reason=reason or f'Reverse of {original_movement.source_document_number}',
+                reason=f'{reason or f"Reverse of {original_movement.source_document_number}"} [original_id:{original_movement.id}]',
                 movement_date=timezone.now().date(),
                 created_by=created_by
             )
 
-            # Refresh cache
-            try:
-                existing_item = InventoryItem.objects.select_for_update().filter(
-                    location=original_movement.location,
-                    product=original_movement.product
-                ).first()
+            # ✅ CONDITIONAL: Only skip incremental updates for batch reversals
+            # Single reversals still get incremental updates for performance
+            should_skip_incremental = hasattr(original_movement, '_batch_reversal_mode') and original_movement._batch_reversal_mode
+            
+            if not should_skip_incremental:
+                # Normal incremental InventoryItem update for single reversals
+                try:
+                    existing_item = InventoryItem.objects.select_for_update().filter(
+                        location=original_movement.location,
+                        product=original_movement.product
+                    ).first()
 
-                if existing_item:
-                    if reverse_movement_type == 'IN':
-                        # Reversing an OUT movement - add quantity back
-                        new_total_value = (existing_item.current_qty * existing_item.avg_cost) + (
-                                    original_movement.quantity * original_movement.cost_price)
-                        new_qty = existing_item.current_qty + original_movement.quantity
-                        new_avg_cost = new_total_value / new_qty if new_qty > 0 else existing_item.avg_cost
+                    if existing_item:
+                        if reverse_movement_type == 'IN':
+                            # Reversing an OUT movement - add quantity back
+                            new_total_value = (existing_item.current_qty * existing_item.avg_cost) + (
+                                        original_movement.quantity * original_movement.cost_price)
+                            new_qty = existing_item.current_qty + original_movement.quantity
+                            new_avg_cost = new_total_value / new_qty if new_qty > 0 else existing_item.avg_cost
 
-                        InventoryItem.objects.filter(pk=existing_item.pk).update(
-                            current_qty=new_qty,
-                            avg_cost=new_avg_cost,
-                            last_movement_date=timezone.now()
-                        )
-                    else:
-                        # Reversing an IN movement - subtract quantity
-                        new_qty = existing_item.current_qty - original_movement.quantity
-                        InventoryItem.objects.filter(pk=existing_item.pk).update(
-                            current_qty=new_qty,
-                            last_movement_date=timezone.now()
-                            # Keep same avg_cost when reversing incoming
-                        )
-
-            except Exception as e:
-                logger.error(f"Error in reversal incremental update: {e}")
-                raise
+                            InventoryItem.objects.filter(pk=existing_item.pk).update(
+                                current_qty=new_qty,
+                                avg_cost=new_avg_cost,
+                                last_movement_date=timezone.now()
+                            )
+                        else:
+                            # Reversing an IN movement - subtract quantity
+                            new_qty = existing_item.current_qty - original_movement.quantity
+                            InventoryItem.objects.filter(pk=existing_item.pk).update(
+                                current_qty=new_qty,
+                                last_movement_date=timezone.now()
+                            )
+                except Exception as e:
+                    logger.warning(f"Incremental inventory update failed: {e}")
+                    # Continue - batch update will fix it
 
             logger.info(f"Created reverse movement {reverse_movement.id} for original {original_movement.id}")
             return reverse_movement
-
+            
         except Exception as e:
             logger.error(f"Error creating reverse movement: {e}")
             raise
 
     @staticmethod
-    def _create_from_document_internal(document) -> List[InventoryMovement]:
+    def _recalculate_inventory_item(location_id: int, product_id: int):
+        """
+        Recalculate InventoryItem from all movements for location/product combination
+        Used after batch operations like reversals to ensure accuracy
+        """
+        from inventory.models import InventoryItem
+        from products.models import Product
+        from core.interfaces.service_registry import ServiceRegistry
+        from django.db.models import Sum, Q
+        from django.utils import timezone
+        
+        try:
+            # Use interface-based location lookup
+            location_service = ServiceRegistry.get_location_service()
+            location = location_service.get_by_id(location_id)
+            product = Product.objects.get(id=product_id)
+            
+            # Calculate totals from all movements (excluding reversals for IN calculation)
+            in_movements = InventoryMovement.objects.filter(
+                location=location,
+                product=product,
+                movement_type='IN'
+            ).exclude(source_document_type='REVERSAL')
+            
+            out_movements = InventoryMovement.objects.filter(
+                location=location,
+                product=product,
+                movement_type='OUT'
+            )
+            
+            total_in = in_movements.aggregate(qty=Sum('quantity'))['qty'] or 0
+            total_out = out_movements.aggregate(qty=Sum('quantity'))['qty'] or 0
+            current_qty = total_in - total_out
+            
+            # Calculate weighted average cost from IN movements only
+            if in_movements.exists():
+                total_cost_value = sum(
+                    movement.quantity * movement.cost_price 
+                    for movement in in_movements
+                )
+                avg_cost = total_cost_value / total_in if total_in > 0 else 0
+            else:
+                avg_cost = 0
+                
+            # Update or create InventoryItem
+            item, created = InventoryItem.objects.update_or_create(
+                location=location,
+                product=product,
+                defaults={
+                    'current_qty': current_qty,
+                    'avg_cost': avg_cost,
+                    'last_movement_date': timezone.now()
+                }
+            )
+            
+            logger.info(f"{'Created' if created else 'Updated'} inventory item: {product.code}@{location.code} = {current_qty}")
+            
+        except Exception as e:
+            logger.error(f"Error recalculating inventory item {location_id}/{product_id}: {e}")
+            raise
+
+    @staticmethod
+    def _create_from_document_internal(document, created_by=None) -> List[InventoryMovement]:
         """FIXED: Use document type configuration instead of hardcoded model names"""
 
         movements = []
@@ -1243,7 +1347,7 @@ class MovementService:
             
             # Document type routing based on type_key
             if document_type_key in ['delivery_receipt', 'deliveryreceipt']:
-                movements = MovementService._create_from_delivery(document)
+                movements = MovementService._create_from_delivery(document, created_by=created_by)
             elif document_type_key in ['purchase_order', 'purchaseorder']:
                 movements = MovementService._create_from_purchase_order(document)
             elif document_type_key in ['purchase_request', 'purchaserequest']:
@@ -1417,7 +1521,7 @@ class MovementService:
     # =====================================================
 
     @staticmethod
-    def _create_from_delivery(delivery) -> List[InventoryMovement]:
+    def _create_from_delivery(delivery, created_by=None) -> List[InventoryMovement]:
         """Enhanced delivery processing - FIXED: Use dynamic field detection"""
         movements = []
         direction = getattr(delivery.document_type, 'inventory_direction', 'in')
@@ -1442,7 +1546,8 @@ class MovementService:
                             source_document_line_id=line.line_number,
                             batch_number=getattr(line, 'batch_number', None),
                             expiry_date=getattr(line, 'expiry_date', None),
-                            reason=f"Delivery receipt (line {line.line_number})"
+                            reason=f"Delivery receipt (line {line.line_number})",
+                            created_by=created_by
                         )
                         movements.append(movement)
 
@@ -1455,7 +1560,8 @@ class MovementService:
                             source_document_type='DELIVERY_RETURN',
                             source_document_number=delivery.document_number,
                             source_document_line_id=line.line_number,
-                            reason=f"Delivery return (line {line.line_number})"
+                            reason=f"Delivery return (line {line.line_number})",
+                            created_by=created_by
                         )
                         movements.extend(outgoing_movements)
 
@@ -1472,7 +1578,8 @@ class MovementService:
                         source_document_line_id=line.line_number,
                         batch_number=getattr(line, 'batch_number', None),
                         expiry_date=getattr(line, 'expiry_date', None),
-                        reason=f"Delivery receipt (line {line.line_number})"
+                        reason=f"Delivery receipt (line {line.line_number})",
+                        created_by=created_by
                     )
                     movements.append(movement)
 
@@ -1485,7 +1592,8 @@ class MovementService:
                         source_document_type='DELIVERY_OUT',
                         source_document_number=delivery.document_number,
                         source_document_line_id=line.line_number,
-                        reason=f"Delivery dispatch (line {line.line_number})"
+                        reason=f"Delivery dispatch (line {line.line_number})",
+                        created_by=created_by
                     )
                     movements.extend(outgoing_movements)
 

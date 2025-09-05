@@ -189,6 +189,26 @@ class PurchaseDocumentService:
         """✅ PURE DELEGATION: Return to draft"""
         return self.facade.return_to_draft(comments)
 
+    def cancel(self, comments: str = '') -> Result:
+        """✅ PURE DELEGATION: Cancel document"""
+        return self.facade.cancel(comments)
+
+    # =================================================
+    # QUERY/VALIDATION DELEGATION METHODS  
+    # =================================================
+
+    def can_edit(self) -> bool:
+        """✅ PURE DELEGATION: Check if document can be edited"""
+        return self.facade.can_edit()
+    
+    def can_delete(self) -> bool:
+        """✅ PURE DELEGATION: Check if document can be deleted"""
+        return self.facade.can_delete()
+    
+    # ❌ REMOVED: Semantic action methods - Templates will use facade.get_available_actions() directly
+    
+    # ❌ REMOVED: get_status_info() - No longer needed, use facade.get_available_actions() directly
+
     # =================================================
     # PURCHASE-SPECIFIC BUSINESS LOGIC
     # =================================================

@@ -41,7 +41,7 @@ class StatusManager:
         """
         try:
             from_status = document.status
-
+            
             logger.info(f"🔄 Transitioning {document.document_number}: {from_status} → {to_status}")
 
             # Refresh document data (without locking for PostgreSQL compatibility)
@@ -75,7 +75,7 @@ class StatusManager:
                 # === APPROVAL WORKFLOW ===
                 logger.debug(f"🔒 Document requires approval - checking ApprovalService")
                 try:
-                    from ..approval_service import ApprovalService
+                    from .approval_service import ApprovalService
 
                     approval_result = ApprovalService.authorize_document_transition(
                         document, to_status, user
@@ -147,7 +147,6 @@ class StatusManager:
 
             # 7. POST-TRANSITION EFFECTS
             try:
-                logger.debug(f"🔄 Executing post-transition actions")
                 StatusManager._execute_post_transition_actions(
                     document, old_status, to_status, user, **kwargs
                 )
@@ -227,12 +226,13 @@ class StatusManager:
                     f"Cannot transition from final status '{document.status}'"
                 )
 
-            # Cannot transition TO initial status
-            if status_config.is_initial:
-                return Result.error(
-                    'TO_INITIAL_STATUS',
-                    f"Cannot transition to initial status '{to_status}'"
-                )
+            # ✅ REMOVED: Allow transitions to initial status
+            # This was blocking valid return_to_draft workflows
+            # if status_config.is_initial:
+            #     return Result.error(
+            #         'TO_INITIAL_STATUS',
+            #         f"Cannot transition to initial status '{to_status}'"
+            #     )
 
             return Result.success()
 
@@ -259,6 +259,11 @@ class StatusManager:
                 is_active=True
             ).first()
 
+            if new_status_config:
+                logger.debug(f"Found status configuration: {new_status_config}")
+                logger.debug(f"  reverses_inventory_movements: {new_status_config.reverses_inventory_movements}")
+                logger.debug(f"  creates_inventory_movements: {new_status_config.creates_inventory_movements}")
+                
             if not new_status_config:
                 logger.warning(f"No configuration found for {document.document_type.name} status '{new_status}'")
                 return
@@ -272,7 +277,7 @@ class StatusManager:
                 logger.info(f"📦 Creating inventory movements for {document.document_number} → {new_status}")
                 try:
                     from inventory.services import MovementService
-                    result = MovementService.process_document_movements(document)
+                    result = MovementService.process_document_movements(document, created_by=user)
                     if result.ok:
                         movements_count = result.data.get('movements_created', 0)
                         logger.info(f"✅ Created {movements_count} inventory movements")

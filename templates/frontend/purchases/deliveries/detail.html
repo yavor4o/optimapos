@@ -1,0 +1,474 @@
+{% extends 'frontend/base.html' %}
+{% load static %}
+{% load i18n %}
+
+{% block title %}
+    {{ delivery_receipt.document_number }} - {{ block.super }}
+{% endblock %}
+
+{% block content %}
+<div class="kt-container-fixed px-4 sm:px-6 lg:px-8">
+    <!-- Page Header -->
+    <div class="flex flex-wrap items-center justify-between gap-5 py-6 ">
+        <div class="flex flex-col gap-2">
+            <h1 class="text-2xl font-semibold text-gray-900">
+                {% trans "Delivery Receipt" %}
+            </h1>
+            <!-- Breadcrumb Navigation -->
+            <div class="flex items-center gap-2 text-sm font-normal text-gray-600">
+                <i class="ki-filled ki-home-2 text-xs"></i>
+                <a href="{% url 'core:dashboard' %}" class="text-gray-600 hover:text-primary">Dashboard</a>
+                <i class="ki-filled ki-right text-xs text-gray-400"></i>
+                <a href="{% url 'purchases:index' %}" class="text-gray-600 hover:text-primary">Purchases</a>
+                <i class="ki-filled ki-right text-xs text-gray-400"></i>
+                <a href="{% url 'purchases:delivery_list' %}" class="text-gray-600 hover:text-primary">Delivery Receipts</a>
+                <i class="ki-filled ki-right text-xs text-gray-400"></i>
+                <span class="text-gray-800 font-medium">{{ delivery_receipt.document_number }}</span>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="grid grid-cols-1 gap-6 mt-6">
+        <!-- Document Details Card - Clean Business Style -->
+        <div class="kt-card rounded-xl shadow-sm border border-gray-100">
+            <!-- Simple Header -->
+            <div class="kt-card-header p-6 border-b border-gray-200">
+                <div class="flex items-center justify-between gap-2 w-full">
+                    <!-- Left: Title + Status -->
+                    <div class="flex items-center gap-3">
+                        <h3 class="kt-card-title text-lg font-semibold text-gray-900">{% trans "Document Information" %}</h3>
+                        <!-- Status Badge -->
+                        <span class="kt-badge kt-badge-sm {{ status_class }}">
+                            {{ delivery_receipt.status|title }}
+                        </span>
+                    </div>
+                    
+                    <!-- Right: Mini Action Buttons - Force to right -->
+                    <div class="flex items-center gap-1 ml-auto">
+                        {% for action in available_actions %}
+                            {% if action.action == 'transition' and action.can_perform %}
+                                {% if action.semantic_type == 'return_draft' %}
+                                    <!-- Special case: Draft button changes status then goes to edit -->
+                                    <button type="button"
+                                            class="{{ action.button_style }} flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg shadow-sm hover:shadow-md transition-all duration-200 transform hover:scale-110"
+                                            data-action="{{ action.semantic_type }}"
+                                            data-target-status="{{ action.status }}"
+                                            data-url="{% url 'purchases:delivery_action' delivery_receipt.pk %}"
+                                            data-redirect-to-edit="true"
+                                            title="{{ action.label }} & Edit">
+                                        <i class="{{ action.icon }} text-xs"></i>
+                                        <span>{{ action.label }}</span>
+                                    </button>
+                                {% else %}
+                                    <!-- Normal action buttons -->
+                                    <button type="button"
+                                            class="{{ action.button_style }} flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg shadow-sm hover:shadow-md transition-all duration-200 transform hover:scale-110"
+                                            data-action="{{ action.semantic_type }}"
+                                            data-target-status="{{ action.status }}"
+                                            data-url="{% url 'purchases:delivery_action' delivery_receipt.pk %}"
+                                            {% if action.semantic_type == 'reject' or action.semantic_type == 'cancel' %}data-requires-comments="true"{% endif %}
+                                            title="{{ action.label }}">
+                                        <i class="{{ action.icon }} text-xs"></i>
+                                        <span>{{ action.label }}</span>
+                                    </button>
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if can_edit %}
+                            <a href="{% url 'purchases:delivery_update' delivery_receipt.pk %}"
+                               class="kt-btn kt-btn-secondary flex items-center gap-1 px-2 py-1 text-xs font-medium rounded shadow-sm hover:shadow-md hover:bg-gray-200 transition-all duration-200 transform hover:scale-110"
+                               title="{% trans 'Edit' %}">
+                                <i class="ki-filled ki-notepad-edit text-xs"></i>
+                                <span>{% trans "Edit" %}</span>
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Content Body -->
+            <div class="kt-card-body p-4">
+                <!-- Key Information - Top Row -->
+                <div class="mb-3 p-2 bg-blue-50 rounded-lg">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <!-- Document Number -->
+                        <div>
+                            <label class="text-xs font-medium text-gray-600 uppercase">{% trans "Document Number" %}</label>
+                            <div class="text-base font-bold text-gray-900 leading-tight">{{ delivery_receipt.document_number }}</div>
+                        </div>
+                        <!-- Document Date -->
+                        <div>
+                            <label class="text-xs font-medium text-gray-600 uppercase">{% trans "Document Date" %}</label>
+                            <div class="text-sm text-gray-800 leading-tight">{{ delivery_receipt.document_date|date:"M d, Y" }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Details in Single Row -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                    <div class="px-2 py-2 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow">
+                        <label class="text-xs font-medium text-gray-500 uppercase block">{% trans "Delivery Date" %}</label>
+                        <div class="text-sm text-gray-800 leading-tight">{{ delivery_receipt.delivery_date|date:"M d, Y" }}</div>
+                    </div>
+
+                    <div class="px-2 py-2 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow">
+                        <label class="text-xs font-medium text-gray-500 uppercase block">{% trans "Supplier" %}</label>
+                        <div class="text-sm text-gray-800 leading-tight truncate" title="{{ delivery_receipt.partner }}">{{ delivery_receipt.partner }}</div>
+                    </div>
+
+                    <div class="px-2 py-2 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow">
+                        <label class="text-xs font-medium text-gray-500 uppercase block">{% trans "Received By" %}</label>
+                        <div class="text-sm text-gray-800 leading-tight truncate" title="{{ delivery_receipt.received_by.get_full_name|default:delivery_receipt.received_by.username }}">{{ delivery_receipt.received_by.get_full_name|default:delivery_receipt.received_by.username }}</div>
+                    </div>
+
+                    <div class="px-2 py-2 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow">
+                        <label class="text-xs font-medium text-gray-500 uppercase block">{% trans "Received At" %}</label>
+                        <div class="text-sm text-gray-800 leading-tight">{{ delivery_receipt.received_at|date:"M d, Y H:i" }}</div>
+                    </div>
+                </div>
+
+                <!-- Notes Section -->
+                {% if delivery_receipt.notes %}
+                    <div class="mt-6 p-5 bg-amber-50 rounded-lg shadow-sm">
+                        <label class="text-xs font-medium text-amber-700 uppercase block mb-3">{% trans "Notes" %}</label>
+                        <div class="text-sm text-gray-700 leading-relaxed">{{ delivery_receipt.notes }}</div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Line Items Card -->
+        <div class="kt-card rounded-xl shadow-sm border border-gray-100">
+            <div class="kt-card-header p-6 border-b border-gray-200 flex justify-between items-center">
+                <h3 class="kt-card-title text-lg font-semibold text-gray-900">{% trans "Line Items" %}</h3>
+                <div class="flex items-center gap-3">
+                    <span class="text-sm text-gray-600">{{ delivery_lines|length }} {% trans "item" %}{{ delivery_lines|length|pluralize }}</span>
+                    <input type="text" id="lineItemsSearch" class="form-control w-64 px-4 py-2 text-sm border-gray-300 rounded-lg focus:ring-primary focus:border-primary" placeholder="{% trans 'Search items...' %}">
+                </div>
+            </div>
+            <div class="kt-card-body p-6">
+                {% if delivery_lines %}
+                    <div class="kt-datatable table-responsive">
+                        <table class="kt-table kt-table-rounded w-full text-sm" id="lineItemsTable">
+                            <thead class="bg-gray-50">
+                                <tr class="text-gray-600 font-medium">
+                                    <th class="p-4">{% trans "Product" %}</th>
+                                    <th class="p-4 text-right">{% trans "Quantity" %}</th>
+                                    <th class="p-4 text-right">{% trans "Unit Price (ex VAT)" %}</th>
+                                    <th class="p-4 text-right">{% trans "Unit Price (inc VAT)" %}</th>
+                                    <th class="p-4 text-right">{% trans "VAT Rate" %}</th>
+                                    <th class="p-4 text-right">{% trans "VAT Amount" %}</th>
+                                    <th class="p-4 text-right">{% trans "Net Amount" %}</th>
+                                    <th class="p-4 text-right">{% trans "Gross Amount" %}</th>
+                                    <th class="p-4 text-center">{% trans "Quality" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in delivery_lines %}
+                                    <tr class="hover:bg-gray-50 transition-colors">
+                                        <td class="p-4">
+                                            <div class="font-medium text-gray-900">{{ line.product.name }}</div>
+                                            <div class="text-xs text-gray-600">{{ line.product.code }}</div>
+                                        </td>
+                                        <td class="p-4 text-right">
+                                            {{ line.received_quantity|floatformat:2 }} {% if line.unit %}{{ line.unit.symbol }}{% endif %}
+                                        </td>
+                                        <td class="p-4 text-right">
+                                            {{ line.unit_price|floatformat:2 }}
+                                        </td>
+                                        <td class="p-4 text-right font-medium text-blue-600">
+                                            {{ line.unit_price_with_vat|floatformat:2|default:"-" }}
+                                        </td>
+                                        <td class="p-4 text-right">
+                                            {% if line.vat_rate %}{% widthratio line.vat_rate 1 100 %}%{% else %}-{% endif %}
+                                        </td>
+                                        <td class="p-4 text-right text-green-600">
+                                            {{ line.vat_amount|floatformat:2|default:"-" }} лв
+                                        </td>
+                                        <td class="p-4 text-right">
+                                            {{ line.net_amount|floatformat:2|default:"-" }} лв
+                                        </td>
+                                        <td class="p-4 text-right font-medium">
+                                            {{ line.gross_amount|floatformat:2|default:"-" }} лв
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            {% if line.quality_approved %}
+                                                <span class="kt-badge kt-badge-success kt-badge-sm px-2 py-1 rounded">{% trans "Approved" %}</span>
+                                            {% elif line.quality_approved == False %}
+                                                <span class="kt-badge kt-badge-danger kt-badge-sm px-2 py-1 rounded">{% trans "Rejected" %}</span>
+                                            {% else %}
+                                                <span class="kt-badge kt-badge-warning kt-badge-sm px-2 py-1 rounded">{% trans "Pending" %}</span>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center text-gray-500 p-6">
+                        {% trans "No line items found." %}
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+   <!-- Navigation and Financial Summary Row -->
+   <div class="flex items-start justify-between gap-4 mt-3 mb-3">
+       <!-- Left Column: Back Navigation + Action Buttons -->
+       <div class="flex flex-col gap-4" style="width: 48%;">
+           <!-- Back Navigation Card -->
+           <div class="kt-card rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow cursor-pointer">
+               <a href="{% url 'purchases:delivery_list' %}" class="block">
+                   <div class="kt-card-body px-6 py-4">
+                       <div class="flex items-center gap-3">
+                           <div class="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light">
+                               <i class="ki-filled ki-left text-primary text-lg"></i>
+                           </div>
+                           <div class="flex flex-col">
+                               <span class="text-sm font-semibold text-gray-900">{% trans "Back to List" %}</span>
+                               <span class="text-xs text-gray-600">{% trans "All Delivery Receipts" %}</span>
+                           </div>
+                       </div>
+                   </div>
+               </a>
+           </div>
+           
+           <!-- Action Buttons Card -->
+           <div class="kt-card rounded-lg shadow-sm border border-gray-200">
+               <div class="kt-card-header px-4 py-3 border-b border-gray-300">
+                   <div class="flex items-center gap-2">
+                       <i class="ki-filled ki-setting-2 text-primary text-sm"></i>
+                       <h3 class="kt-card-title text-sm font-semibold text-gray-800">{% trans "Available Actions" %}</h3>
+                   </div>
+               </div>
+               <div class="kt-card-body px-4 py-4">
+                   <div class="flex flex-wrap gap-2">
+                       {# ✅ Compact action buttons with flexible layout #}
+                       {% for action in available_actions %}
+                           {% if action.action == 'transition' and action.can_perform %}
+                               <button type="button"
+                                       class="{{ action.button_style }} flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg shadow-sm hover:shadow-md transition-all duration-200 transform hover:scale-105"
+                                       data-action="{{ action.semantic_type }}"
+                                       data-target-status="{{ action.status }}"
+                                       data-url="{% url 'purchases:delivery_action' delivery_receipt.pk %}"
+                                       {% if action.semantic_type == 'reject' or action.semantic_type == 'cancel' %}data-requires-comments="true"{% endif %}>
+                                   <i class="{{ action.icon }} text-sm"></i>
+                                   {{ action.label }}
+                               </button>
+                           {% endif %}
+                       {% endfor %}
+                       {% if can_edit %}
+                           <a href="{% url 'purchases:delivery_update' delivery_receipt.pk %}"
+                              class="kt-btn kt-btn-secondary flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg shadow-sm hover:shadow-md hover:bg-gray-200 transition-all duration-200 transform hover:scale-105">
+                               <i class="ki-filled ki-notepad-edit text-sm"></i>
+                               {% trans "Edit" %}
+                           </a>
+                       {% endif %}
+                   </div>
+               </div>
+           </div>
+       </div>
+       
+       <!-- Financial Summary Card -->
+       <div class="kt-card rounded-lg shadow-sm border border-gray-200" style="width: 48%;">
+    <div class="kt-card-header px-4 py-3 border-b border-gray-300">
+        <h3 class="kt-card-title text-base font-semibold text-gray-800">{% trans "Financial Summary" %}</h3>
+    </div>
+    <div class="kt-card-body px-4 py-3">
+        <div class="space-y-1 text-sm">
+
+            <div class="flex justify-between py-1 ">
+                <span class="text-gray-600">{% trans "Subtotal (ex VAT)" %}:</span>
+                <span class="font-medium text-gray-800">{{ delivery_receipt.subtotal|floatformat:2 }} лв</span>
+            </div>
+            {% if delivery_receipt.discount_total > 0 %}
+                <div class="flex justify-between py-1 ">
+                    <span class="text-gray-600">{% trans "Discount" %}:</span>
+                    <span class="font-medium text-red-600">-{{ delivery_receipt.discount_total|floatformat:2 }} лв</span>
+                </div>
+            {% endif %}
+            {% if vat_breakdown %}
+                {% for rate, amount in vat_breakdown.items %}
+                    <div class="flex justify-between py-1 ">
+                        <span class="text-gray-600">{{ rate }}% {% trans "VAT" %}:</span>
+                        <span class="font-medium text-gray-800">{{ amount|floatformat:2 }} лв</span>
+                    </div>
+                {% endfor %}
+            {% endif %}
+            <div class="flex justify-between py-1 border-b-2 border-gray-200">
+                <span class="text-gray-600 font-large">{% trans "VAT Total" %}:</span>
+                <span class="font-medium text-gray-800">{{ delivery_receipt.vat_total|floatformat:2 }} лв</span>
+            </div>
+            <div class="flex justify-between py-2 px-2 bg-gray-50 rounded mt-2">
+                <span class="font-extrabold text-3xl  text-gray-900">{% trans "Total" %}:</span>
+                <span class="font-bold text-xl text-primary">{{ delivery_receipt.total|floatformat:2 }} лв</span>
+            </div>
+            <div class="flex justify-between pt-1">
+                <span class="text-xs text-gray-500 italic">{% trans "EUR (1.95583 rate)" %}:</span>
+                <span class="text-xl font-bold text-blue-600">
+                    {% if eur_total %}{{ eur_total|floatformat:2 }} €{% else %}- €{% endif %}
+                </span>
+            </div>
+        </div>
+        </div>
+    </div>
+   </div> <!-- Close flex container for navigation and financial summary -->
+
+    <!-- Additional Info Cards -->
+
+</div>
+
+
+<!-- Semantic Action Modal -->
+<div class="kt-modal" data-kt-modal="true" id="semantic-action-modal">
+    <div class="kt-modal-content rounded-xl shadow-lg bg-white" style="max-width: 600px; width: 100%; top: 10%;">
+        <div class="kt-modal-header p-6 border-b border-gray-200 flex justify-between items-center">
+            <h3 class="kt-modal-title text-lg font-semibold text-gray-900" id="modal-title">
+                {% trans "Confirm Action" %}
+            </h3>
+            <button type="button" class="kt-btn kt-btn-icon kt-btn-light w-8 h-8 flex items-center justify-center rounded-md" data-kt-modal-dismiss="true">
+                <i class="ki-filled ki-cross text-gray-600"></i>
+            </button>
+        </div>
+        <div class="kt-modal-body p-6">
+            <form id="semantic-action-form" method="post" class="space-y-6">
+                {% csrf_token %}
+                <input type="hidden" name="action_type" id="modal-action-type">
+                <div>
+                    <p id="modal-message" class="text-sm text-gray-700">{% trans "Are you sure you want to perform this action?" %}</p>
+                </div>
+                <div>
+                    <label for="modal-comments" class="block text-sm font-medium text-gray-600 mb-2">{% trans "Comments" %}:</label>
+                    <textarea name="comments" id="modal-comments"
+                              class="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-primary focus:border-primary"
+                              rows="4" placeholder="{% trans 'Optional comments about this action...' %}"></textarea>
+                </div>
+                <div class="flex justify-end gap-3">
+                    <button type="button" class="kt-btn kt-btn-secondary px-4 py-2 text-sm font-medium hover:bg-gray-200" data-kt-modal-dismiss="true">
+                        {% trans "Cancel" %}
+                    </button>
+                    <button type="submit" id="modal-confirm-btn" class="kt-btn kt-btn-primary px-4 py-2 text-sm font-medium hover:bg-primary-dark">
+                        {% trans "Confirm" %}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- JavaScript -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const modalEl = document.getElementById('semantic-action-modal');
+    const form = document.getElementById('semantic-action-form');
+    const modal = KTModal.getInstance(modalEl);
+    const actionButtons = document.querySelectorAll('[data-action]');
+    const searchInput = document.getElementById('lineItemsSearch');
+    const table = document.getElementById('lineItemsTable');
+    const tbody = table.querySelector('tbody');
+
+    function openModal(action, url, requiresComments = false, actionLabel = '') {
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalComments = document.getElementById('modal-comments');
+        const modalActionType = document.getElementById('modal-action-type');
+
+        modalTitle.textContent = `${actionLabel || action.charAt(0).toUpperCase() + action.slice(1)} {% trans "Document" %}`;
+        modalMessage.textContent = `{% trans "Are you sure you want to" %} ${action.replace('_', ' ').toLowerCase()} {% trans "this delivery receipt?" %}`;
+        modalActionType.value = action;
+        form.action = url;
+
+        modalComments.required = requiresComments;
+        modalComments.placeholder = requiresComments
+            ? '{% trans "Please provide a reason for this action..." %}'
+            : '{% trans "Optional comments about this action..." %}';
+        modalComments.previousElementSibling.textContent = requiresComments
+            ? '{% trans "Comments (Required)" %}'
+            : '{% trans "Comments" %}';
+
+        if (modal) {
+            modal.show();
+        }
+
+        setTimeout(() => modalComments.focus(), 100);
+    }
+
+    actionButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const action = this.dataset.action;
+            const url = this.dataset.url;
+            const requiresComments = this.dataset.requiresComments === 'true';
+            const actionLabel = this.textContent.trim();
+            openModal(action, url, requiresComments, actionLabel);
+        });
+    });
+
+    form.addEventListener('submit', function(e) {
+        const confirmBtn = document.getElementById('modal-confirm-btn');
+        const actionType = document.getElementById('modal-action-type').value;
+        const shouldRedirectToEdit = actionType === 'return_draft';
+        
+        // Check if this is a Draft action that should redirect
+        if (shouldRedirectToEdit) {
+            e.preventDefault(); // Prevent normal form submission
+            
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="ki-filled ki-loading animate-spin mr-2"></i> {% trans "Processing..." %}';
+            
+            // Submit form via AJAX for Draft action
+            const formData = new FormData(form);
+            fetch(form.action, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Status change successful, redirect to edit page
+                    window.location.href = "{% url 'purchases:delivery_update' delivery_receipt.pk %}";
+                } else {
+                    // Handle error
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = '{% trans "Confirm" %}';
+                    alert('{% trans "Error changing status. Please try again." %}');
+                }
+            })
+            .catch(error => {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = '{% trans "Confirm" %}';
+                alert('{% trans "Error changing status. Please try again." %}');
+            });
+        } else {
+            // Normal form submission for other actions
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="ki-filled ki-loading animate-spin mr-2"></i> {% trans "Processing..." %}';
+        }
+    });
+
+    modalEl.addEventListener('hide.kt.modal', function() {
+        form.reset();
+        document.getElementById('modal-comments').required = false;
+        const confirmBtn = document.getElementById('modal-confirm-btn');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '{% trans "Confirm" %}';
+    });
+
+    // Table search functionality
+    searchInput.addEventListener('input', function() {
+        const searchTerm = this.value.toLowerCase();
+        const rows = tbody.querySelectorAll('tr');
+        rows.forEach(row => {
+            const productName = row.querySelector('td:nth-child(1) .font-medium').textContent.toLowerCase();
+            const productCode = row.querySelector('td:nth-child(1) .text-xs').textContent.toLowerCase();
+            row.style.display = productName.includes(searchTerm) || productCode.includes(searchTerm) ? '' : 'none';
+        });
+    });
+});
+</script>
+{% endblock %}

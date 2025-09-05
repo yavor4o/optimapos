@@ -166,12 +166,13 @@ class ApprovalService:
                         'to_status': rule.to_status_obj.code,
                         'to_status_name': rule.to_status_obj.name,
                         'to_status_display': getattr(rule, 'custom_name', None) or rule.to_status_obj.name,
+                        'semantic_type': rule.semantic_type,  # ✅ NEW: Configuration-driven semantic type
                         'approval_level': rule.approval_level,
                         'can_execute': constraints_result.ok,
                         'block_reason': None if constraints_result.ok else constraints_result.msg,
                         'requires_comments': getattr(rule, 'requires_comments', False),
                         'requires_previous_level': getattr(rule, 'requires_previous_level', False),
-                        'button_style': ApprovalService._get_button_style(rule.to_status_obj),
+                        'button_style': ApprovalService._get_button_style_from_semantic(rule.semantic_type),  # ✅ ENHANCED: Use semantic type
                         'confirmation_required': ApprovalService._requires_confirmation(rule.to_status_obj)
                     }
 
@@ -554,7 +555,7 @@ class ApprovalService:
 
     @staticmethod
     def _get_button_style(status) -> str:
-        """Determine button style for status"""
+        """Determine button style for status - LEGACY METHOD"""
         status_code = status.code.lower()
 
         # FIXED: Use semantic patterns instead of hardcoded words
@@ -568,6 +569,19 @@ class ApprovalService:
             return 'btn-primary'
         else:
             return 'btn-secondary'
+
+    @staticmethod
+    def _get_button_style_from_semantic(semantic_type: str) -> str:
+        """✅ NEW: Configuration-driven button style based on semantic type"""
+        semantic_styles = {
+            'submit': 'btn-primary',
+            'approve': 'btn-success',
+            'reject': 'btn-danger',
+            'cancel': 'btn-warning',
+            'return_draft': 'btn-secondary',
+            'generic': 'btn-outline-secondary'
+        }
+        return semantic_styles.get(semantic_type, 'btn-secondary')
 
     @staticmethod
     def _requires_confirmation(status) -> bool:

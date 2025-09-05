@@ -135,7 +135,7 @@ class DocumentService:
             
         if not self.user:
             return Result.error('NO_USER', 'User required for status transitions')
-            
+        
         return self._status_manager.transition_document(
             self.document, 
             status, 
@@ -245,7 +245,7 @@ class DocumentService:
                     'label': 'Edit',
                     'can_perform': True,
                     'button_style': 'btn-secondary',
-                    'icon': 'fas fa-edit'
+                    'icon': 'ki-filled ki-notepad-edit'
                 })
             if self.can_delete():
                 actions.append({
@@ -574,8 +574,7 @@ class DocumentService:
         """
         🎯 SEMANTIC ACTION: Approve document
 
-        Automatically finds appropriate completion/approval status for the document type
-        and performs the transition with proper validation.
+        ✅ FIXED: Uses configuration-driven available actions instead of helper methods
 
         Args:
             comments: Optional approval comments
@@ -589,12 +588,20 @@ class DocumentService:
             if not self.document.document_type:
                 return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
 
-            # Find appropriate completion status using StatusResolver
-            target_status = self._find_completion_status()
+            # ✅ FIXED: Find approve action from available actions (configuration-driven)
+            available_actions = self.get_available_actions()
+            target_status = None
+            
+            for action in available_actions:
+                if action.get('action') == 'transition' and action.get('semantic_type') == 'approve':
+                    if action.get('can_perform', False):
+                        target_status = action.get('status')
+                        break
+            
             if not target_status:
                 return Result.error(
-                    'NO_COMPLETION_STATUS',
-                    'No suitable completion status configured for this document type'
+                    'NO_APPROVE_ACTION',
+                    'No approve action available for current document state'
                 )
 
             # Perform the transition
@@ -608,8 +615,7 @@ class DocumentService:
         """
         🎯 SEMANTIC ACTION: Submit document for approval
 
-        Automatically finds appropriate approval/pending status for the document type
-        and performs the transition with proper validation.
+        ✅ FIXED: Uses configuration-driven available actions instead of helper methods
 
         Args:
             comments: Optional submission comments
@@ -623,12 +629,20 @@ class DocumentService:
             if not self.document.document_type:
                 return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
 
-            # Find appropriate approval status using StatusResolver
-            target_status = self._find_approval_status()
+            # ✅ FIXED: Find submit action from available actions (configuration-driven)
+            available_actions = self.get_available_actions()
+            target_status = None
+            
+            for action in available_actions:
+                if action.get('action') == 'transition' and action.get('semantic_type') == 'submit':
+                    if action.get('can_perform', False):
+                        target_status = action.get('status')
+                        break
+            
             if not target_status:
                 return Result.error(
-                    'NO_APPROVAL_STATUS',
-                    'No suitable approval status configured for this document type'
+                    'NO_SUBMIT_ACTION',
+                    'No submit action available for current document state'
                 )
 
             # Perform the transition
@@ -640,10 +654,9 @@ class DocumentService:
 
     def reject(self, comments: str = '') -> Result:
         """
-        🎯 SEMANTIC ACTION: Reject/Cancel document
+        🎯 SEMANTIC ACTION: Reject document
 
-        Automatically finds appropriate rejection/cancellation status for the document type
-        and performs the transition with proper validation.
+        ✅ FIXED: Uses configuration-driven available actions instead of helper methods
 
         Args:
             comments: Optional rejection reason (usually required)
@@ -660,12 +673,20 @@ class DocumentService:
             if not comments:
                 return Result.error('REJECTION_REASON_REQUIRED', 'Rejection reason is required')
 
-            # Find appropriate rejection status using StatusResolver
-            target_status = self._find_rejection_status()
+            # ✅ FIXED: Find reject action from available actions (configuration-driven)
+            available_actions = self.get_available_actions()
+            target_status = None
+            
+            for action in available_actions:
+                if action.get('action') == 'transition' and action.get('semantic_type') == 'reject':
+                    if action.get('can_perform', False):
+                        target_status = action.get('status')
+                        break
+            
             if not target_status:
                 return Result.error(
-                    'NO_REJECTION_STATUS',
-                    'No suitable rejection status configured for this document type'
+                    'NO_REJECT_ACTION',
+                    'No reject action available for current document state'
                 )
 
             # Perform the transition
@@ -679,7 +700,7 @@ class DocumentService:
         """
         🎯 SEMANTIC ACTION: Return document to draft status
 
-        Returns document to editable draft state, usually from approval/pending status.
+        ✅ FIXED: Uses configuration-driven available actions instead of helper methods
 
         Args:
             comments: Optional reason for returning to draft
@@ -690,16 +711,28 @@ class DocumentService:
         try:
             logger.info(f"Returning document {self.document.document_number} to draft")
 
-            if not self.document.document_type:
-                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
-
-            # Find initial status (should be draft-like)
-            target_status = self._find_initial_status()
+            # ✅ FIXED: Find return_draft action from available actions
+            available_actions = self.get_available_actions()
+            logger.info(f"🐛 DEBUG available_actions: {available_actions}")
+            target_status = None
+            
+            for action in available_actions:
+                logger.info(f"🐛 DEBUG action: {action}")
+                if action.get('action') == 'transition' and action.get('semantic_type') == 'return_draft':
+                    if action.get('can_perform', False):
+                        target_status = action.get('status')
+                        logger.info(f"🐛 DEBUG Found return_draft action: {target_status}")
+                        break
+            
             if not target_status:
-                return Result.error(
-                    'NO_INITIAL_STATUS',
-                    'No initial status configured for this document type'
-                )
+                # Fallback: try to find initial status
+                target_status = self._find_initial_status()
+                if not target_status:
+                    return Result.error(
+                        'NO_RETURN_DRAFT_ACTION',
+                        'No return to draft action available for current document state'
+                    )
+                logger.info(f"Using fallback initial status: {target_status}")
 
             # Perform the transition
             return self.transition_to(target_status, comments)
@@ -707,6 +740,43 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Return to draft failed: {e}")
             return Result.error('DRAFT_RETURN_FAILED', f'Return to draft failed: {str(e)}')
+
+    def cancel(self, comments: str = '') -> Result:
+        """
+        🎯 SEMANTIC ACTION: Cancel document
+
+        Automatically finds appropriate cancellation status for the document type
+        and performs the transition with proper validation.
+
+        Args:
+            comments: Optional cancellation reason (usually required)
+
+        Returns:
+            Result with transition details or error
+        """
+        try:
+            logger.info(f"Cancelling document {self.document.document_number}")
+
+            if not self.document.document_type:
+                return Result.error('NO_DOCUMENT_TYPE', 'Document has no document type configured')
+
+            if not comments:
+                return Result.error('CANCELLATION_REASON_REQUIRED', 'Cancellation reason is required')
+
+            # Find appropriate cancellation status using StatusResolver
+            target_status = self._find_cancellation_status()
+            if not target_status:
+                return Result.error(
+                    'NO_CANCELLATION_STATUS',
+                    'No suitable cancellation status configured for this document type'
+                )
+
+            # Perform the transition
+            return self.transition_to(target_status, comments)
+
+        except Exception as e:
+            logger.error(f"Document cancellation failed: {e}")
+            return Result.error('CANCELLATION_FAILED', f'Cancellation failed: {str(e)}')
 
     # =================================================
     # PRIVATE HELPER METHODS FOR STATUS RESOLUTION
@@ -717,21 +787,14 @@ class DocumentService:
         try:
             from ._status_resolver import StatusResolver
 
-            # First try: Look for semantic completion statuses
-            completion_statuses = StatusResolver.get_statuses_by_semantic_type(
-                self.document.document_type, 'completion'
-            )
-            if completion_statuses:
-                return list(completion_statuses)[0]
-
-            # Second try: Look in final statuses for completion-like names
+            # Look in final statuses for completion-like names
             final_statuses = StatusResolver.get_final_statuses(self.document.document_type)
             for status in final_statuses:
                 status_lower = status.lower()
                 if any(word in status_lower for word in ['complet', 'finish', 'done', 'approved', 'received']):
                     return status
 
-            # Third try: Get any final status
+            # Fallback: Get any final status
             if final_statuses:
                 return list(final_statuses)[0]
 
@@ -743,63 +806,19 @@ class DocumentService:
             return 'completed'
 
     def _find_approval_status(self) -> Optional[str]:
-        """Find appropriate approval/pending status for document type"""
+        """Find appropriate approval status for document type"""
         try:
             from ._status_resolver import StatusResolver
-
-            # First try: Look for semantic approval statuses
-            approval_statuses = StatusResolver.get_statuses_by_semantic_type(
-                self.document.document_type, 'approval'
-            )
-            if approval_statuses:
-                return list(approval_statuses)[0]
-
-            # Second try: Look for statuses with approval-like names
-            # Get next possible statuses from current status
-            next_statuses = StatusResolver.get_next_possible_statuses(
-                self.document.document_type, self.document.status
-            )
-            for status in next_statuses:
-                status_lower = status.lower()
-                if any(word in status_lower for word in ['pending', 'review', 'approval', 'submit']):
-                    return status
-
-            # Fallback
-            return 'pending_approval'
-
+            return StatusResolver.get_approval_status(self.document.document_type)
         except Exception as e:
             logger.warning(f"Failed to find approval status: {e}")
-            return 'pending_approval'
+            return 'approved'
 
     def _find_rejection_status(self) -> Optional[str]:
         """Find appropriate rejection/cancellation status for document type"""
         try:
             from ._status_resolver import StatusResolver
-
-            # First try: Look for semantic rejection statuses
-            rejection_statuses = StatusResolver.get_statuses_by_semantic_type(
-                self.document.document_type, 'rejection'
-            )
-            if rejection_statuses:
-                return list(rejection_statuses)[0]
-
-            # Second try: Look for cancellation status
-            cancellation_status = StatusResolver.get_cancellation_status(self.document.document_type)
-            if cancellation_status:
-                return cancellation_status
-
-            # Third try: Look in next possible statuses for rejection-like names
-            next_statuses = StatusResolver.get_next_possible_statuses(
-                self.document.document_type, self.document.status
-            )
-            for status in next_statuses:
-                status_lower = status.lower()
-                if any(word in status_lower for word in ['reject', 'cancel', 'deny', 'refuse']):
-                    return status
-
-            # Fallback
-            return 'rejected'
-
+            return StatusResolver.get_rejection_status(self.document.document_type)
         except Exception as e:
             logger.warning(f"Failed to find rejection status: {e}")
             return 'rejected'
@@ -813,11 +832,22 @@ class DocumentService:
             logger.warning(f"Failed to find initial status: {e}")
             return 'draft'
 
+    def _find_cancellation_status(self) -> Optional[str]:
+        """Find appropriate cancellation status for document type"""
+        try:
+            from ._status_resolver import StatusResolver
+            return StatusResolver.get_cancellation_status(self.document.document_type)
+        except Exception as e:
+            logger.warning(f"Failed to find cancellation status: {e}")
+            return 'cancelled'
+
     # =================================================
     # STATUS INQUIRY METHODS
     # =================================================
 
-    def get_available_semantic_actions(self) -> Dict[str, bool]:
+    # ❌ REMOVED: get_available_semantic_actions() - Use get_available_actions() with semantic_type filtering
+    
+    def get_available_semantic_actions_LEGACY(self) -> Dict[str, bool]:
         """
         Get available semantic actions for current document state
 
@@ -826,7 +856,8 @@ class DocumentService:
                 'can_approve': bool,
                 'can_submit': bool,
                 'can_reject': bool,
-                'can_return_to_draft': bool
+                'can_return_to_draft': bool,
+                'can_cancel': bool
             }
         """
         try:
@@ -837,7 +868,7 @@ class DocumentService:
 
             if not doc_type:
                 return {'can_approve': False, 'can_submit': False, 'can_reject': False,
-                        'can_return_to_draft': False}
+                        'can_return_to_draft': False, 'can_cancel': False}
 
             # Get available transitions from current status
             available_statuses = StatusResolver.get_next_possible_statuses(doc_type, current_status)
@@ -847,19 +878,48 @@ class DocumentService:
             approval_status = self._find_approval_status()
             rejection_status = self._find_rejection_status()
             initial_status = self._find_initial_status()
+            cancellation_status = self._find_cancellation_status()
 
-            return {
-                'can_approve': completion_status in available_statuses if completion_status else False,
-                'can_submit': approval_status in available_statuses if approval_status else False,
-                'can_reject': rejection_status in available_statuses if rejection_status else False,
-                'can_return_to_draft': initial_status in available_statuses if initial_status else False
+            # ✅ FIXED: Use get_available_actions and map by semantic meaning of target statuses
+            available_actions_list = self.get_available_actions()
+            
+            # Map raw actions to semantic actions
+            actions = {
+                'can_approve': False,
+                'can_submit': False, 
+                'can_reject': False,
+                'can_return_to_draft': False,
+                'can_cancel': False
             }
+            
+            for action in available_actions_list:
+                if action.get('action') == 'transition':
+                    target_status = action.get('status', '')
+                    can_perform = action.get('can_perform', False) or action.get('can_execute', False)
+                    
+                    if can_perform:
+                        target_lower = target_status.lower()
+                        # Map based on semantic meaning of target status names (not helper methods)
+                        if any(word in target_lower for word in ['complet', 'approved', 'finished', 'done', 'received']):
+                            actions['can_approve'] = True
+                        elif any(word in target_lower for word in ['submit', 'pending', 'review', 'approval']):
+                            actions['can_submit'] = True  
+                        elif any(word in target_lower for word in ['reject', 'declined', 'refused']):
+                            actions['can_reject'] = True
+                        elif any(word in target_lower for word in ['draft', 'initial']) or target_status == initial_status:
+                            actions['can_return_to_draft'] = True
+                        elif any(word in target_lower for word in ['cancel', 'cancelled', 'abort']):
+                            actions['can_cancel'] = True
+            
+            return actions
 
         except Exception as e:
             logger.error(f"Failed to get semantic actions: {e}")
-            return {'can_approve': False, 'can_submit': False, 'can_reject': False, 'can_return_to_draft': False}
+            return {'can_approve': False, 'can_submit': False, 'can_reject': False, 'can_return_to_draft': False, 'can_cancel': False}
 
-    def get_semantic_action_labels(self) -> Dict[str, str]:
+    # ❌ REMOVED: get_semantic_action_labels() - Use action.label from get_available_actions()
+    
+    def get_semantic_action_labels_LEGACY(self) -> Dict[str, str]:
         """
         Get user-friendly labels for semantic actions
 
@@ -882,6 +942,7 @@ class DocumentService:
             approval_status = self._find_approval_status()
             rejection_status = self._find_rejection_status()
             initial_status = self._find_initial_status()
+            cancellation_status = self._find_cancellation_status()
 
             # Build labels from status codes (simple approach since we can't get status names easily)
             labels = {}
@@ -897,6 +958,9 @@ class DocumentService:
 
             if initial_status:
                 labels['return_to_draft'] = f"Return to {initial_status.replace('_', ' ').title()}"
+
+            if cancellation_status:
+                labels['cancel'] = cancellation_status.replace('_', ' ').title()
 
             return labels
 

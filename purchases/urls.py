@@ -13,7 +13,7 @@ urlpatterns = [
     path('deliveries/create/', views.DeliveryReceiptCreateView.as_view(), name='delivery_create'),
     path('deliveries/<int:pk>/', views.DeliveryReceiptDetailView.as_view(), name='delivery_detail'),
     path('deliveries/<int:pk>/edit/', views.DeliveryReceiptUpdateView.as_view(), name='delivery_update'),
-    path('deliveries/<int:pk>/approve/', views.DeliveryReceiptApproveView.as_view(), name='delivery_approve'),
+    path('deliveries/<int:pk>/action/', views.DeliveryReceiptActionView.as_view(), name='delivery_action'),
     
     # Delivery Lines - для AJAX operations
     path('delivery-lines/<int:pk>/quality-check/', views.DeliveryLineQualityCheckView.as_view(), name='delivery_line_quality'),

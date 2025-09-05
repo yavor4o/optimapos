@@ -1,0 +1,349 @@
+{% extends 'frontend/base.html' %}
+{% load static %}
+{% block content %}
+
+<!-- Page Header -->
+<div class="kt-container-fixed">
+ <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+  <!-- Page Title -->
+  <div class="flex flex-col justify-center gap-2">
+   <h1 class="text-xl font-semibold leading-none text-gray-900">
+    Purchases Management
+   </h1>
+   <div class="flex items-center gap-2 text-sm font-normal text-gray-600">
+    <i class="ki-filled ki-home-2 text-xs"></i>
+    <a href="{% url 'core:dashboard' %}" class="text-gray-600 hover:text-primary">Dashboard</a>
+    <i class="ki-filled ki-right text-xs text-gray-400"></i>
+    <span class="text-gray-800 font-medium">Purchases</span>
+   </div>
+  </div>
+  
+  <!-- Action Buttons -->
+  <div class="flex items-center gap-2.5">
+   <a class="kt-btn kt-btn-outline kt-btn-outline-default kt-btn-sm" href="#">
+    <i class="ki-filled ki-import"></i>
+    Import Data
+   </a>
+   <div class="kt-dropdown" data-kt-dropdown="true" data-kt-dropdown-trigger="click">
+    <button class="kt-btn kt-btn-primary kt-btn-sm" type="button">
+     <i class="ki-filled ki-plus"></i>
+     New Document
+     <i class="ki-filled ki-down"></i>
+    </button>
+    <div class="kt-dropdown-content w-48">
+     <div class="kt-menu kt-menu-default">
+      <div class="kt-menu-item">
+       <a class="kt-menu-link" href="#">
+        <span class="kt-menu-icon">
+         <i class="ki-filled ki-document text-success"></i>
+        </span>
+        <span class="kt-menu-title">Purchase Order</span>
+       </a>
+      </div>
+      <div class="kt-menu-item">
+       <a class="kt-menu-link" href="{% url 'purchases:delivery_create' %}">
+        <span class="kt-menu-icon">
+         <i class="ki-filled ki-truck text-info"></i>
+        </span>
+        <span class="kt-menu-title">Delivery Receipt</span>
+       </a>
+      </div>
+      <div class="kt-menu-item">
+       <a class="kt-menu-link" href="#">
+        <span class="kt-menu-icon">
+         <i class="ki-filled ki-bill text-warning"></i>
+        </span>
+        <span class="kt-menu-title">Purchase Invoice</span>
+       </a>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+ </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kt-container-fixed">
+ <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-5 lg:gap-7.5 mb-5 lg:mb-7.5">
+  
+  <!-- Active Orders -->
+  <div class="kt-card">
+   <div class="kt-card-content flex items-center justify-between py-6 px-5">
+    <div class="flex items-center gap-3">
+     <div class="flex items-center justify-center size-12 rounded-xl bg-success-light">
+      <i class="ki-filled ki-document text-1.5xl text-success"></i>
+     </div>
+     <div class="flex flex-col gap-1">
+      <span class="text-2xl font-bold text-gray-900">24</span>
+      <span class="text-sm font-medium text-gray-600">Active Orders</span>
+     </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+     <span class="flex items-center gap-1 text-sm font-medium text-success">
+      <i class="ki-filled ki-black-up text-xs"></i>
+      +12%
+     </span>
+     <span class="text-xs text-gray-500">vs last month</span>
+    </div>
+   </div>
+  </div>
+  
+  <!-- Pending Deliveries -->
+  <div class="kt-card">
+   <div class="kt-card-content flex items-center justify-between py-6 px-5">
+    <div class="flex items-center gap-3">
+     <div class="flex items-center justify-center size-12 rounded-xl bg-warning-light">
+      <i class="ki-filled ki-truck text-1.5xl text-warning"></i>
+     </div>
+     <div class="flex flex-col gap-1">
+      <span class="text-2xl font-bold text-gray-900">8</span>
+      <span class="text-sm font-medium text-gray-600">Pending Deliveries</span>
+     </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+     <span class="flex items-center gap-1 text-sm font-medium text-danger">
+      <i class="ki-filled ki-black-down text-xs"></i>
+      2 Urgent
+     </span>
+     <span class="text-xs text-gray-500">need attention</span>
+    </div>
+   </div>
+  </div>
+  
+  <!-- Monthly Total -->
+  <div class="kt-card">
+   <div class="kt-card-content flex items-center justify-between py-6 px-5">
+    <div class="flex items-center gap-3">
+     <div class="flex items-center justify-center size-12 rounded-xl bg-primary-light">
+      <i class="ki-filled ki-wallet text-1.5xl text-primary"></i>
+     </div>
+     <div class="flex flex-col gap-1">
+      <span class="text-2xl font-bold text-gray-900">€86,420</span>
+      <span class="text-sm font-medium text-gray-600">Monthly Total</span>
+     </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+     <span class="flex items-center gap-1 text-sm font-medium text-success">
+      <i class="ki-filled ki-black-up text-xs"></i>
+      +8.2%
+     </span>
+     <span class="text-xs text-gray-500">vs last month</span>
+    </div>
+   </div>
+  </div>
+  
+  <!-- Suppliers -->
+  <div class="kt-card">
+   <div class="kt-card-content flex items-center justify-between py-6 px-5">
+    <div class="flex items-center gap-3">
+     <div class="flex items-center justify-center size-12 rounded-xl bg-info-light">
+      <i class="ki-filled ki-profile-circle text-1.5xl text-info"></i>
+     </div>
+     <div class="flex flex-col gap-1">
+      <span class="text-2xl font-bold text-gray-900">12</span>
+      <span class="text-sm font-medium text-gray-600">Active Suppliers</span>
+     </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+     <span class="flex items-center gap-1 text-sm font-medium text-gray-600">
+      <i class="ki-filled ki-check-circle text-xs text-success"></i>
+      All verified
+     </span>
+     <span class="text-xs text-gray-500">compliance ok</span>
+    </div>
+   </div>
+  </div>
+  
+ </div>
+</div>
+
+<!-- Main Content -->
+<div class="kt-container-fixed">
+ <div class="grid grid-cols-1 xl:grid-cols-3 gap-5 lg:gap-7.5">
+  
+  <!-- Left Column - Recent Orders -->
+  <div class="xl:col-span-2">
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Recent Purchase Orders</h3>
+     <div class="flex items-center gap-2">
+      <div class="relative">
+       <i class="ki-filled ki-magnifier absolute top-1/2 start-3.5 -translate-y-1/2 text-gray-500 text-sm"></i>
+       <input class="kt-input kt-input-sm ps-10" type="text" placeholder="Search orders...">
+      </div>
+      <a class="kt-btn kt-btn-sm kt-btn-outline kt-btn-outline-primary" href="#">
+       View All
+      </a>
+     </div>
+    </div>
+    <div class="kt-card-content">
+     
+     <!-- Orders List -->
+     <div class="flex flex-col">
+      <!-- Order Item -->
+      <div class="flex items-center justify-between py-3 border-b border-b-gray-200">
+       <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center size-10 rounded-lg bg-success-light">
+         <i class="ki-filled ki-document text-success"></i>
+        </div>
+        <div class="flex flex-col">
+         <a href="#" class="text-sm font-medium text-gray-900 hover:text-primary">PO-2024-001</a>
+         <span class="text-xs text-gray-600">Supplier: ABC Trading Ltd</span>
+        </div>
+       </div>
+       <div class="flex items-center gap-3">
+        <div class="flex flex-col items-end">
+         <span class="text-sm font-semibold text-gray-900">€2,340.00</span>
+         <span class="text-xs text-gray-600">5 items</span>
+        </div>
+        <div class="kt-badge kt-badge-success kt-badge-sm">
+         Approved
+        </div>
+       </div>
+      </div>
+      
+      <!-- Order Item -->
+      <div class="flex items-center justify-between py-3 border-b border-b-gray-200">
+       <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center size-10 rounded-lg bg-warning-light">
+         <i class="ki-filled ki-document text-warning"></i>
+        </div>
+        <div class="flex flex-col">
+         <a href="#" class="text-sm font-medium text-gray-900 hover:text-primary">PO-2024-002</a>
+         <span class="text-xs text-gray-600">Supplier: XYZ Supplies</span>
+        </div>
+       </div>
+       <div class="flex items-center gap-3">
+        <div class="flex flex-col items-end">
+         <span class="text-sm font-semibold text-gray-900">€1,890.50</span>
+         <span class="text-xs text-gray-600">3 items</span>
+        </div>
+        <div class="kt-badge kt-badge-warning kt-badge-sm">
+         Pending
+        </div>
+       </div>
+      </div>
+      
+      <!-- Order Item -->
+      <div class="flex items-center justify-between py-3 border-b border-b-gray-200">
+       <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center size-10 rounded-lg bg-info-light">
+         <i class="ki-filled ki-document text-info"></i>
+        </div>
+        <div class="flex flex-col">
+         <a href="#" class="text-sm font-medium text-gray-900 hover:text-primary">PO-2024-003</a>
+         <span class="text-xs text-gray-600">Supplier: Tech Solutions</span>
+        </div>
+       </div>
+       <div class="flex items-center gap-3">
+        <div class="flex flex-col items-end">
+         <span class="text-sm font-semibold text-gray-900">€5,670.00</span>
+         <span class="text-xs text-gray-600">12 items</span>
+        </div>
+        <div class="kt-badge kt-badge-info kt-badge-sm">
+         In Transit
+        </div>
+       </div>
+      </div>
+      
+     </div>
+     
+    </div>
+   </div>
+  </div>
+  
+  <!-- Right Column - Quick Actions & Alerts -->
+  <div class="flex flex-col gap-5 lg:gap-7.5">
+   
+   <!-- Quick Actions -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Quick Actions</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="flex flex-col gap-2">
+      <a href="#" class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-primary hover:bg-primary-light transition-all">
+       <div class="flex items-center justify-center size-8 rounded-lg bg-success-light">
+        <i class="ki-filled ki-plus text-success text-sm"></i>
+       </div>
+       <div class="flex flex-col">
+        <span class="text-sm font-medium text-gray-900">New Purchase Order</span>
+        <span class="text-xs text-gray-600">Create new order</span>
+       </div>
+      </a>
+      <a href="{% url 'purchases:delivery_create' %}" class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-primary hover:bg-primary-light transition-all">
+       <div class="flex items-center justify-center size-8 rounded-lg bg-info-light">
+        <i class="ki-filled ki-truck text-info text-sm"></i>
+       </div>
+       <div class="flex flex-col">
+        <span class="text-sm font-medium text-gray-900">Register Delivery</span>
+        <span class="text-xs text-gray-600">Log incoming delivery</span>
+       </div>
+      </a>
+      <a href="#" class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-primary hover:bg-primary-light transition-all">
+       <div class="flex items-center justify-center size-8 rounded-lg bg-warning-light">
+        <i class="ki-filled ki-profile-circle text-warning text-sm"></i>
+       </div>
+       <div class="flex flex-col">
+        <span class="text-sm font-medium text-gray-900">Manage Suppliers</span>
+        <span class="text-xs text-gray-600">View supplier list</span>
+       </div>
+      </a>
+     </div>
+    </div>
+   </div>
+   
+   <!-- Alerts & Notifications -->
+   <div class="kt-card">
+    <div class="kt-card-header">
+     <h3 class="kt-card-title">Alerts & Notifications</h3>
+    </div>
+    <div class="kt-card-content">
+     <div class="flex flex-col gap-3">
+      <!-- Alert Item -->
+      <div class="flex items-start gap-3 p-3 rounded-lg bg-danger-light">
+       <div class="flex items-center justify-center size-6 rounded-full bg-danger shrink-0 mt-0.5">
+        <i class="ki-filled ki-information text-white text-xs"></i>
+       </div>
+       <div class="flex flex-col gap-1">
+        <span class="text-sm font-medium text-gray-900">Overdue Delivery</span>
+        <span class="text-xs text-gray-600">PO-2024-001 delivery is 3 days overdue</span>
+        <a href="#" class="text-xs text-primary font-medium">View Details</a>
+       </div>
+      </div>
+      
+      <!-- Alert Item -->
+      <div class="flex items-start gap-3 p-3 rounded-lg bg-warning-light">
+       <div class="flex items-center justify-center size-6 rounded-full bg-warning shrink-0 mt-0.5">
+        <i class="ki-filled ki-information text-white text-xs"></i>
+       </div>
+       <div class="flex flex-col gap-1">
+        <span class="text-sm font-medium text-gray-900">Approval Required</span>
+        <span class="text-xs text-gray-600">5 purchase orders waiting for approval</span>
+        <a href="#" class="text-xs text-primary font-medium">Review Orders</a>
+       </div>
+      </div>
+      
+      <!-- Alert Item -->
+      <div class="flex items-start gap-3 p-3 rounded-lg bg-info-light">
+       <div class="flex items-center justify-center size-6 rounded-full bg-info shrink-0 mt-0.5">
+        <i class="ki-filled ki-information text-white text-xs"></i>
+       </div>
+       <div class="flex flex-col gap-1">
+        <span class="text-sm font-medium text-gray-900">New Supplier</span>
+        <span class="text-xs text-gray-600">FastTrack Logistics requested to join</span>
+        <a href="#" class="text-xs text-primary font-medium">Review Application</a>
+       </div>
+      </div>
+      
+     </div>
+    </div>
+   </div>
+   
+  </div>
+  
+ </div>
+</div>
+
+{% endblock %}

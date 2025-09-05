@@ -1,5 +1,5 @@
 import logging
-from typing import Dict
+from typing import Dict, List
 
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import TemplateView, ListView, DetailView, CreateView, UpdateView, View
@@ -9,7 +9,7 @@ from django.urls import reverse_lazy, reverse
 from django.http import JsonResponse
 from django.db import transaction, models
 from django.utils import timezone
-from django.core.paginator import Paginator
+
 
 from core.utils.result import Result
 from .models.deliveries import DeliveryReceipt, DeliveryLine
@@ -28,7 +28,6 @@ class PurchasesIndexView(LoginRequiredMixin, TemplateView):
             'module': 'purchases',
         })
         return context
-
 
 class DeliveryReceiptListView(LoginRequiredMixin, PermissionRequiredMixin, ListView, ServiceResolverMixin):
     """
@@ -100,57 +99,16 @@ class DeliveryReceiptListView(LoginRequiredMixin, PermissionRequiredMixin, ListV
         return context
     
     def get_delivery_stats(self):
-        """Statistics for the list page using StatusResolver"""
-        from nomenclatures.services._status_resolver import StatusResolver
-        from nomenclatures.models import DocumentType
-        
+        """ОПРОСТЕНО: Statistics без semantic типове"""
         all_deliveries = DeliveryReceipt.objects.all()
         
-        try:
-            # Get delivery receipt document type
-            doc_type = DocumentType.objects.filter(name__icontains='delivery').first()
-            if doc_type:
-                # Use StatusResolver for semantic status resolution
-                approval_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'approval')
-                processing_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'processing')
-                
-                return {
-                    'total_count': all_deliveries.count(),
-                    'pending_count': all_deliveries.filter(status__in=approval_statuses).count(),
-                    'quality_pending_count': all_deliveries.filter(quality_status='pending').count(),
-                    'approved_count': all_deliveries.filter(status__in=processing_statuses).count(),
-                }
-            else:
-                # Fallback to hardcoded if document type not found
-                return {
-                    'total_count': all_deliveries.count(),
-                    'pending_count': all_deliveries.filter(status='pending').count(),
-                    'quality_pending_count': all_deliveries.filter(quality_status='pending').count(),
-                    'approved_count': all_deliveries.filter(status='approved').count(),
-                }
-        except Exception:
-            # Emergency fallback
-            return {
-                'total_count': all_deliveries.count(),
-                'pending_count': 0,
-                'quality_pending_count': 0,
-                'approved_count': 0,
-            }
-
-
-
-# purchases/views.py - DeliveryReceiptCreateView REFACTORED
-"""
-Рефакториран DeliveryReceiptCreateView за работа с новия PurchaseDocumentService
-
-CHANGES:
-✅ Използва семантичните методи от DocumentService
-✅ БЕЗ hardcoded 'draft'/'pending'/'approved' mapping
-✅ Clean status resolution чрез StatusResolver
-✅ Proper error handling и user feedback
-❌ БЕЗ fallback към hardcoded логика
-"""
-
+        # Просто броим по конкретни статуси без сложни семантици
+        return {
+            'total_count': all_deliveries.count(),
+            'pending_count': all_deliveries.filter(status='pending').count(),
+            'quality_pending_count': all_deliveries.filter(quality_status='pending').count(),
+            'approved_count': all_deliveries.filter(status='approved').count(),
+        }
 
 class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverMixin):
     """
@@ -242,29 +200,22 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                 }
             }
 
-            # Check for approval statuses
-            approval_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'approval')
-            for status in approval_statuses:
-                if status in next_statuses:
-                    actions['submit_approval'] = {
-                        'status': status,
-                        'label': f'Submit for {status.replace("_", " ").title()}',
-                        'button_class': 'btn-warning',
-                        'semantic_action': 'submit_for_approval'
-                    }
-                    break
-
-            # Check for completion statuses
-            completion_statuses = StatusResolver.get_statuses_by_semantic_type(doc_type, 'completion')
-            for status in completion_statuses:
-                if status in next_statuses:
-                    actions['approve_direct'] = {
-                        'status': status,
-                        'label': f'Create & {status.replace("_", " ").title()}',
-                        'button_class': 'btn-success',
-                        'semantic_action': 'approve'
-                    }
-                    break
+            # ОПРОСТЕНО: Няма повече semantic types, просто показваме възможните статуси
+            if 'pending' in next_statuses:
+                actions['submit_approval'] = {
+                    'status': 'pending',
+                    'label': 'Submit for Approval',
+                    'button_class': 'btn-warning',
+                    'semantic_action': 'submit_for_approval'
+                }
+            
+            if 'approved' in next_statuses:
+                actions['approve_direct'] = {
+                    'status': 'approved',
+                    'label': 'Create & Approve',
+                    'button_class': 'btn-success',
+                    'semantic_action': 'approve'
+                }
 
             return actions
 
@@ -619,8 +570,6 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
         return lines
 
-
-
 class DeliveryReceiptUpdateView(LoginRequiredMixin, PermissionRequiredMixin, UpdateView, ServiceResolverMixin):
     """Update existing Delivery Receipt"""
     model = DeliveryReceipt
@@ -631,38 +580,178 @@ class DeliveryReceiptUpdateView(LoginRequiredMixin, PermissionRequiredMixin, Upd
     def get_success_url(self):
         return reverse('purchases:delivery_detail', kwargs={'pk': self.object.pk})
     
+    def form_valid(self, form):
+        """
+        ✅ ENHANCED: Auto-reactivate cancelled documents when edited and saved
+        
+        Only reactivates if there are actual changes to prevent unnecessary status transitions.
+        Uses official return_to_draft method for proper audit trail and StatusManager integration.
+        """
+        old_status = self.object.status
+        
+        # ✅ Check if there are actual changes before reactivation
+        has_changes = form.has_changed()
+        
+        # Call parent to save the form changes
+        response = super().form_valid(form)
+        
+        # ✅ Auto-reactivation logic - only if there are changes
+        if old_status == 'cancelled' and has_changes:
+            try:
+                from .services.purchase_service import PurchaseDocumentService
+                
+                # Get list of changed fields for audit trail
+                changed_fields = form.changed_data if hasattr(form, 'changed_data') else []
+                change_summary = f"Fields changed: {', '.join(changed_fields)}" if changed_fields else "Form data modified"
+                
+                # Use official return_to_draft method
+                doc_service = PurchaseDocumentService(self.object, self.request.user)
+                reactivation_result = doc_service.return_to_draft(
+                    f'Document automatically reactivated after edit by {self.request.user.get_full_name() or self.request.user.username}. {change_summary}'
+                )
+                
+                if reactivation_result.ok:
+                    messages.success(
+                        self.request, 
+                        f'✅ Document updated and automatically reactivated from cancelled status. Status changed to draft - you can now continue editing.'
+                    )
+                    logger.info(f"Auto-reactivated document {self.object.document_number} from cancelled to draft after edit by {self.request.user}. Changed fields: {changed_fields}")
+                else:
+                    messages.warning(
+                        self.request,
+                        f'⚠️ Document was updated but auto-reactivation failed: {reactivation_result.msg}. Status remains cancelled.'
+                    )
+                    logger.warning(f"Auto-reactivation failed for {self.object.document_number}: {reactivation_result.msg}")
+                    
+            except Exception as e:
+                messages.error(
+                    self.request,
+                    f'❌ Document was updated but auto-reactivation encountered an error: {str(e)}. Please manually reactivate if needed.'
+                )
+                logger.error(f"Auto-reactivation error for {self.object.document_number}: {e}")
+                
+        elif old_status == 'cancelled' and not has_changes:
+            # No changes - inform user but don't reactivate
+            messages.info(
+                self.request,
+                'ℹ️ No changes detected. Document remains in cancelled status. Make changes to automatically reactivate it.'
+            )
+            logger.debug(f"No changes detected for cancelled document {self.object.document_number} - skipping auto-reactivation")
+                
+        return response
+    
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        
+        # ✅ Add status context for template notification
+        status_notice = ''
+        if self.object.status == 'cancelled':
+            status_notice = 'ℹ️ Note: Editing a cancelled document will automatically reactivate it to draft status when saved.'
+            
         context.update({
             'page_title': f'Edit Delivery Receipt {self.object.document_number}',
             'form_mode': 'edit',
+            'status_notice': status_notice,  # ✅ For template notification
+            'current_status': self.object.status,
         })
         return context
 
-
-# purchases/views.py - DeliveryReceiptApproveView REFACTORED
-"""
-Рефакториран DeliveryReceiptApproveView за работа с новия PurchaseDocumentService
-
-CHANGES:
-✅ Използва семантичните методи approve()/reject()
-✅ БЕЗ hardcoded target_status mapping  
-✅ Clean action type resolution
-✅ Proper error handling и validation
-"""
-
-
-class DeliveryReceiptApproveView(LoginRequiredMixin, PermissionRequiredMixin, View, ServiceResolverMixin):
+class DeliveryReceiptActionView(LoginRequiredMixin, PermissionRequiredMixin, View, ServiceResolverMixin):
     """
-    Approve/Reject Delivery Receipt using semantic actions
+    Handle all semantic actions for Delivery Receipts
+
+    Supported Actions:
+    - approve: Complete/approve the delivery
+    - reject: Reject the delivery with reason
+    - cancel: Cancel the delivery with reason
+    - submit: Submit for approval workflow
+    - return_to_draft: Return to editable draft state
 
     Features:
-    - Semantic action handling (approve, reject, submit, etc.)
-    - Dynamic status resolution
-    - Proper validation и permissions
-    - Enhanced user feedback
+    - Dynamic comment requirements per action
+    - Configurable document type resolution
+    - Clean semantic action delegation
+    - Enhanced user feedback and audit logging
     """
     permission_required = 'purchases.change_deliveryreceipt'
+
+    def get_actions_requiring_comments(self) -> List[str]:
+        """
+        Get actions that require comments (configurable)
+        
+        Returns:
+            List of action types that must have comments provided
+        """
+        return ['reject', 'cancel', 'return_to_draft']
+
+    def _get_action_message(self, action_type: str, comments: str) -> str:
+        """
+        Generate appropriate message for action
+        
+        Args:
+            action_type: The semantic action being performed
+            comments: User-provided comments
+            
+        Returns:
+            Final message to use for the action
+        """
+        if comments.strip():
+            return comments
+            
+        default_messages = {
+            'approve': 'Approved via web interface',
+            'reject': 'Rejected via web interface', 
+            'cancel': 'Cancelled via web interface',
+            'submit': 'Submitted via web interface',
+            'return_to_draft': 'Returned to draft via web interface'
+        }
+        
+        return default_messages.get(action_type, f'{action_type.title()} via web interface')
+
+    def _ensure_document_type(self, delivery) -> bool:
+        """
+        Ensure delivery has document_type set using smart resolution
+        
+        Args:
+            delivery: DeliveryReceipt instance
+            
+        Returns:
+            bool: True if document_type is set (or successfully set), False otherwise
+        """
+        if delivery.document_type:
+            return True
+            
+        try:
+            from nomenclatures.models import DocumentType
+            
+            # Try app-based lookup first (from CLAUDE.md architecture)
+            doc_type = DocumentType.objects.filter(
+                app_name='purchases',
+                is_active=True
+            ).filter(
+                models.Q(type_key__icontains='delivery') |
+                models.Q(name__icontains='delivery')
+            ).first()
+            
+            # Fallback to legacy lookup if app-based fails
+            if not doc_type:
+                logger.warning("App-based document type lookup failed, falling back to legacy method")
+                doc_type = DocumentType.objects.filter(
+                    models.Q(code='003') | models.Q(name__icontains='delivery')
+                ).first()
+            
+            if doc_type:
+                delivery.document_type = doc_type
+                delivery.save(update_fields=['document_type'])
+                logger.info(f"Auto-assigned document_type '{doc_type.name}' to delivery {delivery.document_number}")
+                return True
+            else:
+                logger.error("Could not find suitable document type for delivery receipts")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to resolve document type: {e}")
+            return False
 
     def post(self, request, pk):
         """Handle approval/rejection actions"""
@@ -677,23 +766,18 @@ class DeliveryReceiptApproveView(LoginRequiredMixin, PermissionRequiredMixin, Vi
             messages.error(request, 'Action type is required.')
             return redirect('purchases:delivery_detail', pk=pk)
 
-        # Require comments for rejection
-        if action_type == 'reject' and not comments:
-            messages.error(request, 'Comments are required for rejection.')
+        # Dynamic comment requirements based on action type
+        if action_type in self.get_actions_requiring_comments() and not comments:
+            messages.error(request, f'Comments are required for {action_type}.')
             return redirect('purchases:delivery_detail', pk=pk)
 
         try:
             from .services.purchase_service import PurchaseDocumentService
 
-            # Ensure document_type е set for semantic actions
-            if not delivery.document_type:
-                from nomenclatures.models import DocumentType
-                delivery_doc_type = DocumentType.objects.filter(
-                    models.Q(code='003') | models.Q(name__icontains='delivery')
-                ).first()
-                if delivery_doc_type:
-                    delivery.document_type = delivery_doc_type
-                    delivery.save(update_fields=['document_type'])
+            # Ensure document_type is set for semantic actions using smart resolution
+            if not self._ensure_document_type(delivery):
+                messages.error(request, 'Failed to determine document type for this delivery receipt.')
+                return redirect('purchases:delivery_detail', pk=pk)
 
             # ✅ Create service за semantic actions
             doc_service = PurchaseDocumentService(delivery, request.user)
@@ -742,13 +826,16 @@ class DeliveryReceiptApproveView(LoginRequiredMixin, PermissionRequiredMixin, Vi
         try:
             # ✅ Semantic action mapping (БЕЗ hardcoded statuses!)
             semantic_actions = {
-                'approve': lambda: doc_service.approve(comments or 'Approved via web interface'),
+                'approve': lambda: doc_service.approve(self._get_action_message('approve', comments)),
                 'reject': lambda: doc_service.reject(comments),  # Comments required for reject
-                'submit': lambda: doc_service.submit_for_approval(comments or 'Submitted via web interface'),
+                'submit': lambda: doc_service.submit_for_approval(self._get_action_message('submit', comments)),
                 'submit_for_approval': lambda: doc_service.submit_for_approval(
-                    comments or 'Submitted via web interface'),
+                    self._get_action_message('submit', comments)),
                 'return_to_draft': lambda: doc_service.return_to_draft(
-                    comments or 'Returned to draft via web interface'),
+                    self._get_action_message('return_to_draft', comments)),
+                'return_draft': lambda: doc_service.return_to_draft(
+                    self._get_action_message('return_draft', comments)),  # ✅ ADDED: alias for compatibility
+                'cancel': lambda: doc_service.cancel(comments),  # Comments required for cancel
             }
 
             # Execute semantic action
@@ -802,8 +889,10 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
         context = super().get_context_data(**kwargs)
         delivery = self.object
 
-        # ✅ NEW: Get semantic actions for UI
-        semantic_actions = self._get_semantic_actions_for_delivery(delivery)
+        # ✅ FIXED: Use PurchaseDocumentService facade for configuration-driven actions
+        from .services.purchase_service import PurchaseDocumentService
+        doc_service = PurchaseDocumentService(delivery, self.request.user)
+        available_actions = doc_service.facade.get_available_actions()  # ✅ NEW: Direct configuration-driven actions
 
         # Calculate VAT breakdown grouped by rates
         vat_breakdown = self._calculate_vat_breakdown(delivery)
@@ -817,7 +906,7 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
 
         context.update({
             'page_title': f'Delivery Receipt {delivery.document_number}',
-            'can_edit': self.request.user.has_perm('purchases.change_deliveryreceipt'),
+            'can_edit': doc_service.can_edit(),  # ✅ Uses DocumentValidator via facade
             'can_approve': self.request.user.has_perm('purchases.change_deliveryreceipt'),
 
             # Enhanced data - FIXED: Use direct lines instead of processed version
@@ -829,12 +918,131 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
             'vat_breakdown': vat_breakdown,
             'eur_total': eur_total,
 
-            # ✅ NEW: Semantic actions for dynamic UI
-            'semantic_actions': semantic_actions,
-            'action_labels': semantic_actions.get('labels', {}),
-            'available_actions': semantic_actions.get('available', {}),
+            # ✅ NEW: Configuration-driven actions (NO MORE semantic_actions mapping!)
+            'available_actions': available_actions,
+            
+            # ✅ PROFESSIONAL: Status classes using StatusResolver
+            'status_class': self._get_status_css_class(delivery),
+            'semantic_status_info': self._get_semantic_status_info(delivery),
+            
+            # ✅ DEBUG INFO for badge troubleshooting
+            'debug_status_info': {
+                'current_status': delivery.status,
+                'document_type': delivery.document_type,
+                'calculated_status_class': self._get_status_css_class(delivery),
+                'has_document_type': bool(delivery.document_type),
+            },
         })
         return context
+
+    def _get_status_css_class(self, delivery) -> str:
+        """
+        ПРОФЕСИОНАЛНО: Директно от базата чрез badge_class поле
+        
+        Ако няма конфигуриран клас - без клас и толкова
+        """
+        try:
+            if delivery.document_type:
+                from nomenclatures.models import DocumentTypeStatus
+                
+                # Намери конфигурацията за този статус
+                config = DocumentTypeStatus.objects.filter(
+                    document_type=delivery.document_type,
+                    status__code=delivery.status,
+                    is_active=True
+                ).select_related('status').first()
+                
+                if config and config.status.badge_class:
+                    # Конвертирай Bootstrap → Metronic класове
+                    bootstrap_class = config.status.badge_class
+                    metronic_class = self._convert_bootstrap_to_metronic(bootstrap_class)
+                    return metronic_class
+            
+            # Няма конфигурация - просто neutral клас
+            return 'kt-badge-light'
+                
+        except Exception:
+            # При грешка - просто neutral клас
+            return 'kt-badge-light'
+
+    def _convert_bootstrap_to_metronic(self, bootstrap_class: str) -> str:
+        """
+        Конвертирай Bootstrap badge класове към Metronic kt-badge класове
+        """
+        mapping = {
+            'badge-secondary': 'kt-badge-secondary',
+            'badge-success': 'kt-badge-success', 
+            'badge-warning': 'kt-badge-warning',
+            'badge-danger': 'kt-badge-destructive',  # FIXED: Metronic uses destructive not danger
+            'badge-info': 'kt-badge-info',
+            'badge-light': 'kt-badge-light',
+            'badge-dark': 'kt-badge-mono',  # FIXED: Metronic uses mono for dark
+            'badge-primary': 'kt-badge-primary',
+            
+            # Support for both forms
+            'kt-badge-secondary': 'kt-badge-secondary',
+            'kt-badge-success': 'kt-badge-success',
+            'kt-badge-warning': 'kt-badge-warning',
+            'kt-badge-danger': 'kt-badge-destructive',  # FIXED: Metronic uses destructive
+            'kt-badge-destructive': 'kt-badge-destructive',
+            'kt-badge-info': 'kt-badge-info',
+            'kt-badge-light': 'kt-badge-light',
+            'kt-badge-dark': 'kt-badge-mono',
+            'kt-badge-mono': 'kt-badge-mono',
+            'kt-badge-primary': 'kt-badge-primary',
+        }
+        
+        # Clean the class name (remove extra spaces, kt-badge-sm etc.)
+        clean_class = bootstrap_class.strip().split()[0] if bootstrap_class else ''
+        
+        converted = mapping.get(clean_class, 'kt-badge-light')
+        logger.debug(f"Converted badge class '{bootstrap_class}' -> '{converted}'")
+        return converted
+    
+    
+    def _get_semantic_status_info(self, delivery) -> dict:
+        """
+        ОПРОСТЕНО: Използва само database конфигурация без semantic gluposti
+        """
+        try:
+            if not delivery.document_type:
+                return {
+                    'is_initial': False,
+                    'is_final': False, 
+                    'is_cancellation': False,
+                    'can_edit': False,
+                    'can_delete': False,
+                    'available_transitions': []
+                }
+                
+            from nomenclatures.services._status_resolver import (
+                is_initial_status, is_final_status, is_cancellation_status,
+                can_edit_in_status, can_delete_in_status
+            )
+            from nomenclatures.services._status_resolver import StatusResolver
+            
+            return {
+                'is_initial': is_initial_status(delivery),
+                'is_final': is_final_status(delivery),
+                'is_cancellation': is_cancellation_status(delivery),
+                'can_edit': can_edit_in_status(delivery),
+                'can_delete': can_delete_in_status(delivery),
+                'available_transitions': StatusResolver.get_next_possible_statuses(
+                    delivery.document_type, delivery.status
+                ) if delivery.document_type else []
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get semantic status info: {e}")
+            return {
+                'is_initial': False,
+                'is_final': False,
+                'is_cancellation': False,
+                'can_edit': False,
+                'can_delete': False,
+                'available_transitions': [],
+                'error': str(e)
+            }
 
     def _calculate_vat_breakdown(self, delivery):
         """
@@ -895,6 +1103,9 @@ class DeliveryReceiptDetailView(LoginRequiredMixin, PermissionRequiredMixin, Det
 
             if available_actions.get('can_return_to_draft') and user.has_perm('purchases.change_deliveryreceipt'):
                 final_actions['return_to_draft'] = True
+
+            if available_actions.get('can_cancel') and user.has_perm('purchases.change_deliveryreceipt'):
+                final_actions['cancel'] = True
 
             return {
                 'available': final_actions,

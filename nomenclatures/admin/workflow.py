@@ -39,6 +39,7 @@ if HAS_APPROVAL_MODELS:
             'document_type',
             'from_status_display',  # FIXED: използва ForeignKey
             'to_status_display',  # FIXED: използва ForeignKey
+            'semantic_type_display',  # ✅ NEW: Show semantic type with styling
             'approval_level',
             'approver_display',
             'amount_range_display',
@@ -47,6 +48,7 @@ if HAS_APPROVAL_MODELS:
 
         list_filter = [
             'document_type',
+            'semantic_type',  # ✅ NEW: Filter by semantic type
             'approval_level',
             'approver_type',
             'is_active',
@@ -82,6 +84,7 @@ if HAS_APPROVAL_MODELS:
                 'fields': (
                     'from_status_obj',
                     'to_status_obj',
+                    'semantic_type',  # ✅ NEW: Semantic type configuration
                 )
             }),
             (_('Approval Hierarchy'), {
@@ -145,6 +148,31 @@ if HAS_APPROVAL_MODELS:
             return '-'
 
         to_status_display.short_description = _('To Status')
+
+        def semantic_type_display(self, obj):
+            """✅ NEW: Показва semantic type със стил и иконки"""
+            semantic_styles = {
+                'submit': {'color': '#2196F3', 'icon': '📤'},  # Blue
+                'approve': {'color': '#4CAF50', 'icon': '✅'},  # Green
+                'reject': {'color': '#F44336', 'icon': '❌'},   # Red
+                'cancel': {'color': '#FF9800', 'icon': '🚫'},   # Orange
+                'return_draft': {'color': '#9C27B0', 'icon': '↩️'},  # Purple
+                'generic': {'color': '#757575', 'icon': '⚙️'}   # Grey
+            }
+            
+            style = semantic_styles.get(obj.semantic_type, semantic_styles['generic'])
+            label = obj.get_semantic_type_display()
+            
+            return format_html(
+                '<span style="background-color: {}; color: white; padding: 2px 8px; border-radius: 15px; font-size: 11px; font-weight: bold;">'
+                '{} {}'
+                '</span>',
+                style['color'],
+                style['icon'],
+                label
+            )
+
+        semantic_type_display.short_description = _('Semantic Type')
 
         def approver_display(self, obj):
             """Показва approver информация"""

@@ -56,13 +56,13 @@ class StatusResolver:
                 is_active=True
             ).first()
             
-            status_code = initial_config.status.code if initial_config else 'draft'
+            status_code = initial_config.status.code if initial_config else None
             cache.set(cache_key, status_code, StatusResolver.CACHE_TIMEOUT)
             return status_code
             
         except Exception as e:
             logger.error(f"Error getting initial status: {e}")
-            return 'draft'
+            return None
     
     @staticmethod
     def get_final_statuses(document_type) -> Set[str]:
@@ -91,17 +91,12 @@ class StatusResolver:
             ).select_related('status')
             
             status_codes = {config.status.code for config in final_configs}
-            
-            # Fallback
-            if not status_codes:
-                status_codes = {'completed', 'finalized', 'closed'}
-                
             cache.set(cache_key, list(status_codes), StatusResolver.CACHE_TIMEOUT)
             return status_codes
             
         except Exception as e:
             logger.error(f"Error getting final statuses: {e}")
-            return {'completed', 'finalized', 'closed'}
+            return set()
     
     @staticmethod
     def get_cancellation_status(document_type) -> Optional[str]:
@@ -138,6 +133,88 @@ class StatusResolver:
             return None
     
     @staticmethod
+    def get_approval_status(document_type) -> Optional[str]:
+        """
+        Get approval status code for document type
+        
+        Args:
+            document_type: DocumentType instance
+            
+        Returns:
+            str: Approval status code or None
+        """
+        cache_key = f"approval_status_{document_type.id}"
+        cached = cache.get(cache_key)
+        
+        if cached:
+            return cached
+            
+        try:
+            from ..models import DocumentTypeStatus
+            
+            # Look for status with approval-like name in active statuses
+            all_configs = DocumentTypeStatus.objects.filter(
+                document_type=document_type,
+                is_active=True
+            ).select_related('status')
+            
+            for config in all_configs:
+                status_lower = config.status.code.lower()
+                if any(word in status_lower for word in ['approved', 'одобрен', 'pending', 'review', 'submit']):
+                    status_code = config.status.code
+                    cache.set(cache_key, status_code, StatusResolver.CACHE_TIMEOUT)
+                    return status_code
+            
+            # No approval status found
+            cache.set(cache_key, None, StatusResolver.CACHE_TIMEOUT)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting approval status: {e}")
+            return None
+    
+    @staticmethod
+    def get_rejection_status(document_type) -> Optional[str]:
+        """
+        Get rejection status code for document type
+        
+        Args:
+            document_type: DocumentType instance
+            
+        Returns:
+            str: Rejection status code or None
+        """
+        cache_key = f"rejection_status_{document_type.id}"
+        cached = cache.get(cache_key)
+        
+        if cached:
+            return cached
+            
+        try:
+            from ..models import DocumentTypeStatus
+            
+            # Look for status with rejection-like name
+            all_configs = DocumentTypeStatus.objects.filter(
+                document_type=document_type,
+                is_active=True
+            ).select_related('status')
+            
+            for config in all_configs:
+                status_lower = config.status.code.lower()
+                if any(word in status_lower for word in ['rejected', 'отказан', 'отхвърлен', 'refuse', 'deny']):
+                    status_code = config.status.code
+                    cache.set(cache_key, status_code, StatusResolver.CACHE_TIMEOUT)
+                    return status_code
+            
+            # No rejection status found
+            cache.set(cache_key, None, StatusResolver.CACHE_TIMEOUT)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting rejection status: {e}")
+            return None
+    
+    @staticmethod
     def get_editable_statuses(document_type) -> Set[str]:
         """
         Get all statuses that allow editing
@@ -164,18 +241,12 @@ class StatusResolver:
             ).select_related('status')
             
             status_codes = {config.status.code for config in editable_configs}
-            
-            # Fallback - use initial status
-            if not status_codes:
-                initial = StatusResolver.get_initial_status(document_type)
-                status_codes = {initial} if initial else {'draft'}
-                
             cache.set(cache_key, list(status_codes), StatusResolver.CACHE_TIMEOUT)
             return status_codes
             
         except Exception as e:
             logger.error(f"Error getting editable statuses: {e}")
-            return {'draft'}
+            return set()
     
     @staticmethod
     def get_deletable_statuses(document_type) -> Set[str]:
@@ -204,18 +275,12 @@ class StatusResolver:
             ).select_related('status')
             
             status_codes = {config.status.code for config in deletable_configs}
-            
-            # Fallback - use initial status
-            if not status_codes:
-                initial = StatusResolver.get_initial_status(document_type)
-                status_codes = {initial} if initial else {'draft'}
-                
             cache.set(cache_key, list(status_codes), StatusResolver.CACHE_TIMEOUT)
             return status_codes
             
         except Exception as e:
             logger.error(f"Error getting deletable statuses: {e}")
-            return {'draft'}
+            return set()
     
     @staticmethod
     def get_movement_creating_statuses(document_type) -> Set[str]:
@@ -325,9 +390,12 @@ class StatusResolver:
             # Get remaining statuses
             next_statuses = status_list[current_index + 1:]
             
-            # Add cancellation status if exists and not already included
+            # Add cancellation status if exists, not already included, and current status allows it
             cancel_status = StatusResolver.get_cancellation_status(document_type)
-            if cancel_status and cancel_status not in next_statuses:
+            if (cancel_status and 
+                cancel_status not in next_statuses and 
+                current_status != cancel_status and  # Can't cancel if already cancelled
+                not StatusResolver.is_status_in_role(document_type, current_status, 'final')):  # Can't cancel if final
                 next_statuses.append(cancel_status)
                 
             cache.set(cache_key, next_statuses, StatusResolver.CACHE_TIMEOUT)
@@ -372,59 +440,9 @@ class StatusResolver:
             logger.error(f"Error checking status role {role}: {e}")
             return False
     
-    @staticmethod
-    def get_statuses_by_semantic_type(document_type, semantic_type: str) -> Set[str]:
-        """
-        Get statuses by semantic type using pattern matching
-        
-        Args:
-            document_type: DocumentType instance
-            semantic_type: Type to find ('approval', 'processing', 'completion', etc.)
-            
-        Returns:
-            Set[str]: Matching status codes
-        """
-        try:
-            from ..models import DocumentTypeStatus
-            
-            # Get all configured statuses
-            all_configs = DocumentTypeStatus.objects.filter(
-                document_type=document_type,
-                is_active=True
-            ).select_related('status')
-            
-            matching_statuses = set()
-            
-            for config in all_configs:
-                status_name = config.status.name.lower()
-                status_code = config.status.code.lower()
-                
-                # Pattern matching based on semantic type
-                if semantic_type == 'approval':
-                    if any(word in status_name or word in status_code 
-                          for word in ['submit', 'pending', 'review', 'approval']):
-                        matching_statuses.add(config.status.code)
-                        
-                elif semantic_type == 'processing':
-                    if any(word in status_name or word in status_code 
-                          for word in ['approved', 'confirmed', 'ready', 'processing']):
-                        matching_statuses.add(config.status.code)
-                        
-                elif semantic_type == 'completion':
-                    if any(word in status_name or word in status_code 
-                          for word in ['complete', 'finish', 'final', 'closed']):
-                        matching_statuses.add(config.status.code)
-                        
-                elif semantic_type == 'rejection':
-                    if any(word in status_name or word in status_code 
-                          for word in ['reject', 'deny', 'decline', 'refused']):
-                        matching_statuses.add(config.status.code)
-            
-            return matching_statuses
-            
-        except Exception as e:
-            logger.error(f"Error getting statuses by semantic type {semantic_type}: {e}")
-            return set()
+    # REMOVED: get_statuses_by_semantic_type() method
+    # This over-engineered semantic pattern matching has been removed.
+    # Use direct DocumentTypeStatus queries with boolean fields instead.
     
     @staticmethod
     def clear_cache(document_type=None):

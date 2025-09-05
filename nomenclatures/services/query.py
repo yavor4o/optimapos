@@ -247,7 +247,7 @@ class DocumentQuery:
                 # === APPROVAL WORKFLOW ACTIONS ===
                 try:
 
-                    from .. import ApprovalService
+                    from .approval_service import ApprovalService
                     transitions_result = ApprovalService.get_available_transitions(document, user)
                     transitions = []
 
@@ -255,16 +255,15 @@ class DocumentQuery:
                         transitions = transitions_result.data.get('transitions', [])
 
                     for trans in transitions:
-
-
                         actions.append({
                             'action': 'transition',
                             'status': trans['to_status'],
-                            'label': trans.get('label', trans.get('to_status_name', trans.get('to_status', 'Unknown'))),
-                            'can_perform': True,
+                            'label': trans.get('to_status_name', trans.get('to_status', 'Unknown')),
+                            'semantic_type': trans.get('semantic_type', 'generic'),  # ✅ NEW: Configuration-driven semantic type
+                            'can_perform': trans.get('can_execute', True),  # ✅ FIXED: Use proper permission from ApprovalService
                             'requires_approval': True,
-                            'button_style': DocumentQuery._get_button_style(trans['to_status']),
-                            'icon': trans.get('icon', 'fas fa-arrow-right'),
+                            'button_style': DocumentQuery._get_semantic_style(trans.get('semantic_type', 'generic')),  # ✅ NEW: Semantic colors
+                            'icon': DocumentQuery._get_semantic_icon(trans.get('semantic_type', 'generic')),  # ✅ NEW: Semantic icons
                             'rule_id': trans.get('rule_id')
                         })
                 except ImportError:
@@ -276,14 +275,29 @@ class DocumentQuery:
                 available_statuses = StatusManager._get_simple_next_statuses(document)
 
                 for status in available_statuses:
+                    # Determine semantic type from status name
+                    semantic_type = 'generic'
+                    status_lower = status.lower()
+                    if 'submit' in status_lower:
+                        semantic_type = 'submit'
+                    elif 'approve' in status_lower:
+                        semantic_type = 'approve'
+                    elif 'reject' in status_lower:
+                        semantic_type = 'reject'
+                    elif 'cancel' in status_lower:
+                        semantic_type = 'cancel'
+                    elif 'draft' in status_lower:
+                        semantic_type = 'return_draft'
+                    
                     actions.append({
                         'action': 'transition',
                         'status': status,
                         'label': status.replace('_', ' ').title(),
+                        'semantic_type': semantic_type,
                         'can_perform': True,
                         'requires_approval': False,
-                        'button_style': DocumentQuery._get_button_style(status),
-                        'icon': 'fas fa-arrow-right'
+                        'button_style': DocumentQuery._get_semantic_style(semantic_type),
+                        'icon': DocumentQuery._get_semantic_icon(semantic_type)
                     })
 
             # Add edit action if allowed
@@ -293,9 +307,10 @@ class DocumentQuery:
                 actions.append({
                     'action': 'edit',
                     'label': 'Edit',
+                    'semantic_type': 'generic',
                     'can_perform': True,
-                    'button_style': 'btn-secondary',
-                    'icon': 'fas fa-edit'
+                    'button_style': DocumentQuery._get_semantic_style('generic'),
+                    'icon': 'ki-filled ki-notepad-edit'
                 })
 
             return actions
@@ -335,3 +350,29 @@ class DocumentQuery:
 
         # Default
         return 'btn-secondary'
+
+    @staticmethod
+    def _get_semantic_style(semantic_type: str) -> str:
+        """✅ FIXED: Using Metronic variants for visual distinction"""
+        semantic_styles = {
+            'submit': 'kt-btn kt-btn-primary',              # 🔵 Blue solid - primary action
+            'approve': 'kt-btn kt-btn-outline kt-btn-primary',  # 🔵 Blue outline - positive action
+            'reject': 'kt-btn kt-btn-destructive',          # 🔴 Red solid - negative action  
+            'cancel': 'kt-btn kt-btn-outline kt-btn-destructive',  # 🔴 Red outline - warning action
+            'return_draft': 'kt-btn kt-btn-outline kt-btn-primary',  # 🔵 Blue outline - return action
+            'generic': 'kt-btn kt-btn-secondary'            # ⚫ Gray solid - neutral action
+        }
+        return semantic_styles.get(semantic_type, 'kt-btn kt-btn-secondary')
+
+    @staticmethod
+    def _get_semantic_icon(semantic_type: str) -> str:
+        """✅ FIXED: Metronic icons instead of FontAwesome"""
+        semantic_icons = {
+            'submit': 'ki-filled ki-rocket',
+            'approve': 'ki-filled ki-check',
+            'reject': 'ki-filled ki-cross',
+            'cancel': 'ki-filled ki-trash',
+            'return_draft': 'ki-filled ki-arrow-left',
+            'generic': 'ki-filled ki-right'
+        }
+        return semantic_icons.get(semantic_type, 'ki-filled ki-right')

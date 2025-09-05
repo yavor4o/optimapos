@@ -1,0 +1,486 @@
+<!-- frontend/purchases/deliveries/create.html - COMPLETE FIXED TEMPLATE -->
+{% extends 'frontend/base.html' %}
+{% load static %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="kt-container-fixed">
+    <div class="flex flex-wrap items-center lg:items-end justify-between gap-5 pb-7.5">
+        <!-- Page Title -->
+        <div class="flex flex-col justify-center gap-2">
+            <h1 class="text-xl font-semibold leading-none text-gray-900">
+                {{ page_title }}
+            </h1>
+            <div class="flex items-center gap-2 text-sm font-medium text-gray-600">
+                Create new delivery receipt with line items
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex items-center gap-2.5">
+            {% if semantic_actions %}
+                {% for action_key, action_data in semantic_actions.items %}
+                    <button
+                        type="submit"
+                        name="action_type"
+                        value="{{ action_key }}"
+                        class="btn {{ action_data.button_class }} btn-sm semantic-action-button"
+                        form="delivery-form"
+                    >
+                        <i class="ki-filled ki-check text-sm"></i>
+                        {{ action_data.label }}
+                    </button>
+                {% endfor %}
+            {% else %}
+                <!-- Fallback buttons -->
+                <button type="submit" name="action_type" value="save_draft"
+                        class="btn btn-secondary btn-sm" form="delivery-form">
+                    Save as Draft
+                </button>
+                <button type="submit" name="action_type" value="submit_approval"
+                        class="btn btn-warning btn-sm" form="delivery-form">
+                    Submit for Approval
+                </button>
+                <button type="submit" name="action_type" value="approve_direct"
+                        class="btn btn-success btn-sm" form="delivery-form">
+                    Create & Approve
+                </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Main Form -->
+<div class="kt-container-fixed">
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5 lg:gap-7.5">
+
+        <!-- Main Form Panel -->
+        <div class="xl:col-span-2">
+            <div class="card card-grid min-w-full">
+                <div class="card-header">
+                    <h3 class="card-title">Delivery Information</h3>
+                </div>
+
+                <div class="card-body">
+                    <form id="delivery-form" method="post" class="grid gap-5">
+                        {% csrf_token %}
+
+                        <!-- Hidden action type field -->
+                        <input type="hidden" name="action_type" id="action_type" value="save_draft">
+
+                        <!-- Partner Selection -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                            <div class="flex flex-col gap-2">
+                                <label class="form-label text-gray-900 font-semibold text-sm">
+                                    Supplier <span class="text-danger">*</span>
+                                </label>
+                                <select name="partner_id" id="partner_id" class="select" required>
+                                    <option value="">Select Supplier...</option>
+                                    {% for supplier in suppliers %}
+                                        <option value="{{ supplier.pk }}">{{ supplier.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="flex flex-col gap-2">
+                                <label class="form-label text-gray-900 font-semibold text-sm">
+                                    Location
+                                </label>
+                                <select name="location_id" id="location_id" class="select">
+                                    <option value="">Default Location</option>
+                                    {% for location in locations %}
+                                        <option value="{{ location.pk }}">{{ location.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Document Details -->
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                            <div class="flex flex-col gap-2">
+                                <label for="id_document_date" class="form-label">Document Date</label>
+                                {{ form.document_date }}
+                            </div>
+
+                            <div class="flex flex-col gap-2">
+                                <label for="id_delivery_date" class="form-label">Delivery Date</label>
+                                {{ form.delivery_date }}
+                            </div>
+
+                            <div class="flex flex-col gap-2">
+                                <label for="id_supplier_delivery_reference" class="form-label">Supplier Reference</label>
+                                {{ form.supplier_delivery_reference }}
+                            </div>
+                        </div>
+
+                        <!-- Notes -->
+                        <div class="flex flex-col gap-2">
+                            <label for="id_notes" class="form-label">Notes</label>
+                            {{ form.notes }}
+                        </div>
+
+                        <!-- Line Items Section - MOVED INSIDE FORM -->
+                        <div class="mt-8">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-semibold">Line Items</h3>
+                                <button type="button" id="add-line-btn" class="btn btn-primary btn-sm">
+                                    <i class="ki-filled ki-plus text-sm"></i>
+                                    Add Line Item
+                                </button>
+                            </div>
+                            
+                            <div id="line-items-container">
+                                <!-- Line items will be added here via JavaScript -->
+                                <div class="text-center text-gray-500 p-5" id="no-lines-message">
+                                    No line items added yet. Click "Add Line Item" to begin.
+                                </div>
+                            </div>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar Panel -->
+        <div class="xl:col-span-1">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Status Info</h3>
+                </div>
+                <div class="card-body">
+                    <!-- Current Date Info -->
+                    <div class="mb-5">
+                        <label class="text-sm font-medium text-gray-700 mb-2 block">Today:</label>
+                        <div class="text-sm text-gray-900">{{ today|date:"F d, Y" }}</div>
+                    </div>
+
+                    <!-- Validation Status -->
+                    <div class="mb-5">
+                        <label class="text-sm font-medium text-gray-700 mb-2 block">Form Status:</label>
+                        <div id="validation-status" class="text-sm text-green-600">
+                            Ready to create
+                        </div>
+                    </div>
+
+                    <!-- Line Items Counter -->
+                    <div class="mb-5">
+                        <label class="text-sm font-medium text-gray-700 mb-2 block">Line Items:</label>
+                        <div id="line-count" class="text-sm text-gray-900">0 items</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- JavaScript -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('delivery-form');
+    const actionTypeInput = document.getElementById('action_type');
+
+    // Handle semantic action button clicks
+    document.querySelectorAll('button[name="action_type"]').forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+
+            const actionType = this.value;
+            actionTypeInput.value = actionType;
+
+            // Validation before submit
+            if (actionType === 'reject') {
+                const comments = prompt('Please provide a reason for rejection:');
+                if (!comments || comments.trim() === '') {
+                    alert('Rejection reason is required.');
+                    return;
+                }
+
+                // Add comments field dynamically
+                const commentsField = document.createElement('input');
+                commentsField.type = 'hidden';
+                commentsField.name = 'comments';
+                commentsField.value = comments.trim();
+                form.appendChild(commentsField);
+            }
+
+            // Submit form with semantic action
+            form.submit();
+        });
+    });
+
+    // Line items management
+    let lineIndex = 0;
+
+    document.getElementById('add-line-btn').addEventListener('click', function() {
+        addLineItem();
+    });
+
+function addLineItem() {
+    const container = document.getElementById('line-items-container');
+    const noLinesMessage = document.getElementById('no-lines-message');
+
+    if (noLinesMessage) {
+        noLinesMessage.remove();
+    }
+
+    // ✅ FIXED: Generate product and unit options dynamically
+    let productOptionsHtml = '<option value="">Select Product...</option>';
+    {% for product in products %}
+    productOptionsHtml += '<option value="{{ product.pk }}" data-price="0">{{ product.name|escapejs }} ({{ product.code|escapejs }})</option>';
+    {% endfor %}
+
+    let unitOptionsHtml = '<option value="">Auto</option>';
+    {% for unit in units %}
+    unitOptionsHtml += '<option value="{{ unit.pk }}">{{ unit.code|escapejs }}</option>';
+    {% endfor %}
+
+    const lineHtml = `
+        <div class="line-item border rounded p-4 mb-4" data-index="` + lineIndex + `">
+            <div class="grid grid-cols-1 lg:grid-cols-7 gap-3">
+
+                <!-- Product Selection -->
+                <div class="lg:col-span-2">
+                    <label class="form-label text-xs">Product <span class="text-danger">*</span></label>
+                    <select name="line_product_` + lineIndex + `" class="select select-sm product-select" required>
+                        ` + productOptionsHtml + `
+                    </select>
+                </div>
+
+                <!-- Quantity -->
+                <div>
+                    <label class="form-label text-xs">Quantity <span class="text-danger">*</span></label>
+                    <input type="number"
+                           name="line_quantity_` + lineIndex + `"
+                           class="input input-sm quantity-input"
+                           min="0.001"
+                           step="0.001"
+                           required>
+                </div>
+
+                <!-- Unit Selection -->
+                <div>
+                    <label class="form-label text-xs">Unit</label>
+                    <select name="line_unit_` + lineIndex + `" class="select select-sm unit-select">
+                        ` + unitOptionsHtml + `
+                    </select>
+                </div>
+
+                <!-- Unit Price -->
+                <div>
+                    <label class="form-label text-xs">Unit Price</label>
+                    <input type="number"
+                           name="line_unit_price_` + lineIndex + `"
+                           class="input input-sm price-input"
+                           min="0"
+                           step="0.01"
+                           placeholder="Auto">
+                </div>
+
+                <!-- Total (calculated) -->
+                <div>
+                    <label class="form-label text-xs">Total</label>
+                    <input type="text"
+                           name="line_total_` + lineIndex + `"
+                           class="input input-sm total-display"
+                           readonly
+                           placeholder="0.00">
+                </div>
+
+                <!-- Actions -->
+                <div class="flex items-end">
+                    <button type="button" class="btn btn-danger btn-sm remove-line-btn">
+                        <i class="ki-filled ki-trash text-sm"></i>
+                    </button>
+                </div>
+
+                <!-- Hidden Notes field -->
+                <input type="hidden" name="line_notes_` + lineIndex + `" value="">
+            </div>
+        </div>
+    `;
+
+    container.insertAdjacentHTML('beforeend', lineHtml);
+    lineIndex++;
+
+    // Add event listeners for new line
+    attachLineEventListeners(container.lastElementChild);
+    updateLineCount();
+}
+
+    function attachLineEventListeners(lineElement) {
+        // Product selection change
+        const productSelect = lineElement.querySelector('.product-select');
+        const priceInput = lineElement.querySelector('.price-input');
+        const unitSelect = lineElement.querySelector('.unit-select');
+
+        productSelect.addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            if (selectedOption.dataset.price) {
+                priceInput.value = selectedOption.dataset.price;
+            }
+
+            // Auto-select unit if product has base_unit
+            if (selectedOption.dataset.unit && unitSelect) {
+                unitSelect.value = selectedOption.dataset.unit;
+            }
+
+            calculateLineTotal(lineElement);
+        });
+
+        // Quantity and price change
+        const quantityInput = lineElement.querySelector('.quantity-input');
+        [quantityInput, priceInput].forEach(input => {
+            input.addEventListener('input', () => calculateLineTotal(lineElement));
+        });
+
+        // Remove line
+        const removeBtn = lineElement.querySelector('.remove-line-btn');
+        removeBtn.addEventListener('click', function() {
+            lineElement.remove();
+            updateLineCount();
+
+            // Show no lines message if no lines left
+            const container = document.getElementById('line-items-container');
+            if (container.children.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-500 p-5" id="no-lines-message">No line items added yet. Click "Add Line Item" to begin.</div>';
+            }
+        });
+    }
+
+    function calculateLineTotal(lineElement) {
+        const quantity = parseFloat(lineElement.querySelector('.quantity-input').value) || 0;
+        const price = parseFloat(lineElement.querySelector('.price-input').value) || 0;
+        const total = quantity * price;
+
+        const totalDisplay = lineElement.querySelector('.total-display');
+        totalDisplay.value = total.toFixed(2);
+
+        // Update styling based on value
+        if (total > 0) {
+            totalDisplay.classList.add('text-green-600');
+            totalDisplay.classList.remove('text-red-600');
+        } else {
+            totalDisplay.classList.remove('text-green-600');
+            totalDisplay.classList.add('text-red-600');
+        }
+    }
+
+    function updateLineCount() {
+        const lineItems = document.querySelectorAll('.line-item').length;
+        const lineCountElement = document.getElementById('line-count');
+        lineCountElement.textContent = `${lineItems} item${lineItems !== 1 ? 's' : ''}`;
+
+        // Update validation status
+        const validationStatus = document.getElementById('validation-status');
+        if (lineItems > 0) {
+            validationStatus.textContent = `Ready to create with ${lineItems} line${lineItems !== 1 ? 's' : ''}`;
+            validationStatus.className = 'text-sm text-green-600';
+        } else {
+            validationStatus.textContent = 'No line items added';
+            validationStatus.className = 'text-sm text-orange-600';
+        }
+    }
+
+    // Enhanced form validation
+    form.addEventListener('submit', function(e) {
+        const actionType = actionTypeInput.value;
+
+        // Basic validation
+        const partnerId = document.getElementById('partner_id').value;
+        if (!partnerId) {
+            e.preventDefault();
+            alert('Please select a supplier.');
+            return;
+        }
+
+        // Line items validation
+        const lineItems = document.querySelectorAll('.line-item');
+        let validLineCount = 0;
+
+        lineItems.forEach(lineItem => {
+            const productSelect = lineItem.querySelector('.product-select');
+            const quantityInput = lineItem.querySelector('.quantity-input');
+
+            if (productSelect && productSelect.value && quantityInput && quantityInput.value && parseFloat(quantityInput.value) > 0) {
+                validLineCount++;
+            }
+        });
+
+        console.log(`Valid line items found: ${validLineCount}`);
+
+        // Action-specific validation
+        if (actionType === 'approve_direct' && validLineCount === 0) {
+            e.preventDefault();
+            alert('Cannot approve delivery without line items.');
+            return;
+        }
+
+        if (validLineCount === 0 && actionType !== 'save_draft') {
+            const proceed = confirm('No line items added. Continue with empty delivery?');
+            if (!proceed) {
+                e.preventDefault();
+                return;
+            }
+        }
+
+        // Show loading state
+        document.querySelectorAll('button[type="submit"]').forEach(btn => {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="ki-filled ki-loading animate-spin"></i> Processing...';
+        });
+    });
+
+    // Auto-add first line item for better UX
+    addLineItem();
+});
+</script>
+
+<!-- Enhanced CSS -->
+<style>
+.semantic-action-button {
+    transition: all 0.2s ease;
+}
+
+.semantic-action-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.line-item {
+    transition: all 0.3s ease;
+    background-color: #fafafa;
+}
+
+.line-item:hover {
+    background-color: #f0f0f0;
+}
+
+.product-select:invalid,
+.quantity-input:invalid {
+    border-color: #dc3545;
+    box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25);
+}
+
+.product-select:valid,
+.quantity-input:valid {
+    border-color: #28a745;
+}
+
+.total-display {
+    font-weight: 600;
+}
+
+/* Loading animation */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+</style>
+{% endblock %}
