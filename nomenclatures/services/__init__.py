@@ -61,10 +61,6 @@ if NumberingService:
 
 # Document lifecycle functions
 from .document_service import (
-    create_document,
-    transition_document, 
-    can_edit_document,
-    can_delete_document,
     recalculate_document_lines
 )
 

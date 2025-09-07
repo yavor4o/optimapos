@@ -62,47 +62,58 @@ class PurchaseDocumentService:
             **kwargs
     ) -> Result:
         """
-        Create purchase document with proper DocumentService integration
-
-        CHANGED:
-        - БЕЗ hardcoded status
-        - БЕЗ manual save в DB
-        - DocumentService контролира lifecycle
+        Create purchase document following USAGE_EXAMPLES.md workflow
+        
+        WORKFLOW:
+        1. Create empty document instance with required fields
+        2. DocumentService.create() - saves to DB with numbering/status
+        3. Add lines to saved document 
+        4. Calculate totals
         """
         try:
             logger.info(f"Creating {doc_type} document for partner {partner}")
 
-            # 1. ✅ Purchase-specific validation
+            # 1. ✅ Purchase-specific line preparation
             lines_data = self._prepare_lines_data(lines)
-            if not lines_data:
-                return Result.error('INVALID_LINES', 'No valid lines provided')
+            if lines and not lines_data:
+                return Result.error('INVALID_LINES', f'No valid lines provided from {len(lines)} input lines')
 
-            # 2. ✅ Create EMPTY instance (БЕЗ save!)
-            doc_instance = self._create_empty_instance(doc_type, partner, location, **kwargs)
+            # 2. ✅ Create MINIMAL document instance (following USAGE_EXAMPLES.md pattern)
+            doc_instance = self._create_minimal_instance(doc_type, partner, location, **kwargs)
             if not doc_instance:
                 return Result.error('INSTANCE_CREATION_FAILED', f'Failed to create {doc_type} instance')
 
-            # 3. ✅ DocumentService управлява всичко
-            doc_facade = DocumentService(doc_instance, self.user)
-
-            # Create document (sets proper status via StatusResolver)
-            creation_result = doc_facade.create()
-            if not creation_result.ok:
-                return creation_result
-
-            # 4. ✅ Add lines чрез facade
+            # 3. ✅ DocumentService.create() - SAVES document to DB with numbering/status  
+            facade = DocumentService(doc_instance, self.user)
+            
+            create_result = facade.create()
+            if not create_result.ok:
+                logger.error(f"DocumentService.create() failed: {create_result.msg}")
+                return create_result
+            
+            logger.info(f"Document saved to DB: {doc_instance.document_number} (PK={doc_instance.pk})")
+            
+            # 4. ✅ Add lines to SAVED document (now has PK and can have related objects)
             for line_data in lines_data:
-                line_result = doc_facade.add_line(**line_data)
+                # DocumentService.add_line expects: product, quantity, **kwargs
+                product = line_data.pop('product')
+                quantity = line_data.pop('quantity')
+                
+                line_result = facade.add_line(product, quantity, **line_data)
                 if not line_result.ok:
-                    logger.warning(f"Failed to add line: {line_result.msg}")
-
-            # 5. ✅ Calculate totals чрез facade
-            totals_result = doc_facade.calculate_totals()
+                    logger.error(f"Failed to add line: {line_result.msg}")
+                    return line_result  # Stop on first failure
+                    
+                logger.debug(f"Added line: {product} x{quantity}")
+            
+            # 5. ✅ Calculate totals on completed document
+            totals_result = facade.calculate_totals()
             if not totals_result.ok:
                 logger.warning(f"Totals calculation failed: {totals_result.msg}")
-
-            logger.info(f"Successfully created {doc_type} {doc_instance.document_number}")
-
+                # Don't fail document creation for totals issues
+            
+            logger.info(f"✅ Successfully created {doc_type} {doc_instance.document_number} with {len(lines_data)} lines")
+            
             return Result.success({
                 'document': doc_instance,
                 'status': doc_instance.status,
@@ -112,6 +123,58 @@ class PurchaseDocumentService:
         except Exception as e:
             logger.error(f"Document creation failed: {e}")
             return Result.error('CREATION_FAILED', f'Document creation failed: {str(e)}')
+
+    def _create_minimal_instance(self, doc_type: str, partner, location, **kwargs):
+        """
+        Create MINIMAL document instance following USAGE_EXAMPLES.md pattern
+        
+        Pattern: request = PurchaseRequest(); request.supplier = supplier; request.location = warehouse
+        DocumentService(request, user).create()  # This saves with numbering/status
+        """
+        try:
+            if doc_type == 'delivery':
+                from purchases.models import DeliveryReceipt
+                # MINIMAL - only required fields
+                doc_instance = DeliveryReceipt()
+                doc_instance.partner = partner  # Required
+                doc_instance.location = location  # Required
+                doc_instance.document_date = kwargs.get('document_date', timezone.now().date())
+                doc_instance.delivery_date = kwargs.get('delivery_date', kwargs.get('document_date', timezone.now().date()))
+                doc_instance.received_by = kwargs.get('received_by', self.user)
+                doc_instance.supplier_delivery_reference = kwargs.get('supplier_delivery_reference', '')
+                doc_instance.notes = kwargs.get('comments', '')
+                return doc_instance
+
+            elif doc_type == 'order':
+                from purchases.models import PurchaseOrder
+                doc_instance = PurchaseOrder()
+                doc_instance.partner = partner
+                doc_instance.location = location
+                doc_instance.document_date = kwargs.get('document_date', timezone.now().date())
+                doc_instance.expected_delivery_date = kwargs.get('expected_delivery_date')
+                doc_instance.supplier_order_reference = kwargs.get('supplier_order_reference', '')
+                doc_instance.notes = kwargs.get('comments', '')
+                return doc_instance
+
+            elif doc_type == 'request':
+                from purchases.models import PurchaseRequest
+                doc_instance = PurchaseRequest()
+                doc_instance.partner = partner
+                doc_instance.location = location
+                doc_instance.document_date = kwargs.get('document_date', timezone.now().date())
+                doc_instance.requested_by = kwargs.get('requested_by', self.user)
+                doc_instance.priority = kwargs.get('priority', 'normal')
+                doc_instance.justification = kwargs.get('justification', '')
+                doc_instance.notes = kwargs.get('comments', '')
+                return doc_instance
+
+            else:
+                logger.error(f"Unknown document type: {doc_type}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Minimal instance creation failed for {doc_type}: {e}")
+            return None
 
     def _create_empty_instance(self, doc_type: str, partner, location, **kwargs):
         """
@@ -204,10 +267,7 @@ class PurchaseDocumentService:
     def can_delete(self) -> bool:
         """✅ PURE DELEGATION: Check if document can be deleted"""
         return self.facade.can_delete()
-    
-    # ❌ REMOVED: Semantic action methods - Templates will use facade.get_available_actions() directly
-    
-    # ❌ REMOVED: get_status_info() - No longer needed, use facade.get_available_actions() directly
+
 
     # =================================================
     # PURCHASE-SPECIFIC BUSINESS LOGIC
@@ -281,6 +341,10 @@ class PurchaseDocumentService:
                 'notes': line.get('notes', '')
             }
 
+            # Include unit if provided
+            if 'unit' in line:
+                line_data['unit'] = line['unit']
+
             # Purchase-specific calculations
             if hasattr(line['product'], 'purchase_price'):
                 line_data['cost_price'] = line['product'].purchase_price
@@ -298,10 +362,46 @@ class DeliveryReceiptService(PurchaseDocumentService):
     """Delivery Receipt operations"""
 
     @classmethod
-    def create(cls, user: User, partner, location, lines: List[dict], **kwargs) -> Result:
-        """Create new delivery receipt"""
+    def create(cls, user: User, partner, location, lines: List[dict], target_status: str = None, **kwargs) -> Result:
+        """Create new delivery receipt with optional target status"""
+        logger.info(f"🔥 DeliveryReceiptService.create called with target_status='{target_status}'")
         service = cls(None, user)  # No document yet
-        return service.create_document('delivery', partner, location, lines, **kwargs)
+        
+        # Create document first
+        result = service.create_document('delivery', partner, location, lines, **kwargs)
+        
+        if not result.ok:
+            return result
+            
+        document = result.data['document']
+        
+        # If target_status is specified and different from current, transition to it
+        logger.info(f"Checking target_status: '{target_status}' vs current status: '{document.status}'")
+        
+        if target_status and document.status != target_status:
+            logger.info(f"Transitioning from '{document.status}' to '{target_status}'")
+            service.document = document  # Set document for transition
+            transition_result = service.facade.transition_to(target_status)
+            
+            if not transition_result.ok:
+                logger.error(f"Status transition failed: {transition_result.msg}")
+                return Result.error(
+                    'STATUS_TRANSITION_FAILED',
+                    f"Document created but status transition failed: {transition_result.msg}",
+                    data={'document': document, 'transition_error': transition_result.msg}
+                )
+            
+            # Refresh document from database to get updated status
+            document.refresh_from_db()
+            logger.info(f"Status transition successful. New status: '{document.status}'")
+            # Update result with final status
+            result.data['status'] = document.status
+            result.data['final_status'] = document.status
+        else:
+            logger.info(f"No status transition needed. target_status='{target_status}', current='{document.status}'")
+            result.data['final_status'] = document.status
+            
+        return result
 
 
 class PurchaseOrderService(PurchaseDocumentService):

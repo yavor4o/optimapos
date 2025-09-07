@@ -256,6 +256,66 @@ class DocumentService:
                     'icon': 'fas fa-trash'
                 })
             return actions
+
+    def get_creation_actions(self) -> List[Dict]:
+        """
+        Get available actions for document creation (before saving)
+        
+        Returns creation-specific actions like:
+        - Save as Draft (initial status)
+        - Save & Next Status (transition to next status)
+        """
+        if not self.document or not hasattr(self.document, 'document_type'):
+            return []
+            
+        try:
+            from ._status_resolver import StatusResolver
+            
+            document_type = self.document.document_type
+            if not document_type:
+                return []
+                
+            # Get initial status for this document type
+            initial_status = StatusResolver.get_initial_status(document_type)
+            
+            # Base action - save as initial status
+            actions = [{
+                'action': 'save_draft',
+                'label': f'Запази като {initial_status}',
+                'target_status': initial_status,
+                'button_style': 'btn-secondary',
+                'icon': 'ki-filled ki-document',
+                'can_perform': True
+            }]
+            
+            # Get next possible statuses from initial
+            next_statuses = StatusResolver.get_next_possible_statuses(document_type, initial_status)
+            
+            if next_statuses:
+                # Take first next status for "Save & Next" action
+                next_status = list(next_statuses)[0]
+                actions.append({
+                    'action': 'save_and_next',
+                    'label': f'Запази и премини към {next_status}',
+                    'target_status': next_status,
+                    'button_style': 'btn-primary',
+                    'icon': 'ki-filled ki-arrow-right',
+                    'can_perform': True
+                })
+            
+            return actions
+            
+        except Exception as e:
+            logger.warning(f"Failed to get creation actions: {e}")
+            # Fallback to basic save action
+            return [{
+                'action': 'save_draft',
+                'label': 'Запази',
+                'target_status': 'чернова',
+                'button_style': 'btn-primary',
+                'icon': 'ki-filled ki-document',
+                'can_perform': True
+            }]
     
     # =====================================================
     # VALIDATION INTEGRATION METHODS 
@@ -566,9 +626,9 @@ class DocumentService:
         user_info = f"{self.user.username}" if self.user else "No user"
         return f"DocumentService({doc_info}, {user_info})"
 
-        # =================================================
-        # SEMANTIC ACTION METHODS - NEW ADDITION
-        # =================================================
+    # =================================================
+    # SEMANTIC ACTION METHODS
+    # =================================================
 
     def approve(self, comments: str = '') -> Result:
         """
@@ -782,47 +842,6 @@ class DocumentService:
     # PRIVATE HELPER METHODS FOR STATUS RESOLUTION
     # =================================================
 
-    def _find_completion_status(self) -> Optional[str]:
-        """Find appropriate completion status for document type"""
-        try:
-            from ._status_resolver import StatusResolver
-
-            # Look in final statuses for completion-like names
-            final_statuses = StatusResolver.get_final_statuses(self.document.document_type)
-            for status in final_statuses:
-                status_lower = status.lower()
-                if any(word in status_lower for word in ['complet', 'finish', 'done', 'approved', 'received']):
-                    return status
-
-            # Fallback: Get any final status
-            if final_statuses:
-                return list(final_statuses)[0]
-
-            # Fallback
-            return 'completed'
-
-        except Exception as e:
-            logger.warning(f"Failed to find completion status: {e}")
-            return 'completed'
-
-    def _find_approval_status(self) -> Optional[str]:
-        """Find appropriate approval status for document type"""
-        try:
-            from ._status_resolver import StatusResolver
-            return StatusResolver.get_approval_status(self.document.document_type)
-        except Exception as e:
-            logger.warning(f"Failed to find approval status: {e}")
-            return 'approved'
-
-    def _find_rejection_status(self) -> Optional[str]:
-        """Find appropriate rejection/cancellation status for document type"""
-        try:
-            from ._status_resolver import StatusResolver
-            return StatusResolver.get_rejection_status(self.document.document_type)
-        except Exception as e:
-            logger.warning(f"Failed to find rejection status: {e}")
-            return 'rejected'
-
     def _find_initial_status(self) -> Optional[str]:
         """Find initial status for document type"""
         try:
@@ -840,236 +859,6 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"Failed to find cancellation status: {e}")
             return 'cancelled'
-
-    # =================================================
-    # STATUS INQUIRY METHODS
-    # =================================================
-
-    # ❌ REMOVED: get_available_semantic_actions() - Use get_available_actions() with semantic_type filtering
-    
-    def get_available_semantic_actions_LEGACY(self) -> Dict[str, bool]:
-        """
-        Get available semantic actions for current document state
-
-        Returns:
-            Dict with action availability: {
-                'can_approve': bool,
-                'can_submit': bool,
-                'can_reject': bool,
-                'can_return_to_draft': bool,
-                'can_cancel': bool
-            }
-        """
-        try:
-            from ._status_resolver import StatusResolver
-
-            current_status = self.document.status
-            doc_type = self.document.document_type
-
-            if not doc_type:
-                return {'can_approve': False, 'can_submit': False, 'can_reject': False,
-                        'can_return_to_draft': False, 'can_cancel': False}
-
-            # Get available transitions from current status
-            available_statuses = StatusResolver.get_next_possible_statuses(doc_type, current_status)
-
-            # Check what semantic actions are possible
-            completion_status = self._find_completion_status()
-            approval_status = self._find_approval_status()
-            rejection_status = self._find_rejection_status()
-            initial_status = self._find_initial_status()
-            cancellation_status = self._find_cancellation_status()
-
-            # ✅ FIXED: Use get_available_actions and map by semantic meaning of target statuses
-            available_actions_list = self.get_available_actions()
-            
-            # Map raw actions to semantic actions
-            actions = {
-                'can_approve': False,
-                'can_submit': False, 
-                'can_reject': False,
-                'can_return_to_draft': False,
-                'can_cancel': False
-            }
-            
-            for action in available_actions_list:
-                if action.get('action') == 'transition':
-                    target_status = action.get('status', '')
-                    can_perform = action.get('can_perform', False) or action.get('can_execute', False)
-                    
-                    if can_perform:
-                        target_lower = target_status.lower()
-                        # Map based on semantic meaning of target status names (not helper methods)
-                        if any(word in target_lower for word in ['complet', 'approved', 'finished', 'done', 'received']):
-                            actions['can_approve'] = True
-                        elif any(word in target_lower for word in ['submit', 'pending', 'review', 'approval']):
-                            actions['can_submit'] = True  
-                        elif any(word in target_lower for word in ['reject', 'declined', 'refused']):
-                            actions['can_reject'] = True
-                        elif any(word in target_lower for word in ['draft', 'initial']) or target_status == initial_status:
-                            actions['can_return_to_draft'] = True
-                        elif any(word in target_lower for word in ['cancel', 'cancelled', 'abort']):
-                            actions['can_cancel'] = True
-            
-            return actions
-
-        except Exception as e:
-            logger.error(f"Failed to get semantic actions: {e}")
-            return {'can_approve': False, 'can_submit': False, 'can_reject': False, 'can_return_to_draft': False, 'can_cancel': False}
-
-    # ❌ REMOVED: get_semantic_action_labels() - Use action.label from get_available_actions()
-    
-    def get_semantic_action_labels_LEGACY(self) -> Dict[str, str]:
-        """
-        Get user-friendly labels for semantic actions
-
-        Returns:
-            Dict with action labels: {
-                'approve': 'Complete Delivery',
-                'submit': 'Submit for Review',
-                'reject': 'Cancel Delivery',
-                'return_to_draft': 'Return to Draft'
-            }
-        """
-        try:
-            doc_type = self.document.document_type
-
-            if not doc_type:
-                return {}
-
-            # Get status configurations via DocumentType methods (which exist)
-            completion_status = self._find_completion_status()
-            approval_status = self._find_approval_status()
-            rejection_status = self._find_rejection_status()
-            initial_status = self._find_initial_status()
-            cancellation_status = self._find_cancellation_status()
-
-            # Build labels from status codes (simple approach since we can't get status names easily)
-            labels = {}
-
-            if completion_status:
-                labels['approve'] = completion_status.replace('_', ' ').title()
-
-            if approval_status:
-                labels['submit'] = approval_status.replace('_', ' ').title()
-
-            if rejection_status:
-                labels['reject'] = rejection_status.replace('_', ' ').title()
-
-            if initial_status:
-                labels['return_to_draft'] = f"Return to {initial_status.replace('_', ' ').title()}"
-
-            if cancellation_status:
-                labels['cancel'] = cancellation_status.replace('_', ' ').title()
-
-            return labels
-
-        except Exception as e:
-            logger.error(f"Failed to get action labels: {e}")
-            return {
-                'approve': 'Approve',
-                'submit': 'Submit for Approval',
-                'reject': 'Reject',
-                'return_to_draft': 'Return to Draft'
-            }
-# =================================================================
-# CONVENIENCE FUNCTIONS FOR BACKWARD COMPATIBILITY
-# =================================================================
-
-def create_document(instance, user=None, **kwargs) -> bool:
-    """Backward compatibility wrapper"""
-    service = DocumentService(instance, user)
-    result = service.create(**kwargs)
-    return result.ok
-
-def can_edit_document(document, user) -> Result:
-    """Check if document can be edited - Returns Result object"""
-    try:
-        service = DocumentService(document, user)
-        can_edit = service.can_edit()
-        return Result.success(
-            data={'can_edit': can_edit},
-            msg='Edit allowed' if can_edit else 'Edit not allowed'
-        )
-    except Exception as e:
-        return Result.error('PERMISSION_CHECK_FAILED', f'Failed to check edit permission: {str(e)}')
-
-def can_delete_document(document, user) -> Result:
-    """Check if document can be deleted - Returns Result object"""
-    try:
-        service = DocumentService(document, user)
-        can_delete = service.can_delete()
-        return Result.success(
-            data={'can_delete': can_delete},
-            msg='Delete allowed' if can_delete else 'Delete not allowed'
-        )
-    except Exception as e:
-        return Result.error('PERMISSION_CHECK_FAILED', f'Failed to check delete permission: {str(e)}')
-
-def get_document_permissions(document, user) -> Result:
-    """Get comprehensive document permissions - Returns Result object"""
-    try:
-        service = DocumentService(document, user)
-        permissions = service.get_permissions()
-        
-        return Result.success(
-            data=permissions,
-            msg='Document permissions retrieved'
-        )
-    except Exception as e:
-        return Result.error('PERMISSION_CHECK_FAILED', f'Failed to get document permissions: {str(e)}')
-
-def transition_document(document, new_status, user, comments='') -> Result:
-    """Transition document to new status - Returns Result object"""
-    try:
-        service = DocumentService(document, user)
-        return service.transition_to(new_status, comments)
-    except Exception as e:
-        return Result.error('TRANSITION_FAILED', f'Failed to transition document: {str(e)}')
-        
-# Additional convenience methods for common operations
-def get_document_actions(document, user) -> Result:
-    """Get available actions for document - Returns Result with action list"""
-    try:
-        permissions_result = get_document_permissions(document, user)
-        if not permissions_result.ok:
-            return permissions_result
-            
-        permissions = permissions_result.data
-        actions = []
-        
-        if permissions.get('can_edit', False):
-            actions.append({
-                'key': 'edit',
-                'name': 'Edit',
-                'icon': 'edit',
-                'reason': permissions.get('edit_reason', '')
-            })
-            
-        if permissions.get('can_delete', False):
-            actions.append({
-                'key': 'delete', 
-                'name': 'Delete',
-                'icon': 'trash',
-                'reason': permissions.get('delete_reason', '')
-            })
-            
-        if permissions.get('can_transition', False):
-            actions.append({
-                'key': 'change_status',
-                'name': 'Change Status', 
-                'icon': 'arrow-right',
-                'reason': 'Status transition available'
-            })
-            
-        return Result.success(
-            data={'actions': actions},
-            msg=f'Found {len(actions)} available actions'
-        )
-        
-    except Exception as e:
-        return Result.error('ACTION_CHECK_FAILED', f'Failed to get document actions: {str(e)}')
-
 
 # =====================================================================
 # MISSING METHODS THAT MODELS ARE CALLING

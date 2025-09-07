@@ -130,445 +130,244 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        # Load suppliers
+        # ✅ OPTIMIZED: Single try-except block with specific exception handling
         try:
             from partners.models import Supplier
-            suppliers = Supplier.objects.filter(is_active=True).order_by('name')
-        except Exception:
-            suppliers = []
-
-        # Load locations
-        try:
-            from inventory.models import InventoryLocation
-            locations = InventoryLocation.objects.filter(is_active=True).order_by('name')
-        except Exception:
-            locations = []
-
-        # Load products
-        try:
+            from inventory.models import InventoryLocation  
             from products.models import Product
-            products = Product.objects.all().order_by('name')
-        except Exception:
-            products = []
-
-        # Load units of measure
-        try:
             from nomenclatures.models import UnitOfMeasure
-            units = UnitOfMeasure.objects.filter(is_active=True).order_by('name')
-        except Exception:
-            units = []
+            from .services.purchase_service import PurchaseDocumentService
 
-        # ✅ NEW: Get available semantic actions for UI
-        semantic_actions = self._get_semantic_action_options()
+            # ✅ OPTIMIZED: Load all data with proper error handling
+            suppliers = Supplier.objects.filter(is_active=True).order_by('name')
+            locations = InventoryLocation.objects.filter(is_active=True).order_by('name')
+            
+         
+            products = Product.objects.active().prefetch_related(
+                'packagings__unit'
+            ).order_by('name')
+            
+            units = UnitOfMeasure.objects.filter(is_active=True).order_by('name')
+
+
+            from purchases.models import DeliveryReceipt
+            from nomenclatures.services.creator import DocumentCreator
+            
+            # Create empty document instance (not saved to DB)
+            empty_delivery = DeliveryReceipt()
+            
+            # Set document_type from model class
+            document_type = DocumentCreator._get_document_type_for_model(DeliveryReceipt)
+            empty_delivery.document_type = document_type
+            
+            # Set initial status for new documents
+            if document_type:
+                from nomenclatures.services._status_resolver import StatusResolver
+                initial_status = StatusResolver.get_initial_status(document_type)
+                empty_delivery.status = initial_status or 'draft'
+            else:
+                empty_delivery.status = 'draft'
+            
+            # Get CREATION actions through service facade (different from DetailView)
+            doc_service = PurchaseDocumentService(empty_delivery, self.request.user)
+            raw_actions = doc_service.facade.get_creation_actions()
+            
+            logger.info(f"🔥 get_creation_actions() returned: {raw_actions}")
+            logger.info(f"🔥 empty_delivery.document_type: {empty_delivery.document_type}")
+            logger.info(f"🔥 empty_delivery status: {empty_delivery.status}")
+            
+            # ✅ NEW: Convert to template-compatible format for CREATION actions
+            available_actions = []
+            for action in raw_actions:
+                template_action = {
+                    'action_key': action.get('action', 'save_draft'),
+                    'label': action.get('label', 'Запази'),
+                    'button_class': action.get('button_style', 'btn-secondary'),
+                    'icon': action.get('icon', 'ki-filled ki-document'),
+                    'can_perform': action.get('can_perform', True),
+                    'target_status': action.get('target_status'),  # Creation-specific
+                    'semantic_type': action.get('semantic_type', 'creation')
+                }
+                available_actions.append(template_action)
+                
+            logger.info(f"🔥 Final available_actions count: {len(available_actions)}")
+
+        except ImportError as e:
+            logger.error(f"Failed to import required models: {e}")
+            suppliers, locations, products, units, available_actions = [], [], [], [], []
+            
+        except Exception as e:
+            logger.error(f"Failed to load form context data: {e}")
+            suppliers, locations, products, units, available_actions = [], [], [], [], []
 
         context.update({
             'page_title': 'New Delivery Receipt',
             'form_mode': 'create',
+            'is_create_mode': True,  # Flag for creation vs transition actions
             'suppliers': suppliers,
             'locations': locations,
             'products': products,
             'units': units,
             'today': timezone.now().date(),
-            'semantic_actions': semantic_actions,  # ✅ За dynamic buttons
+            'available_actions': available_actions,
         })
         return context
 
-    def _get_semantic_action_options(self) -> dict:
-        """Get available semantic action options for new document"""
-        try:
-            from nomenclatures.models import DocumentType
-            from nomenclatures.services._status_resolver import StatusResolver
-
-            # Get delivery document type
-            doc_type = DocumentType.objects.filter(app_name='purchases').first()
-            if not doc_type:
-                return self._get_fallback_actions()
-
-            # Get initial status
-            initial_status = StatusResolver.get_initial_status(doc_type)
-
-            # Get possible next statuses from initial
-            next_statuses = StatusResolver.get_next_possible_statuses(doc_type, initial_status)
-
-            # Map to semantic actions
-            actions = {
-                'save_draft': {
-                    'status': initial_status,
-                    'label': f'Save as {initial_status.replace("_", " ").title()}',
-                    'button_class': 'btn-secondary',
-                    'semantic_action': None  # No transition needed
-                }
-            }
-
-            # ОПРОСТЕНО: Няма повече semantic types, просто показваме възможните статуси
-            if 'pending' in next_statuses:
-                actions['submit_approval'] = {
-                    'status': 'pending',
-                    'label': 'Submit for Approval',
-                    'button_class': 'btn-warning',
-                    'semantic_action': 'submit_for_approval'
-                }
-            
-            if 'approved' in next_statuses:
-                actions['approve_direct'] = {
-                    'status': 'approved',
-                    'label': 'Create & Approve',
-                    'button_class': 'btn-success',
-                    'semantic_action': 'approve'
-                }
-
-            return actions
-
-        except Exception as e:
-            logger.warning(f"Failed to get semantic actions: {e}")
-            return self._get_fallback_actions()
-
-    def _get_fallback_actions(self) -> dict:
-        """Fallback action options"""
-        return {
-            'save_draft': {
-                'status': 'draft',
-                'label': 'Save as Draft',
-                'button_class': 'btn-secondary',
-                'semantic_action': None
-            },
-            'submit_approval': {
-                'status': 'pending',
-                'label': 'Submit for Approval',
-                'button_class': 'btn-warning',
-                'semantic_action': 'submit_for_approval'
-            },
-            'approve_direct': {
-                'status': 'approved',
-                'label': 'Create & Approve',
-                'button_class': 'btn-success',
-                'semantic_action': 'approve'
-            }
-        }
-
     def form_valid(self, form):
-
-        # TEMPORARY DEBUG - добави това в самото начало
-        print("=== FULL POST DATA ===")
-        for key, value in self.request.POST.items():
-            print(f"{key}: {value}")
-        print("=== END POST DATA ===")
         """
-        Handle form submission с clean semantic action handling
-
-        REFACTORED:
-        - БЕЗ hardcoded status mapping
-        - Semantic action resolution
-        - Clean service delegation
-        - Proper error handling
+        OPTIMIZED VIEW: Само data extraction и service delegation
+        
+        ✅ OPTIMIZED:
+        - БЕЗ business логика в VIEW
+        - БЕЗ manual document_type assignment (DocumentCreator го прави)  
+        - БЕЗ дублираща се валидация
+        - БЕЗ unused variables
+        - САМО делегация към PurchaseService
         """
-        from .services.purchase_service import DeliveryReceiptService
-        from core.utils.result import Result
-
         try:
-            # 1. ✅ Gather form data (same as before)
-            partner_id = self.request.POST.get('partner_id')
-            location_id = self.request.POST.get('location_id')
-            action_type = self.request.POST.get('action_type', 'save_draft')  # ✅ Semantic action
+            from .services.purchase_service import DeliveryReceiptService
+            
+            # ✅ OPTIMIZED: Extract form data including target_status from creation buttons
+            target_status = self.request.POST.get('target_status')
+            logger.info(f"Extracted target_status from POST: '{target_status}'")
+            
+            form_data = {
+                'partner_id': self.request.POST.get('partner_id'),
+                'location_id': self.request.POST.get('location_id'),
+                'target_status': target_status,  # From creation action buttons
+                **form.cleaned_data
+            }
 
-            # Get partner and location
-            if partner_id:
-                from partners.models import Supplier
-                partner = Supplier.objects.get(pk=partner_id)
-            else:
+            # ✅ OPTIMIZED: Early validation return
+            if not form_data['partner_id']:
                 messages.error(self.request, 'Supplier is required')
                 return self.form_invalid(form)
 
-            location = None
-            if location_id:
-                from inventory.models import InventoryLocation
-                location = InventoryLocation.objects.get(pk=location_id)
-
-            # 2. ✅ Prepare line items (same as before)
-            lines = self.prepare_lines_data()
-            if not lines:
-                messages.error(self.request, 'At least one line item is required')
+            # ✅ ЧИСТА ДЕЛЕГАЦИЯ - Използвай съществуващия create метод
+            from partners.models import Supplier
+            from inventory.models import InventoryLocation
+            
+            # Convert form data to service parameters
+            try:
+                partner = Supplier.objects.get(id=form_data['partner_id'])
+                location = InventoryLocation.objects.get(id=form_data['location_id']) if form_data.get('location_id') else None
+            except (Supplier.DoesNotExist, InventoryLocation.DoesNotExist) as e:
+                messages.error(self.request, f'Invalid partner or location: {e}')
                 return self.form_invalid(form)
-
-            # 3. ✅ Create delivery using service (same as before)
+            
+            # Extract lines from POST data
+            lines = self._extract_lines_from_post(self.request.POST)
+            
+            target_status_param = form_data.get('target_status')
+            logger.info(f"🔥 Calling DeliveryReceiptService.create with target_status='{target_status_param}'")
+            logger.info(f"🔥 Complete form_data: {form_data}")
+            
             result = DeliveryReceiptService.create(
                 user=self.request.user,
                 partner=partner,
                 location=location,
                 lines=lines,
-                document_date=form.cleaned_data.get('document_date'),
-                delivery_date=form.cleaned_data.get('delivery_date'),
-                supplier_delivery_reference=form.cleaned_data.get('supplier_delivery_reference'),
-                comments=form.cleaned_data.get('notes', ''),
+                target_status=target_status_param,
+                document_date=form_data.get('document_date'),
+                delivery_date=form_data.get('delivery_date'),
+                supplier_delivery_reference=form_data.get('supplier_delivery_reference', ''),
+                comments=form_data.get('notes', '')
             )
 
-            if not result.ok:
-                messages.error(self.request, f'Failed to create delivery receipt: {result.msg}')
-                return self.form_invalid(form)
-
-            # 4. ✅ Document creation successful
-            self.object = result.data['document']
-
-            # Ensure document_type for semantic actions
-            if not self.object.document_type:
-                from nomenclatures.models import DocumentType
-                delivery_doc_type = DocumentType.objects.filter(
-                    models.Q(code='003') | models.Q(name__icontains='delivery')
-                ).first()
-                if delivery_doc_type:
-                    self.object.document_type = delivery_doc_type
-                    self.object.save(update_fields=['document_type'])
-
-            # 5. ✅ NEW: Handle semantic actions cleanly
-            transition_result = self._handle_semantic_action(action_type)
-            if not transition_result.ok:
-                # Document created successfully, but status transition failed
-                messages.warning(
-                    self.request,
-                    f'Delivery Receipt created successfully, but status change failed: {transition_result.msg}'
-                )
-            else:
-                # Complete success
-                final_status = transition_result.data.get('new_status', self.object.status)
+            # ✅ OPTIMIZED: Handle result with EXACT error messages
+            if result.ok:
+                self.object = result.data['document']
+                final_status = result.data.get('final_status', self.object.status)
+                
                 messages.success(
                     self.request,
                     f'Delivery Receipt {self.object.document_number} created with status: {final_status}'
                 )
+                return redirect(self.get_success_url())
+            else:
+                # ✅ SHOW EXACT ERROR from service - no generic messages
+                messages.error(self.request, result.msg)
+                logger.error(f"DeliveryReceiptService.create() failed: {result.msg}")
+                return self.form_invalid(form)
 
-            # Document already created and saved - redirect to success URL
-            return redirect(self.get_success_url())
-
+        except ImportError as e:
+            import traceback
+            full_traceback = traceback.format_exc()
+            logger.error(f"Failed to import DeliveryReceiptService: {e}\nFull traceback: {full_traceback}")
+            messages.error(self.request, f'Import failed: {str(e)}')
+            return self.form_invalid(form)
+            
         except Exception as e:
             logger.error(f"Form processing failed: {e}")
             messages.error(self.request, f'Unexpected error: {str(e)}')
             return self.form_invalid(form)
 
-    def _handle_semantic_action(self, action_type: str) -> Result:
+    def _extract_lines_from_post(self, post_data):
         """
-        Handle semantic action после document creation
-
-        Args:
-            action_type: 'save_draft', 'submit_approval', 'approve_direct', etc.
-
-        Returns:
-            Result with transition details
-        """
-        try:
-            from .services.purchase_service import PurchaseDocumentService
-
-            # Get service for created document
-            doc_service = PurchaseDocumentService(self.object, self.request.user)
-
-            # ✅ NEW: Clean semantic action mapping
-            action_map = {
-                'save_draft': lambda: Result.success({'new_status': self.object.status}),  # No action needed
-                'submit_approval': lambda: doc_service.submit_for_approval('Submitted via web interface'),
-                'approve_direct': lambda: doc_service.approve('Direct approval from creation'),
-                'reject': lambda: doc_service.reject('Rejected during creation'),
-            }
-
-            # Execute semantic action
-            action_func = action_map.get(action_type)
-            if action_func:
-                result = action_func()
-                logger.info(f"Semantic action '{action_type}' result: {result.ok}")
-                return result
-            else:
-                # Unknown action - try direct status transition
-                logger.warning(f"Unknown semantic action: {action_type}, treating as direct status")
-                return doc_service.facade.transition_to(action_type, 'Direct transition from creation')
-
-        except Exception as e:
-            logger.error(f"Semantic action handling failed: {e}")
-            return Result.error('SEMANTIC_ACTION_FAILED', f'Action failed: {str(e)}')
-
-    def prepare_lines_data(self):
-        """
-        ✅ FIXED: Prepare line items with REQUIRED fields
-
-        PROBLEMS FIXED:
-        1. unit field е REQUIRED но подавахме None
-        2. POST field names не match-ваха
-        3. Missing line_number assignment
+        Extract product lines from POST data
+        
+        Expected form fields:
+        - line_product_0, line_product_1, etc.
+        - line_quantity_0, line_quantity_1, etc.  
+        - line_unit_price_0, line_unit_price_1, etc.
+        - line_unit_0, line_unit_1, etc.
         """
         lines = []
-
-        logger.debug("=== PREPARE_LINES_DATA DEBUG ===")
-        logger.debug(f"All POST keys: {list(self.request.POST.keys())}")
-
-        # ✅ Първо пробвай line_product_0 pattern (от JavaScript)
-        line_indices = set()
-        for key in self.request.POST.keys():
-            if key.startswith('line_product_'):
+        from products.models import Product
+        from decimal import Decimal
+        
+        # Find all line indices by looking for line_product_* fields
+        line_indices = []
+        for key in post_data.keys():
+            if key.startswith('line_product_') and post_data[key]:
                 try:
-                    index = key.split('_')[-1]
-                    line_indices.add(index)
-                except (IndexError, ValueError):
+                    index = int(key.split('_')[-1])
+                    line_indices.append(index)
+                except ValueError:
                     continue
-
-        logger.debug(f"Found line_product_* indices: {line_indices}")
-
-        # ✅ Ако няма line_product_*, пробвай items-*-product_id pattern
-        if not line_indices:
-            item_counter = 1
-            while f'items-{item_counter}-product_id' in self.request.POST:
-                line_indices.add(str(item_counter))
-                item_counter += 1
-            logger.debug(f"Found items-*-product_id indices: {line_indices}")
-
-        # ✅ Process lines with proper required field handling
-        for index in line_indices:
+        
+        # Process each line
+        for index in sorted(line_indices):
             try:
-                # ✅ Try both field name patterns
-                product_id = (self.request.POST.get(f'line_product_{index}') or
-                              self.request.POST.get(f'items-{index}-product_id'))
-
-                quantity = (self.request.POST.get(f'line_quantity_{index}') or
-                            self.request.POST.get(f'items-{index}-received_quantity'))
-
-                unit_price = (self.request.POST.get(f'line_unit_price_{index}') or
-                              self.request.POST.get(f'items-{index}-unit_price'))
-
-                unit_id = (self.request.POST.get(f'line_unit_{index}') or
-                           self.request.POST.get(f'items-{index}-unit_id'))
-
-                notes = (self.request.POST.get(f'line_notes_{index}', '') or
-                         self.request.POST.get(f'items-{index}-quality_notes', ''))
-
-                logger.debug(f"Line {index}: product_id={product_id}, quantity={quantity}, unit_id={unit_id}")
-
-                # ✅ Skip empty lines
-                if not product_id or not quantity:
-                    logger.debug(f"Skipping line {index}: missing product_id or quantity")
+                product_id = post_data.get(f'line_product_{index}')
+                quantity_str = post_data.get(f'line_quantity_{index}', '0')
+                price_str = post_data.get(f'line_unit_price_{index}', '0')
+                unit_id = post_data.get(f'line_unit_{index}')
+                
+                # Skip empty lines
+                if not product_id or not quantity_str:
                     continue
-
-                # ✅ Validate and parse quantity
-                try:
-                    from decimal import Decimal
-                    quantity_decimal = Decimal(str(quantity))
-                    if quantity_decimal <= 0:
-                        logger.warning(f"Skipping line {index}: invalid quantity {quantity}")
-                        continue
-                except (ValueError, TypeError):
-                    logger.warning(f"Skipping line {index}: cannot parse quantity {quantity}")
-                    continue
-
-                # ✅ Get product
-                try:
-                    from products.models import Product
-                    product = Product.objects.get(pk=product_id)
-                except Product.DoesNotExist:
-                    logger.warning(f"Skipping line {index}: product {product_id} not found")
-                    continue
-
-                # ✅ CRITICAL FIX: Get REQUIRED unit field
-                unit = None
-                if unit_id:
-                    try:
-                        from nomenclatures.models import UnitOfMeasure
-                        unit = UnitOfMeasure.objects.get(pk=unit_id)
-                    except UnitOfMeasure.DoesNotExist:
-                        logger.warning(f"Unit {unit_id} not found, trying product base_unit")
-                        unit = None
-
-                # ✅ If no unit provided, get from product or default
-                if not unit:
-                    # Try product base_unit
-                    unit = getattr(product, 'base_unit', None)
-
-                    # If still no unit, get first available unit (REQUIRED field!)
-                    if not unit:
-                        try:
-                            from nomenclatures.models import UnitOfMeasure
-                            unit = UnitOfMeasure.objects.filter(is_active=True).first()
-                            if unit:
-                                logger.debug(f"Using default unit {unit.code} for line {index}")
-                        except:
-                            pass
-
-                    # ✅ If STILL no unit, skip this line (unit is required!)
-                    if not unit:
-                        logger.error(f"Skipping line {index}: no valid unit available (unit is required field)")
-                        continue
-
-                # ✅ Parse unit price
-                try:
-                    from decimal import Decimal
-                    unit_price_decimal = Decimal(str(unit_price)) if unit_price else Decimal('0')
-                except (ValueError, TypeError):
-                    unit_price_decimal = Decimal('0')
-
-                # ✅ Build line data with ALL required fields
+                
+                # Get product object
+                product = Product.objects.get(id=product_id)
+                quantity = Decimal(quantity_str)
+                unit_price = Decimal(price_str) if price_str else Decimal('0')
+                
                 line_data = {
                     'product': product,
-                    'quantity': quantity_decimal,  # This will be mapped to 'received_quantity'
-                    'unit_price': unit_price_decimal,
-                    'unit': unit,  # ✅ REQUIRED field - never None!
-
-                    # ✅ DeliveryLine specific fields
-                    'received_quantity': quantity_decimal,
-                    'notes': notes,
-
-                    # ✅ Quality control defaults
-                    'quality_approved': None,  # Pending
-                    'quality_notes': '',
-
-                    # ✅ Optional tracking fields
-                    'batch_number': '',
-                    'expiry_date': None,
-                    'source_order_line': None,  # No source order for direct deliveries
+                    'quantity': quantity,
+                    'unit_price': unit_price,
+                    'notes': post_data.get(f'line_notes_{index}', ''),
                 }
-
+                
+                # Add unit if selected
+                if unit_id:
+                    from nomenclatures.models import UnitOfMeasure
+                    try:
+                        unit = UnitOfMeasure.objects.get(id=unit_id)
+                        line_data['unit'] = unit
+                    except UnitOfMeasure.DoesNotExist:
+                        logger.warning(f"Unit {unit_id} not found for line {index}")
+                
                 lines.append(line_data)
-                logger.debug(f"✅ Added line {index}: {product.code} x {quantity_decimal} {unit.code}")
-
-            except Exception as e:
-                logger.error(f"❌ Error processing line {index}: {e}")
+                
+            except (Product.DoesNotExist, ValueError, TypeError) as e:
+                logger.warning(f"Skipping invalid line {index}: {e}")
                 continue
-
-        logger.debug(f"✅ Total lines prepared: {len(lines)}")
-
-        # ✅ Enhanced debugging for empty lines
-        if not lines:
-            logger.warning("❌ No valid lines found!")
-
-            # Debug available POST fields
-            line_related_fields = [key for key in self.request.POST.keys()
-                                   if any(pattern in key for pattern in ['line_', 'item', 'product', 'quantity'])]
-            logger.debug(f"Available line-related POST fields: {line_related_fields}")
-
-            # ✅ Try to create one test line for debugging
-            try:
-                from products.models import Product
-                from nomenclatures.models import UnitOfMeasure
-
-                test_product = Product.objects.first()
-                test_unit = UnitOfMeasure.objects.filter(is_active=True).first()
-
-                if test_product and test_unit:
-                    logger.debug("Creating one test line for debugging...")
-                    test_line = {
-                        'product': test_product,
-                        'quantity': Decimal('1.0'),
-                        'unit_price': Decimal('10.0'),
-                        'unit': test_unit,
-                        'received_quantity': Decimal('1.0'),
-                        'notes': 'Test line - no form data found',
-                        'quality_approved': None,
-                        'quality_notes': '',
-                        'batch_number': '',
-                        'expiry_date': None,
-                        'source_order_line': None,
-                    }
-                    lines.append(test_line)
-                    logger.debug(f"✅ Added test line: {test_product.code} x 1.0 {test_unit.code}")
-                else:
-                    logger.error("❌ No products or units available for test line")
-
-            except Exception as e:
-                logger.error(f"❌ Failed to create test line: {e}")
-
+        
+        logger.info(f"Extracted {len(lines)} valid lines from POST data")
         return lines
+
 
 class DeliveryReceiptUpdateView(LoginRequiredMixin, PermissionRequiredMixin, UpdateView, ServiceResolverMixin):
     """Update existing Delivery Receipt"""

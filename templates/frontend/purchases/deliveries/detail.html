@@ -293,15 +293,15 @@
             {% endif %}
             {% if vat_breakdown %}
                 {% for rate, amount in vat_breakdown.items %}
-                    <div class="flex justify-between py-1 ">
-                        <span class="text-gray-600">{{ rate }}% {% trans "VAT" %}:</span>
-                        <span class="font-medium text-gray-800">{{ amount|floatformat:2 }} лв</span>
+                    <div class="flex justify-between py-1 font-small ">
+                        <span class="text-gray-600 font-small">{{ rate }}% {% trans "VAT" %}:</span>
+                        <span class="font-small text-gray-800">{{ amount|floatformat:2 }} лв</span>
                     </div>
                 {% endfor %}
             {% endif %}
             <div class="flex justify-between py-1 border-b-2 border-gray-200">
-                <span class="text-gray-600 font-large">{% trans "VAT Total" %}:</span>
-                <span class="font-medium text-gray-800">{{ delivery_receipt.vat_total|floatformat:2 }} лв</span>
+                <span class="text-gray-600 font-large extrabold">{% trans "VAT Total" %}:</span>
+                <span class="font-medium extrabold text-gray-800 ">{{ delivery_receipt.vat_total|floatformat:2 }} лв</span>
             </div>
             <div class="flex justify-between py-2 px-2 bg-gray-50 rounded mt-2">
                 <span class="font-extrabold text-3xl  text-gray-900">{% trans "Total" %}:</span>

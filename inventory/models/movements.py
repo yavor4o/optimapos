@@ -381,7 +381,6 @@ class InventoryMovement(models.Model):
         """
         analysis = {
             'movement_type': self.movement_type,
-            'movement_type_display': self.get_movement_type_display(),
             'quantity': self.quantity,
             'cost_price': self.cost_price,
             'total_cost_value': self.total_cost_value,

@@ -18,34 +18,23 @@
 
         <!-- Action Buttons -->
         <div class="flex items-center gap-2.5">
-            {% if semantic_actions %}
-                {% for action_key, action_data in semantic_actions.items %}
-                    <button
-                        type="submit"
-                        name="action_type"
-                        value="{{ action_key }}"
-                        class="btn {{ action_data.button_class }} btn-sm semantic-action-button"
-                        form="delivery-form"
-                    >
-                        <i class="ki-filled ki-check text-sm"></i>
-                        {{ action_data.label }}
-                    </button>
-                {% endfor %}
-            {% else %}
-                <!-- Fallback buttons -->
-                <button type="submit" name="action_type" value="save_draft"
-                        class="btn btn-secondary btn-sm" form="delivery-form">
-                    Save as Draft
+            {% for action in available_actions %}
+                <button
+                    type="submit"
+                    name="target_status"
+                    value="{{ action.target_status }}"
+                    class="btn {{ action.button_class|default:'btn-secondary' }} btn-sm semantic-action-button"
+                    form="delivery-form"
+                >
+                    <i class="ki-filled ki-check text-sm"></i>
+                    {{ action.label }}
                 </button>
-                <button type="submit" name="action_type" value="submit_approval"
-                        class="btn btn-warning btn-sm" form="delivery-form">
-                    Submit for Approval
-                </button>
-                <button type="submit" name="action_type" value="approve_direct"
-                        class="btn btn-success btn-sm" form="delivery-form">
-                    Create & Approve
-                </button>
-            {% endif %}
+            {% empty %}
+                <!-- DEBUG: Show message when no actions available -->
+                <div class="alert alert-warning">
+                    <strong>Debug:</strong> No creation actions available. Please check DocumentService configuration.
+                </div>
+            {% endfor %}
         </div>
     </div>
 </div>
@@ -182,7 +171,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const actionTypeInput = document.getElementById('action_type');
 
     // Handle semantic action button clicks
-    document.querySelectorAll('button[name="action_type"]').forEach(button => {
+    document.querySelectorAll('button[name="target_status"]').forEach(button => {
         button.addEventListener('click', function(e) {
             e.preventDefault();
 
@@ -210,6 +199,41 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // ✅ Generate product options with packaging data (MOVED OUTSIDE function)
+    let productOptionsHtml = '<option value="">Select Product...</option>';
+    const productPackagingData = {};
+    {% for product in products %}
+    productOptionsHtml += '<option value="{{ product.pk }}" data-price="0">{{ product.name|escapejs }} ({{ product.code|escapejs }})</option>';
+    
+    // Store packaging data for each product
+    productPackagingData[{{ product.pk }}] = {
+        base_unit: {
+            id: {{ product.base_unit.pk }},
+            name: '{{ product.base_unit.name|escapejs }}',
+            symbol: '{{ product.base_unit.symbol|escapejs }}'
+        },
+        packagings: [
+            {% for packaging in product.packagings.all %}
+            {
+                unit_id: {{ packaging.unit.pk }},
+                unit_name: '{{ packaging.unit.name|escapejs }}',
+                unit_symbol: '{{ packaging.unit.symbol|escapejs }}',
+                conversion_factor: {{ packaging.conversion_factor }},
+                allow_purchase: {{ packaging.allow_purchase|yesno:"true,false" }}
+            }{% if not forloop.last %},{% endif %}
+            {% endfor %}
+        ]
+    };
+    {% endfor %}
+
+    // Make productPackagingData globally available
+    window.productPackagingData = productPackagingData;
+
+    let unitOptionsHtml = '<option value="">Auto</option>';
+    {% for unit in units %}
+    unitOptionsHtml += '<option value="{{ unit.pk }}">{{ unit.code|escapejs }}</option>';
+    {% endfor %}
+
     // Line items management
     let lineIndex = 0;
 
@@ -224,17 +248,6 @@ function addLineItem() {
     if (noLinesMessage) {
         noLinesMessage.remove();
     }
-
-    // ✅ FIXED: Generate product and unit options dynamically
-    let productOptionsHtml = '<option value="">Select Product...</option>';
-    {% for product in products %}
-    productOptionsHtml += '<option value="{{ product.pk }}" data-price="0">{{ product.name|escapejs }} ({{ product.code|escapejs }})</option>';
-    {% endfor %}
-
-    let unitOptionsHtml = '<option value="">Auto</option>';
-    {% for unit in units %}
-    unitOptionsHtml += '<option value="{{ unit.pk }}">{{ unit.code|escapejs }}</option>';
-    {% endfor %}
 
     const lineHtml = `
         <div class="line-item border rounded p-4 mb-4" data-index="` + lineIndex + `">
@@ -316,14 +329,40 @@ function addLineItem() {
         const unitSelect = lineElement.querySelector('.unit-select');
 
         productSelect.addEventListener('change', function() {
+            const productId = this.value;
             const selectedOption = this.options[this.selectedIndex];
+            
             if (selectedOption.dataset.price) {
                 priceInput.value = selectedOption.dataset.price;
             }
 
-            // Auto-select unit if product has base_unit
-            if (selectedOption.dataset.unit && unitSelect) {
-                unitSelect.value = selectedOption.dataset.unit;
+            // ✅ NEW: Update unit dropdown with packaging options
+            if (productId && productPackagingData[productId]) {
+                const productData = productPackagingData[productId];
+                
+                // Clear current unit options
+                unitSelect.innerHTML = '';
+                
+                // Add base unit option
+                const baseUnitOption = document.createElement('option');
+                baseUnitOption.value = productData.base_unit.id;
+                baseUnitOption.textContent = `${productData.base_unit.name} (${productData.base_unit.symbol})`;
+                unitSelect.appendChild(baseUnitOption);
+                
+                // Add packaging unit options
+                productData.packagings.forEach(packaging => {
+                    if (packaging.allow_purchase) {
+                        const option = document.createElement('option');
+                        option.value = packaging.unit_id;
+                        option.textContent = `${packaging.unit_name} (${packaging.conversion_factor} x ${productData.base_unit.symbol})`;
+                        unitSelect.appendChild(option);
+                    }
+                });
+                
+                // Auto-select base unit by default only if no option is already selected
+                if (!unitSelect.value || unitSelect.value === '') {
+                    unitSelect.value = productData.base_unit.id;
+                }
             }
 
             calculateLineTotal(lineElement);
@@ -409,6 +448,14 @@ function addLineItem() {
         });
 
         console.log(`Valid line items found: ${validLineCount}`);
+        
+        // DEBUG: Log unit values before submission
+        lineItems.forEach((lineItem, index) => {
+            const unitSelect = lineItem.querySelector('.unit-select');
+            if (unitSelect) {
+                console.log(`Line ${index}: Unit selected = ${unitSelect.value} (${unitSelect.options[unitSelect.selectedIndex]?.text})`);
+            }
+        });
 
         // Action-specific validation
         if (actionType === 'approve_direct' && validLineCount === 0) {

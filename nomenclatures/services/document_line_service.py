@@ -61,7 +61,7 @@ class DocumentLineService:
             line_data[quantity_field] = quantity
             
             # Добави unit ако не е подаден (използва base_unit от продукта)
-            if 'unit' not in line_data and hasattr(product, 'base_unit') and product.base_unit:
+            if 'unit' not in kwargs and hasattr(product, 'base_unit') and product.base_unit:
                 line_data['unit'] = product.base_unit
 
             # Map price fields според типа line

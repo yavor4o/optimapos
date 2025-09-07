@@ -440,9 +440,110 @@ class StatusResolver:
             logger.error(f"Error checking status role {role}: {e}")
             return False
     
-    # REMOVED: get_statuses_by_semantic_type() method
-    # This over-engineered semantic pattern matching has been removed.
-    # Use direct DocumentTypeStatus queries with boolean fields instead.
+    @staticmethod
+    def get_statuses_by_semantic_type(document_type, semantic_type: str) -> Set[str]:
+        """
+        Get statuses by semantic type - aggregate method for query.py compatibility
+        
+        Args:
+            document_type: DocumentType instance
+            semantic_type: 'approval', 'processing', 'completion', 'initial', 'final', etc.
+            
+        Returns:
+            Set[str]: Status codes matching semantic type
+        """
+        cache_key = f"semantic_statuses_{document_type.id}_{semantic_type}"
+        cached = cache.get(cache_key)
+        
+        if cached:
+            return set(cached)
+            
+        try:
+            statuses = set()
+            
+            if semantic_type == 'approval':
+                # Approval workflow statuses - pending approval states
+                approval_status = StatusResolver.get_approval_status(document_type)
+                if approval_status:
+                    statuses.add(approval_status)
+                
+                # Also include statuses with approval-like names
+                from ..models import DocumentTypeStatus
+                approval_configs = DocumentTypeStatus.objects.filter(
+                    document_type=document_type,
+                    is_active=True
+                ).select_related('status')
+                
+                for config in approval_configs:
+                    status_lower = config.status.code.lower()
+                    if any(word in status_lower for word in ['submit', 'pending', 'review', 'approval']):
+                        statuses.add(config.status.code)
+                        
+            elif semantic_type == 'processing':
+                # Processing statuses - approved but not final
+                from ..models import DocumentTypeStatus
+                processing_configs = DocumentTypeStatus.objects.filter(
+                    document_type=document_type,
+                    is_active=True,
+                    is_final=False  # Not final = still processing
+                ).select_related('status')
+                
+                # Exclude initial statuses
+                initial_status = StatusResolver.get_initial_status(document_type)
+                
+                for config in processing_configs:
+                    status_code = config.status.code
+                    if status_code != initial_status:  # Skip initial
+                        status_lower = status_code.lower()
+                        if any(word in status_lower for word in [
+                            'approved', 'confirmed', 'sent', 'ready', 'processing', 
+                            'одобрен', 'потвърден', 'изпратен'
+                        ]):
+                            statuses.add(status_code)
+                            
+            elif semantic_type == 'completion':
+                # Completion statuses - final positive outcomes
+                final_statuses = StatusResolver.get_final_statuses(document_type)
+                cancellation_status = StatusResolver.get_cancellation_status(document_type)
+                rejection_status = StatusResolver.get_rejection_status(document_type)
+                
+                for status in final_statuses:
+                    # Exclude negative outcomes
+                    if status not in [cancellation_status, rejection_status]:
+                        statuses.add(status)
+                        
+            elif semantic_type == 'initial':
+                # Initial statuses
+                initial_status = StatusResolver.get_initial_status(document_type)
+                if initial_status:
+                    statuses.add(initial_status)
+                    
+            elif semantic_type == 'final':
+                # All final statuses
+                statuses.update(StatusResolver.get_final_statuses(document_type))
+                
+            elif semantic_type == 'cancellation':
+                # Cancellation statuses
+                cancellation_status = StatusResolver.get_cancellation_status(document_type)
+                if cancellation_status:
+                    statuses.add(cancellation_status)
+                    
+            elif semantic_type == 'rejection':
+                # Rejection statuses  
+                rejection_status = StatusResolver.get_rejection_status(document_type)
+                if rejection_status:
+                    statuses.add(rejection_status)
+                    
+            else:
+                logger.warning(f"Unknown semantic type: {semantic_type}")
+                
+            # Cache result
+            cache.set(cache_key, list(statuses), StatusResolver.CACHE_TIMEOUT)
+            return statuses
+            
+        except Exception as e:
+            logger.error(f"Error getting statuses by semantic type {semantic_type}: {e}")
+            return set()
     
     @staticmethod
     def clear_cache(document_type=None):
