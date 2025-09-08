@@ -26,10 +26,10 @@
     <i class="ki-filled ki-export"></i>
     Export
    </a>
-   <a class="kt-btn kt-btn-primary kt-btn-sm" href="{% url 'purchases:delivery_create' %}">
+   <button type="button" class="kt-btn kt-btn-primary kt-btn-sm" onclick="showCreateDeliveryModal()">
     <i class="ki-filled ki-plus"></i>
     New Delivery Receipt
-   </a>
+   </button>
   </div>
  </div>
 </div>
@@ -279,10 +279,10 @@
     </div>
     <h3 class="text-lg font-semibold text-gray-900 mb-2">No delivery receipts found</h3>
     <p class="text-sm text-gray-600 mb-6">Get started by creating your first delivery receipt.</p>
-    <a href="{% url 'purchases:delivery_create' %}" class="kt-btn kt-btn-primary">
+    <button type="button" class="kt-btn kt-btn-primary" onclick="showCreateDeliveryModal()">
      <i class="ki-filled ki-plus"></i>
      New Delivery Receipt
-    </a>
+    </button>
    </div>
    {% endif %}
   </div>
@@ -291,7 +291,9 @@
 
 
 <!-- Master Filter Drawer -->
-<div class="kt-drawer kt-drawer-end hidden flex flex-col max-w-[90%] w-[400px] fixed top-5 bottom-5 right-5 rounded-xl border border-gray-200 bg-white shadow-lg z-50" 
+
+
+<div class="kt-drawer kt-drawer-end card flex-col max-w-[90%] w-[400px]  top-5 bottom-5 end-5 rounded-xl border border-gray-200 bg-white shadow-lg z-50"
      data-kt-drawer="true" 
      data-kt-drawer-container="body" 
      id="master-filter-drawer" 
@@ -765,6 +767,58 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 1500);
         }
     });
+});
+</script>
+
+<!-- Full Screen Metronic Modal -->
+<div class="kt-modal kt-modal-full-screen" data-kt-modal="true" id="createDeliveryModal">
+    <div class="kt-modal-content">
+        <div class="kt-modal-header">
+            <h3 class="kt-modal-title">Create New Delivery Receipt</h3>
+            <button class="btn btn-sm btn-icon btn-light" data-kt-modal-dismiss="true">
+                <i class="ki-filled ki-cross"></i>
+            </button>
+        </div>
+        
+        <div class="kt-modal-body pe-2 h-100 overflow-auto" id="createDeliveryModalBody">
+            <!-- Loading State -->
+            <div id="loadingState" class="d-flex align-items-center justify-content-center h-100">
+                <div class="spinner-border text-primary"></div>
+                <div class="text-muted ms-3">Loading form...</div>
+            </div>
+
+            <!-- Content State - hidden initially -->
+            <div id="contentState" style="display: none;">
+                <!-- Will be populated by JavaScript -->
+            </div>
+        </div>
+        
+        <div class="kt-modal-footer justify-end">
+            <button type="button" class="btn btn-light" data-kt-modal-dismiss="true">Cancel</button>
+            <div id="modal-action-buttons" class="ms-3">
+                <!-- Action buttons will be loaded dynamically -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import JS Modules -->
+<script type="module">
+import { showCreateDeliveryModal } from '{% static "js/purchases/deliveries/delivery-modal.js" %}';
+import { DeliveryForm } from '{% static "js/purchases/deliveries/delivery-form.js" %}';
+import { pricingManager } from '{% static "js/purchases/deliveries/product-pricing.js" %}';
+import { uiComponents } from '{% static "js/purchases/deliveries/ui-components.js" %}';
+
+// Make showCreateDeliveryModal globally available for onclick handlers
+window.showCreateDeliveryModal = showCreateDeliveryModal;
+
+// Initialize components on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Modal is initialized by DeliveryModal class
+    console.log('Delivery management modules loaded successfully');
+    
+    // Initialize any existing UI components on the page
+    uiComponents.initializeSelects(document);
 });
 </script>
 

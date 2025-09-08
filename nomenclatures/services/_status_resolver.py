@@ -285,7 +285,7 @@ class StatusResolver:
     @staticmethod
     def get_movement_creating_statuses(document_type) -> Set[str]:
         """
-        Get statuses that create inventory movements
+        Get statuses that create.html inventory movements
         
         Args:
             document_type: DocumentType instance
@@ -355,6 +355,8 @@ class StatusResolver:
         """
         Get possible next statuses from current status
         
+        ✅ UNIFIED: Delegates to StatusManager for consistent logic
+        
         Args:
             document_type: DocumentType instance
             current_status: Current status code
@@ -369,35 +371,10 @@ class StatusResolver:
             return cached
             
         try:
-            from ..models import DocumentTypeStatus
+            # ✅ NEW: Delegate to StatusManager which has the proper workflow logic
+            from .status_manager import StatusManager
+            next_statuses = StatusManager.get_next_statuses(document_type, current_status)
             
-            # Get all statuses ordered by workflow
-            all_configs = DocumentTypeStatus.objects.filter(
-                document_type=document_type,
-                is_active=True
-            ).select_related('status').order_by('sort_order')
-
-            status_list = [config.status.code for config in all_configs]
-            
-            # Find current position
-            try:
-                current_index = status_list.index(current_status)
-            except ValueError:
-                # Current status not in workflow - return empty
-                cache.set(cache_key, [], StatusResolver.CACHE_TIMEOUT)
-                return []
-            
-            # Get remaining statuses
-            next_statuses = status_list[current_index + 1:]
-            
-            # Add cancellation status if exists, not already included, and current status allows it
-            cancel_status = StatusResolver.get_cancellation_status(document_type)
-            if (cancel_status and 
-                cancel_status not in next_statuses and 
-                current_status != cancel_status and  # Can't cancel if already cancelled
-                not StatusResolver.is_status_in_role(document_type, current_status, 'final')):  # Can't cancel if final
-                next_statuses.append(cancel_status)
-                
             cache.set(cache_key, next_statuses, StatusResolver.CACHE_TIMEOUT)
             return next_statuses
             
@@ -624,7 +601,7 @@ def can_delete_in_status(document) -> bool:
     return StatusResolver.is_status_in_role(document.document_type, document.status, 'deletable')
 
 def should_create_movements(document) -> bool:
-    """Check if document should create inventory movements in current status"""
+    """Check if document should create.html inventory movements in current status"""
     if not document.document_type or not document.document_type.affects_inventory:
         return False
     return StatusResolver.is_status_in_role(document.document_type, document.status, 'movement_creating')

@@ -1,0 +1,1011 @@
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 14:02:31
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 14:04:12
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/approvals.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/approvals.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 14:10:41
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+Exception in thread django-main-thread:
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/utils/autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/core/management/commands/runserver.py", line 124, in inner_run
+    autoreload.raise_last_exception()
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/utils/autoreload.py", line 86, in raise_last_exception
+    raise _exception[1]
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/core/management/__init__.py", line 394, in execute
+    autoreload.check_errors(django.setup)()
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/utils/autoreload.py", line 64, in wrapper
+    fn(*args, **kwargs)
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/__init__.py", line 24, in setup
+    apps.populate(settings.INSTALLED_APPS)
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/apps/registry.py", line 116, in populate
+    app_config.import_models()
+  File "/Users/yavordobrev/Desktop/projects/optimapos/esh/lib/python3.11/site-packages/django/apps/config.py", line 269, in import_models
+    self.models_module = import_module(models_module_name)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1204, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/__init__.py", line 32, in <module>
+    from .approvals import ApprovalRule, ApprovalLog, ApprovalRuleManager
+  File "/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/approvals.py", line 1, in <module>
+    до# nomenclatures/models/approvals.py - FIXED CLEAN VERSION
+    ^^
+NameError: name 'до' is not defined
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/approvals.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/approvals.py changed, reloading.
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/statuses.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/models/statuses.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:02:09
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/query.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/query.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:14:32
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/query.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/query.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:15:51
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:29:26
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:44:53
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:45:36
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 15:49:57
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/status_manager.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:08:47
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:09:14
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:18:15
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+[07/Sep/2025 16:24:07] "POST /purchases/deliveries/create/ HTTP/1.1" 302 0
+[07/Sep/2025 16:24:07] "GET /purchases/deliveries/115/ HTTP/1.1" 200 182465
+Not Found: /purchases/assets/media/app/mini-logo.svg
+Not Found: /purchases/assets/media/app/mini-logo.svg
+[07/Sep/2025 16:24:07] "GET /purchases/assets/media/app/mini-logo.svg HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-5.png
+Not Found: /purchases/assets/media/avatars/300-5.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-5.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-4.png
+Not Found: /purchases/assets/media/avatars/300-4.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-4.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-27.png
+Not Found: /purchases/assets/media/avatars/300-27.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-27.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-10.png
+Not Found: /purchases/assets/media/avatars/300-10.png
+Not Found: /purchases/assets/media/file-types/pdf.svg
+Not Found: /purchases/assets/media/file-types/pdf.svg
+Not Found: /purchases/assets/media/avatars/300-11.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-10.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-11.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/file-types/pdf.svg HTTP/1.1" 404 4904
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-11.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-14.png
+Not Found: /purchases/assets/media/avatars/300-14.png
+Not Found: /purchases/assets/media/avatars/300-25.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-14.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-25.png
+Not Found: /purchases/assets/media/file-types/figma.svg
+Not Found: /purchases/assets/media/file-types/figma.svg
+Not Found: /purchases/assets/media/avatars/300-34.png
+Not Found: /purchases/assets/media/avatars/300-34.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-25.png HTTP/1.1" 404 4904
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/file-types/figma.svg HTTP/1.1" 404 4910
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-34.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/file-types/xls.svg
+Not Found: /purchases/assets/media/file-types/xls.svg
+Not Found: /purchases/assets/media/avatars/300-29.png
+Not Found: /purchases/assets/media/avatars/300-3.png
+Not Found: /purchases/assets/media/avatars/300-29.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/file-types/xls.svg HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-3.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-29.png HTTP/1.1" 404 4904
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-3.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-2.png
+Not Found: /purchases/assets/media/avatars/300-2.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-2.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-24.png
+Not Found: /purchases/assets/media/avatars/300-24.png
+Not Found: /purchases/assets/media/avatars/300-30.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-24.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-30.png
+Not Found: /purchases/assets/media/avatars/300-15.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-30.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-1.png
+Not Found: /purchases/assets/media/avatars/300-15.png
+Not Found: /purchases/assets/media/avatars/300-1.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-1.png HTTP/1.1" 404 4901
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-15.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-6.png
+Not Found: /purchases/assets/media/avatars/300-6.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-6.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-12.png
+Not Found: /purchases/assets/media/avatars/300-12.png
+Not Found: /purchases/assets/media/file-types/svg.svg
+Not Found: /purchases/assets/media/file-types/svg.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-12.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/file-types/word.svg
+Not Found: /purchases/assets/media/file-types/word.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/file-types/svg.svg HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-21.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/file-types/word.svg HTTP/1.1" 404 4907
+Not Found: /purchases/assets/media/avatars/300-13.png
+Not Found: /purchases/assets/media/avatars/300-21.png
+Not Found: /purchases/assets/media/avatars/300-19.png
+Not Found: /purchases/assets/media/avatars/300-13.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-21.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-19.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-13.png HTTP/1.1" 404 4904
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-19.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-17.png
+Not Found: /purchases/assets/media/avatars/300-17.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-17.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/brand-logos/jira.svg
+Not Found: /purchases/assets/media/brand-logos/jira.svg
+Not Found: /purchases/assets/media/brand-logos/gitlab.svg
+Not Found: /purchases/assets/media/brand-logos/gitlab.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/brand-logos/gitlab.svg HTTP/1.1" 404 4916
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/brand-logos/jira.svg HTTP/1.1" 404 4910
+Not Found: /purchases/assets/media/brand-logos/evernote.svg
+Not Found: /purchases/assets/media/brand-logos/evernote.svg
+Not Found: /purchases/assets/media/avatars/300-9.png
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/brand-logos/evernote.svg HTTP/1.1" 404 4922
+Not Found: /purchases/assets/media/brand-logos/inferno.svg
+Not Found: /purchases/assets/media/avatars/300-9.png
+Not Found: /purchases/assets/media/brand-logos/google-webdev.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/avatars/300-9.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/brand-logos/inferno.svg
+Not Found: /purchases/assets/media/brand-logos/google-webdev.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/brand-logos/google-webdev.svg HTTP/1.1" 404 4937
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/brand-logos/inferno.svg HTTP/1.1" 404 4919
+Not Found: /purchases/assets/media/flags/saudi-arabia.svg
+Not Found: /purchases/assets/media/flags/saudi-arabia.svg
+Not Found: /purchases/assets/media/flags/spain.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/flags/saudi-arabia.svg HTTP/1.1" 404 4916
+Not Found: /purchases/assets/media/flags/spain.svg
+Not Found: /purchases/assets/media/flags/united-states.svg
+Not Found: /purchases/assets/media/flags/united-states.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/flags/spain.svg HTTP/1.1" 404 4895
+Not Found: /purchases/assets/media/flags/germany.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/flags/united-states.svg HTTP/1.1" 404 4919
+Not Found: /purchases/assets/media/flags/germany.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/flags/germany.svg HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/flags/japan.svg
+Not Found: /purchases/assets/media/flags/japan.svg
+[07/Sep/2025 16:24:08] "GET /purchases/assets/media/flags/japan.svg HTTP/1.1" 404 4895
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:18:54
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+[07/Sep/2025 16:31:49] "GET /admin/inventory/inventorymovement/ HTTP/1.1" 200 75478
+[07/Sep/2025 16:31:53] "POST /purchases/deliveries/create/ HTTP/1.1" 302 0
+[07/Sep/2025 16:31:53] "GET /purchases/deliveries/118/ HTTP/1.1" 200 182465
+Not Found: /purchases/assets/media/app/mini-logo.svg
+Not Found: /purchases/assets/media/app/mini-logo.svg
+Not Found: /purchases/assets/media/avatars/300-4.png
+Not Found: /purchases/assets/media/avatars/300-4.png
+Not Found: /purchases/assets/media/avatars/300-5.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/app/mini-logo.svg HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-5.png
+Not Found: /purchases/assets/media/avatars/300-10.png
+Not Found: /purchases/assets/media/avatars/300-10.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-4.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-27.png
+Not Found: /purchases/assets/media/avatars/300-27.png
+Not Found: /purchases/assets/media/file-types/pdf.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-5.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/file-types/pdf.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-10.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-11.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-27.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-14.png
+Not Found: /purchases/assets/media/avatars/300-11.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/file-types/pdf.svg HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/file-types/figma.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-11.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-25.png
+Not Found: /purchases/assets/media/avatars/300-14.png
+Not Found: /purchases/assets/media/file-types/xls.svg
+Not Found: /purchases/assets/media/file-types/figma.svg
+Not Found: /purchases/assets/media/avatars/300-34.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-14.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-29.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/file-types/figma.svg HTTP/1.1" 404 4910
+Not Found: /purchases/assets/media/avatars/300-25.png
+Not Found: /purchases/assets/media/avatars/300-3.png
+Not Found: /purchases/assets/media/file-types/xls.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-25.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-2.png
+Not Found: /purchases/assets/media/avatars/300-34.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/file-types/xls.svg HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-29.png
+Not Found: /purchases/assets/media/avatars/300-30.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-34.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-3.png
+Not Found: /purchases/assets/media/avatars/300-2.png
+Not Found: /purchases/assets/media/avatars/300-24.png
+Not Found: /purchases/assets/media/avatars/300-30.png
+Not Found: /purchases/assets/media/avatars/300-15.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-29.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-24.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-30.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-1.png
+Not Found: /purchases/assets/media/avatars/300-15.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-2.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-1.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-3.png HTTP/1.1" 404 4901
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-24.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-12.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-1.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/avatars/300-12.png
+Not Found: /purchases/assets/media/avatars/300-6.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-15.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/file-types/word.svg
+Not Found: /purchases/assets/media/avatars/300-6.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-12.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/file-types/svg.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-6.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/file-types/word.svg
+Not Found: /purchases/assets/media/avatars/300-21.png
+Not Found: /purchases/assets/media/file-types/svg.svg
+Not Found: /purchases/assets/media/avatars/300-13.png
+Not Found: /purchases/assets/media/avatars/300-21.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/file-types/word.svg HTTP/1.1" 404 4907
+Not Found: /purchases/assets/media/avatars/300-19.png
+Not Found: /purchases/assets/media/brand-logos/jira.svg
+Not Found: /purchases/assets/media/avatars/300-13.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-21.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-17.png
+Not Found: /purchases/assets/media/avatars/300-19.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/file-types/svg.svg HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/brand-logos/jira.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-13.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-17.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-19.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/avatars/300-9.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-17.png HTTP/1.1" 404 4904
+Not Found: /purchases/assets/media/brand-logos/gitlab.svg
+Not Found: /purchases/assets/media/avatars/300-9.png
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/brand-logos/jira.svg HTTP/1.1" 404 4910
+Not Found: /purchases/assets/media/brand-logos/inferno.svg
+Not Found: /purchases/assets/media/brand-logos/gitlab.svg
+Not Found: /purchases/assets/media/brand-logos/google-webdev.svg
+Not Found: /purchases/assets/media/brand-logos/inferno.svg
+Not Found: /purchases/assets/media/brand-logos/evernote.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/avatars/300-9.png HTTP/1.1" 404 4901
+Not Found: /purchases/assets/media/brand-logos/google-webdev.svg
+Not Found: /purchases/assets/media/flags/united-states.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/brand-logos/gitlab.svg HTTP/1.1" 404 4916
+Not Found: /purchases/assets/media/brand-logos/evernote.svg
+Not Found: /purchases/assets/media/flags/saudi-arabia.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/brand-logos/google-webdev.svg HTTP/1.1" 404 4937
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/brand-logos/inferno.svg HTTP/1.1" 404 4919
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/brand-logos/evernote.svg HTTP/1.1" 404 4922
+Not Found: /purchases/assets/media/flags/spain.svg
+Not Found: /purchases/assets/media/flags/united-states.svg
+Not Found: /purchases/assets/media/flags/japan.svg
+Not Found: /purchases/assets/media/flags/saudi-arabia.svg
+Not Found: /purchases/assets/media/flags/germany.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/flags/united-states.svg HTTP/1.1" 404 4919
+Not Found: /purchases/assets/media/flags/spain.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/flags/saudi-arabia.svg HTTP/1.1" 404 4916
+Not Found: /purchases/assets/media/flags/japan.svg
+Not Found: /purchases/assets/media/flags/germany.svg
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/flags/spain.svg HTTP/1.1" 404 4895
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/flags/japan.svg HTTP/1.1" 404 4895
+[07/Sep/2025 16:31:53] "GET /purchases/assets/media/flags/germany.svg HTTP/1.1" 404 4901
+[07/Sep/2025 16:31:54] "GET /purchases/ HTTP/1.1" 200 170849
+Not Found: /assets/media/brand-logos/gitlab.svg
+Not Found: /assets/media/brand-logos/gitlab.svg
+Not Found: /assets/media/avatars/300-19.png
+Not Found: /assets/media/avatars/300-19.png
+Not Found: /assets/media/brand-logos/evernote.svg
+Not Found: /assets/media/brand-logos/evernote.svg
+Not Found: /assets/media/file-types/word.svg
+[07/Sep/2025 16:31:54] "GET /assets/media/brand-logos/gitlab.svg HTTP/1.1" 404 3013
+Not Found: /assets/media/file-types/word.svg
+[07/Sep/2025 16:31:54] "GET /assets/media/avatars/300-19.png HTTP/1.1" 404 3001
+[07/Sep/2025 16:31:54] "GET /assets/media/brand-logos/evernote.svg HTTP/1.1" 404 3019
+[07/Sep/2025 16:31:54] "GET /assets/media/file-types/word.svg HTTP/1.1" 404 3004
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:24:08
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:32:08
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:35:12
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:38:46
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:40:13
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:40:29
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:40:41
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:40:54
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:41:09
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:41:23
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:43:43
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:44:00
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:49:53
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:50:03
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:50:21
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 16:50:35
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 17:10:40
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 17:10:53
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/nomenclatures/services/document_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 17:11:17
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/services/purchase_service.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:15:13
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:15:29
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:15:49
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:21:52
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/urls.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/urls.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:37:27
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:37:44
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 21:42:20
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 22:42:57
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 23:18:47
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 23:20:36
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/models/orders.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/models/orders.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 23:24:45
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/urls.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/urls.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 23:26:07
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 07, 2025 - 23:27:22
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/purchases/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 08, 2025 - 12:05:43
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+/Users/yavordobrev/Desktop/projects/optimapos/core/views.py changed, reloading.
+/Users/yavordobrev/Desktop/projects/optimapos/core/views.py changed, reloading.
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True
+Performing system checks...
+
+System check identified no issues (0 silenced).
+September 08, 2025 - 12:06:07
+Django version 5.2.3, using settings 'optimapos.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+WARNING: This is a development server. Do not use it in a production setting. Use a production WSGI or ASGI server instead.
+For more information on production servers see: https://docs.djangoproject.com/en/5.2/howto/deployment/
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+✅ Nomenclatures admin loaded - Numbering: True, Workflow: True

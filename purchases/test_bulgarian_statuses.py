@@ -59,7 +59,7 @@ def setup_bulgarian_workflow():
     
     print("\n⚙️ Setting up Bulgarian workflow for Purchase Requests...")
     
-    # Get or create document type
+    # Get or create.html document type
     doc_type = DocumentType.objects.filter(
         app_name='purchases',
         type_key='purchase_request'

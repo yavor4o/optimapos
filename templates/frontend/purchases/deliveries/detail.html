@@ -338,6 +338,7 @@
             <form id="semantic-action-form" method="post" class="space-y-6">
                 {% csrf_token %}
                 <input type="hidden" name="action_type" id="modal-action-type">
+                <input type="hidden" name="target_status" id="modal-target-status">
                 <div>
                     <p id="modal-message" class="text-sm text-gray-700">{% trans "Are you sure you want to perform this action?" %}</p>
                 </div>
@@ -371,15 +372,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const table = document.getElementById('lineItemsTable');
     const tbody = table.querySelector('tbody');
 
-    function openModal(action, url, requiresComments = false, actionLabel = '') {
+    function openModal(action, url, requiresComments = false, actionLabel = '', targetStatus = '') {
         const modalTitle = document.getElementById('modal-title');
         const modalMessage = document.getElementById('modal-message');
         const modalComments = document.getElementById('modal-comments');
         const modalActionType = document.getElementById('modal-action-type');
+        const modalTargetStatus = document.getElementById('modal-target-status');
 
         modalTitle.textContent = `${actionLabel || action.charAt(0).toUpperCase() + action.slice(1)} {% trans "Document" %}`;
         modalMessage.textContent = `{% trans "Are you sure you want to" %} ${action.replace('_', ' ').toLowerCase()} {% trans "this delivery receipt?" %}`;
         modalActionType.value = action;
+        modalTargetStatus.value = targetStatus || '';
         form.action = url;
 
         modalComments.required = requiresComments;
@@ -401,9 +404,10 @@ document.addEventListener('DOMContentLoaded', function() {
         button.addEventListener('click', function() {
             const action = this.dataset.action;
             const url = this.dataset.url;
+            const targetStatus = this.dataset.targetStatus;
             const requiresComments = this.dataset.requiresComments === 'true';
             const actionLabel = this.textContent.trim();
-            openModal(action, url, requiresComments, actionLabel);
+            openModal(action, url, requiresComments, actionLabel, targetStatus);
         });
     });
 

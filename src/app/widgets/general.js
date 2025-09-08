@@ -217,7 +217,7 @@ class KTGeneralWidgets {
 			yaxis: {
 				min: 0,
 				max: 100,
-				tickAmount: 5, // This will create 5 ticks: 0, 20, 40, 60, 80, 100
+				tickAmount: 5, // This will create.html 5 ticks: 0, 20, 40, 60, 80, 100
 				axisTicks: {
 					show: false,
 				},
@@ -386,7 +386,7 @@ class KTGeneralWidgets {
 			yaxis: {
 				min: 0,
 				max: 100,
-				tickAmount: 5, // This will create 5 ticks: 0, 20, 40, 60, 80, 100
+				tickAmount: 5, // This will create.html 5 ticks: 0, 20, 40, 60, 80, 100
 				axisTicks: {
 					show: false,
 				},

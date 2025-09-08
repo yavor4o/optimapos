@@ -415,7 +415,7 @@ class ProductService:
         """
         🎯 NEW METHOD: Create product with automatic inventory setup
 
-        This is the preferred way to create products in the system.
+        This is the preferred way to create.html products in the system.
         Follows enterprise retail best practices.
         """
         try:
@@ -452,7 +452,7 @@ class ProductService:
 
         except Exception as e:
             logger.error(f"❌ Product creation failed: {e}")
-            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create product: {str(e)}")
+            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create.html product: {str(e)}")
 
     @staticmethod
     def create_product_without_inventory(product_data: Dict) -> Result:
@@ -482,7 +482,7 @@ class ProductService:
 
         except Exception as e:
             logger.error(f"❌ Product creation failed: {e}")
-            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create product: {str(e)}")
+            return Result.error('PRODUCT_CREATION_FAILED', f"Failed to create.html product: {str(e)}")
 
     @staticmethod
     def _create_inventory_items_for_product(product) -> Result:
@@ -529,7 +529,7 @@ class ProductService:
 
         except Exception as e:
             logger.error(f"❌ Inventory creation failed for {product.code}: {e}")
-            return Result.error('INVENTORY_CREATION_FAILED', f"Failed to create inventory items: {str(e)}")
+            return Result.error('INVENTORY_CREATION_FAILED', f"Failed to create.html inventory items: {str(e)}")
 
     @staticmethod
     def add_product_to_location(product, location) -> Result:

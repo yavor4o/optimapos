@@ -17,4 +17,7 @@ urlpatterns = [
     
     # Delivery Lines - для AJAX operations
     path('delivery-lines/<int:pk>/quality-check/', views.DeliveryLineQualityCheckView.as_view(), name='delivery_line_quality'),
+    
+    # Ajax endpoints
+    path('ajax/product-pricing/', views.ProductPricingAjaxView.as_view(), name='ajax_product_pricing'),
 ]

@@ -149,7 +149,7 @@ class PurchaseOrder(BaseDocument, FinancialMixin, PaymentMixin):
         permissions = [
             ('can_send_to_supplier', 'Can send orders to supplier'),
             ('can_confirm_from_supplier', 'Can confirm orders from supplier'),
-            ('can_create_delivery', 'Can create deliveries from orders'),
+            ('can_create_delivery', 'Can create.html deliveries from orders'),
             ('can_view_supplier_details', 'Can view supplier details'),
         ]
 

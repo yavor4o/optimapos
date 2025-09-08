@@ -110,18 +110,19 @@ class DeliveryReceiptListView(LoginRequiredMixin, PermissionRequiredMixin, ListV
             'approved_count': all_deliveries.filter(status='approved').count(),
         }
 
-class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverMixin):
+class  DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverMixin):
     """
-    Create new Delivery Receipt с правилна service integration
+    Modal-only Create Delivery Receipt view
 
     Features:
+    - Modal-only interface (no standalone pages)
     - Dynamic status resolution
     - Semantic action handling
     - Clean architecture compliance
-    - Proper error feedback
+    - JSON responses for AJAX requests
     """
     model = DeliveryReceipt
-    template_name = 'frontend/purchases/deliveries/create.html'
+    template_name = 'frontend/purchases/deliveries/create_form.html'
     fields = ['document_date', 'delivery_date', 'supplier_delivery_reference', 'notes']
 
     def get_success_url(self):
@@ -200,9 +201,13 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             logger.error(f"Failed to load form context data: {e}")
             suppliers, locations, products, units, available_actions = [], [], [], [], []
 
+        # Convert available_actions to JSON for template
+        import json
+        available_actions_json = json.dumps(available_actions)
+        
         context.update({
             'page_title': 'New Delivery Receipt',
-            'form_mode': 'create',
+            'form_mode': 'create.html',
             'is_create_mode': True,  # Flag for creation vs transition actions
             'suppliers': suppliers,
             'locations': locations,
@@ -210,6 +215,7 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             'units': units,
             'today': timezone.now().date(),
             'available_actions': available_actions,
+            'available_actions_json': available_actions_json,
         })
         return context
 
@@ -227,9 +233,10 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
         try:
             from .services.purchase_service import DeliveryReceiptService
             
-            # ✅ OPTIMIZED: Extract form data including target_status from creation buttons
-            target_status = self.request.POST.get('target_status')
-            logger.info(f"Extracted target_status from POST: '{target_status}'")
+            # ✅ FIXED: Extract target_status from action_type (set by JavaScript)
+            target_status = self.request.POST.get('action_type')
+            if target_status == 'save_draft':
+                target_status = None  # No transition needed for save_draft
             
             form_data = {
                 'partner_id': self.request.POST.get('partner_id'),
@@ -238,28 +245,28 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                 **form.cleaned_data
             }
 
-            # ✅ OPTIMIZED: Early validation return
-            if not form_data['partner_id']:
-                messages.error(self.request, 'Supplier is required')
-                return self.form_invalid(form)
+            # ✅ BASIC UI VALIDATION: Only for immediate UX feedback
+            # Comprehensive validation is handled by DocumentService via PurchaseDocumentService
 
-            # ✅ ЧИСТА ДЕЛЕГАЦИЯ - Използвай съществуващия create метод
+            # ✅ ЧИСТА ДЕЛЕГАЦИЯ - Използвай съществуващия create.html метод
             from partners.models import Supplier
             from inventory.models import InventoryLocation
             
-            # Convert form data to service parameters
+            # Convert form data to service parameters - validation delegated to service layer
             try:
-                partner = Supplier.objects.get(id=form_data['partner_id'])
+                partner = Supplier.objects.get(id=form_data['partner_id']) if form_data.get('partner_id') else None
                 location = InventoryLocation.objects.get(id=form_data['location_id']) if form_data.get('location_id') else None
-            except (Supplier.DoesNotExist, InventoryLocation.DoesNotExist) as e:
-                messages.error(self.request, f'Invalid partner or location: {e}')
-                return self.form_invalid(form)
+            except (Supplier.DoesNotExist, InventoryLocation.DoesNotExist):
+                # Let service layer handle validation and provide better error messages
+                partner = None if not form_data.get('partner_id') else None
+                location = None if not form_data.get('location_id') else None
             
             # Extract lines from POST data
             lines = self._extract_lines_from_post(self.request.POST)
+            logger.info(f"🔥 Extracted {len(lines)} lines: {[str(line.get('product', 'NO_PRODUCT')) for line in lines]}")
             
             target_status_param = form_data.get('target_status')
-            logger.info(f"🔥 Calling DeliveryReceiptService.create with target_status='{target_status_param}'")
+            logger.info(f"🔥 Calling DeliveryReceiptService.create.html with target_status='{target_status_param}'")
             logger.info(f"🔥 Complete form_data: {form_data}")
             
             result = DeliveryReceiptService.create(
@@ -279,15 +286,71 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                 self.object = result.data['document']
                 final_status = result.data.get('final_status', self.object.status)
                 
+                # For AJAX requests, return JSON response
+                if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': f'Delivery Receipt {self.object.document_number} created with status: {final_status}',
+                        'document_id': self.object.pk,
+                        'document_number': self.object.document_number,
+                        'redirect_url': self.get_success_url()
+                    })
+                
                 messages.success(
                     self.request,
                     f'Delivery Receipt {self.object.document_number} created with status: {final_status}'
                 )
                 return redirect(self.get_success_url())
             else:
-                # ✅ SHOW EXACT ERROR from service - no generic messages
-                messages.error(self.request, result.msg)
-                logger.error(f"DeliveryReceiptService.create() failed: {result.msg}")
+                # ✅ DETAILED ERROR HANDLING: Show all validation errors to user
+                if result.code == 'VALIDATION_FAILED' and result.data and 'errors' in result.data:
+                    # Show each validation error separately for better UX
+                    validation_errors = result.data['errors']
+                    
+                    # For AJAX requests, return JSON immediately with specific errors
+                    if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                        error_messages = []
+                        for error in validation_errors:
+                            error_messages.append(f"Validation Error: {error}")
+                        
+                        # Add warnings if any
+                        if 'warnings' in result.data and result.data['warnings']:
+                            for warning in result.data['warnings']:
+                                error_messages.append(f"Warning: {warning}")
+                        
+                        return JsonResponse({
+                            'success': False,
+                            'message': '; '.join(error_messages),
+                            'errors': validation_errors,
+                            'warnings': result.data.get('warnings', [])
+                        })
+                    
+                    # For regular requests, add messages and continue
+                    for error in validation_errors:
+                        messages.error(self.request, f"Validation Error: {error}")
+                    
+                    # Also show warnings if any
+                    if 'warnings' in result.data and result.data['warnings']:
+                        for warning in result.data['warnings']:
+                            messages.warning(self.request, f"Warning: {warning}")
+                    
+                    logger.error(f"Validation failed with {len(validation_errors)} errors: {validation_errors}")
+                else:
+                    # Generic error handling for non-validation errors
+                    error_message = f"Document creation failed: {result.msg}"
+                    
+                    # For AJAX requests, return JSON immediately
+                    if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                        return JsonResponse({
+                            'success': False,
+                            'message': error_message,
+                            'service_error': result.msg
+                        })
+                    
+                    # For regular requests, add message and continue
+                    messages.error(self.request, error_message)
+                    logger.error(f"DeliveryReceiptService.create.html() failed: {result.msg}")
+                    
                 return self.form_invalid(form)
 
         except ImportError as e:
@@ -301,6 +364,34 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             logger.error(f"Form processing failed: {e}")
             messages.error(self.request, f'Unexpected error: {str(e)}')
             return self.form_invalid(form)
+
+    def form_invalid(self, form):
+        """Handle form validation errors - return JSON for AJAX requests"""
+        if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            # Collect all form errors
+            error_messages = []
+            
+            # Field errors
+            for field, errors in form.errors.items():
+                for error in errors:
+                    if field == '__all__':
+                        error_messages.append(error)
+                    else:
+                        field_name = form.fields.get(field, {}).get('label', field)
+                        error_messages.append(f"{field_name}: {error}")
+            
+            # Non-field errors
+            for error in form.non_field_errors():
+                error_messages.append(error)
+                
+            return JsonResponse({
+                'success': False,
+                'message': '; '.join(error_messages) if error_messages else 'Validation failed',
+                'errors': form.errors
+            })
+        
+        # Regular HTML response for non-AJAX requests
+        return super().form_invalid(form)
 
     def _extract_lines_from_post(self, post_data):
         """
@@ -644,9 +735,20 @@ class DeliveryReceiptActionView(LoginRequiredMixin, PermissionRequiredMixin, Vie
                 logger.info(f"Executed semantic action '{action_type}': {result.ok}")
                 return result
             else:
-                # Unknown semantic action - try direct transition
-                logger.warning(f"Unknown semantic action '{action_type}', attempting direct transition")
-                return doc_service.facade.transition_to(action_type, comments)
+                # Handle 'generic' actions - use target status instead of semantic type
+                if action_type == 'generic':
+                    # For generic actions, get target status from request data
+                    target_status = self.request.POST.get('target_status')
+                    if target_status:
+                        logger.info(f"Processing generic action to target status: '{target_status}'")
+                        return doc_service.facade.transition_to(target_status, comments)
+                    else:
+                        logger.error("Generic action without target_status")
+                        return Result.error('MISSING_TARGET_STATUS', 'Generic action requires target_status')
+                else:
+                    # Unknown semantic action - try direct transition
+                    logger.warning(f"Unknown semantic action '{action_type}', attempting direct transition")
+                    return doc_service.facade.transition_to(action_type, comments)
 
         except Exception as e:
             logger.error(f"Semantic action execution failed: {e}")
@@ -1035,3 +1137,70 @@ class DeliveryLineQualityCheckView(LoginRequiredMixin, PermissionRequiredMixin, 
             'success': False,
             'message': 'Invalid quality status'
         })
+
+
+class ProductPricingAjaxView(LoginRequiredMixin, View):
+    """Ajax endpoint for dynamic product pricing"""
+    
+    def post(self, request):
+        """Get recommended pricing for product in delivery context"""
+        try:
+            product_id = request.POST.get('product_id')
+            partner_id = request.POST.get('partner_id')
+            location_id = request.POST.get('location_id')
+            
+            if not product_id:
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Product ID is required'
+                })
+            
+            # Get models
+            from products.models import Product
+            from partners.models import Supplier
+            from inventory.models import InventoryLocation
+            
+            try:
+                product = Product.objects.get(id=product_id)
+                partner = Supplier.objects.get(id=partner_id) if partner_id else None
+                location = InventoryLocation.objects.get(id=location_id) if location_id else None
+            except (Product.DoesNotExist, Supplier.DoesNotExist, InventoryLocation.DoesNotExist) as e:
+                return JsonResponse({
+                    'success': False,
+                    'message': f'Invalid data: {str(e)}'
+                })
+            
+            # Get last purchase price
+            from pricing.services.pricing_service import PricingService
+            pricing_result = PricingService.get_last_purchase_price(
+                product=product,
+                partner=partner, 
+                location=location
+            )
+            
+            if pricing_result.ok:
+                data = pricing_result.data
+                return JsonResponse({
+                    'success': True,
+                    'recommended_price': str(data['price']),
+                    'pricing_info': {
+                        'last_date': str(data.get('date', '')),
+                        'last_partner': data.get('partner', ''),
+                        'source': data.get('source', 'purchase_history'),
+                        'match_type': data.get('match_type', ''),
+                        'delivery_ref': data.get('delivery_ref', '')
+                    }
+                })
+            else:
+                return JsonResponse({
+                    'success': False,
+                    'message': pricing_result.msg,
+                    'recommended_price': '0.00'
+                })
+                
+        except Exception as e:
+            return JsonResponse({
+                'success': False, 
+                'message': f'Pricing lookup failed: {str(e)}',
+                'recommended_price': '0.00'
+            })

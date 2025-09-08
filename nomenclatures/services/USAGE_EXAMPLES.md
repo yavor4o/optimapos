@@ -17,7 +17,7 @@ request = PurchaseRequest()
 request.supplier = supplier
 request.location = warehouse
 
-# Use DocumentService to create with auto-numbering
+# Use DocumentService to create.html with auto-numbering
 service = DocumentService(request, user)
 result = service.create()
 

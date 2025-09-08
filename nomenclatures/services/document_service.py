@@ -11,7 +11,7 @@ ARCHITECTURAL PRINCIPLE:
 USAGE:
     # Instance-based API
     service = DocumentService(document, user)
-    service.create()
+    service.create.html()
     service.add_line(product, quantity=5)
     service.transition_to('approved')
     
@@ -318,7 +318,7 @@ class DocumentService:
             }]
     
     # =====================================================
-    # VALIDATION INTEGRATION METHODS 
+    #  VALIDATION INTEGRATION METHODS
     # =====================================================
     
     def validate_for_purchase_creation(self, partner, location, lines_data: List[dict], expected_amount: Decimal = None) -> Result:
@@ -329,8 +329,10 @@ class DocumentService:
         errors = []
         warnings = []
         
-        # 1. Partner/Supplier validation
-        if partner:
+        # 1. Partner/Supplier validation (mandatory)
+        if not partner:
+            errors.append("Partner is required for all documents")
+        else:
             try:
                 from partners.services import SupplierService
                 partner_result = SupplierService.validate_supplier_operation(
@@ -346,12 +348,16 @@ class DocumentService:
                 if getattr(partner, 'delivery_blocked', False):
                     errors.append("Partner delivery is blocked")
         
-        # 2. Location validation (basic)
-        if location and not location.is_active:
+        # 2. Location validation (mandatory)
+        if not location:
+            errors.append("Location is required for all documents")
+        elif not location.is_active:
             errors.append(f"Location '{location.name}' is not active")
         
-        # 3. Products validation
-        if lines_data:
+        # 3. Lines validation - must have products
+        if not lines_data:
+            errors.append("Document must have at least one product line")
+        else:
             try:
                 from products.services import ProductValidationService
                 for line_data in lines_data:
@@ -387,6 +393,8 @@ class DocumentService:
         }
         
         if errors:
+            validation_data['errors'] = errors
+            validation_data['warnings'] = warnings
             return Result.error(
                 'VALIDATION_FAILED',
                 f"Document validation failed: {len(errors)} errors",

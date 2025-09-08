@@ -25,7 +25,7 @@ def test_delivery_buttons():
         test_statuses = ['draft', 'completed', 'cancelled', 'rejected']
         
         for status in test_statuses:
-            # Find or create delivery with this status
+            # Find or create.html delivery with this status
             delivery = DeliveryReceipt.objects.filter(status=status).first()
             
             if not delivery:

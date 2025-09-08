@@ -444,19 +444,24 @@ class StatusManager:
         except Exception as e:
             logger.warning(f"Failed to create LogEntry: {e}")
 
-    @staticmethod
-    def _get_simple_next_statuses(document) -> List[str]:
+    @staticmethod  
+    def get_next_statuses(document_type, current_status: str) -> List[str]:
         """
-        🎯 ENHANCED: Get next available statuses using configuration
-
-        ПОДОБРЕНО: Използва DocumentTypeStatus вместо hardcoded map
+        🎯 NEW: Static version of _get_simple_next_statuses for external use
+        
+        Args:
+            document_type: DocumentType instance
+            current_status: Current status code
+            
+        Returns:
+            List[str]: Next available status codes
         """
         try:
             from nomenclatures.models.statuses import DocumentTypeStatus
 
             # Get configured statuses for this document type
             configured_statuses = DocumentTypeStatus.objects.filter(
-                document_type=document.document_type,
+                document_type=document_type,
                 is_active=True
             ).select_related('status').order_by('sort_order')
 
@@ -465,7 +470,7 @@ class StatusManager:
             current_position = None
 
             for i, config in enumerate(configured_statuses):
-                if config.status.code == document.status:
+                if config.status.code == current_status:
                     current_position = i
                     break
 
@@ -474,6 +479,14 @@ class StatusManager:
                 remaining_configs = configured_statuses[current_position + 1:]
 
                 for config in remaining_configs:
+                    # ✅ FIXED: Check if both config and status are active
+                    if not config.is_active or not config.status.is_active:
+                        continue
+                        
+                    # ✅ FIXED: Skip if same as current status (don't show duplicate actions)
+                    if config.status.code == current_status:
+                        continue
+                        
                     # Skip initial statuses (can't go back to initial)
                     if not config.is_initial:
                         next_statuses.append(config.status.code)
@@ -482,21 +495,28 @@ class StatusManager:
                     if config.is_final and next_statuses:
                         break
 
-                # Always allow cancellation if configured
-                cancellation_config = configured_statuses.filter(is_cancellation=True).first()
-                if cancellation_config and cancellation_config.status.code not in next_statuses:
+                # Always allow cancellation if configured and active
+                cancellation_config = configured_statuses.filter(
+                    is_cancellation=True,
+                    is_active=True,
+                    status__is_active=True
+                ).first()
+                if (cancellation_config and 
+                    cancellation_config.status.code not in next_statuses and
+                    cancellation_config.status.code != current_status):  # ✅ FIXED: Don't show cancel if already cancelled
                     next_statuses.append(cancellation_config.status.code)
 
             return next_statuses
 
         except Exception as e:
             logger.warning(f"Error getting next statuses: {e}")
-            # Fallback to basic transitions
-            # FIXED: Use dynamic status resolution instead of hardcoded map
-            try:
-                from ._status_resolver import StatusResolver
-                return StatusResolver.get_next_possible_statuses(document.document_type, document.status)
-            except Exception as fallback_error:
-                logger.error(f"StatusResolver also failed: {fallback_error}")
-                # Emergency fallback - return empty list (no transitions allowed)
-                return []
+            return []
+
+    @staticmethod
+    def _get_simple_next_statuses(document) -> List[str]:
+        """
+        🎯 LEGACY: Delegate to static get_next_statuses method
+        
+        ПОДОБРЕНО: Използва унифицираната логика
+        """
+        return StatusManager.get_next_statuses(document.document_type, document.status)

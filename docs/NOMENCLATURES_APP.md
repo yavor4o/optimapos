@@ -109,7 +109,7 @@ result = StatusManager.transition_document(
 ```python
 # StatusManager reads DocumentTypeStatus configuration:
 if new_status_config.creates_inventory_movements:
-    # Automatically create inventory movements
+    # Automatically create.html inventory movements
     MovementService.process_document_movements(document)
     
 if new_status_config.reverses_inventory_movements:  
@@ -331,7 +331,7 @@ cancelled_status = DocumentTypeStatus.objects.create(
 ```python
 # When document transitions to new status:
 if new_status_config.creates_inventory_movements:
-    # ✅ Automatically create inventory movements
+    # ✅ Automatically create.html inventory movements
     from inventory.services import MovementService
     result = MovementService.process_document_movements(document)
     

@@ -271,28 +271,31 @@ class DocumentQuery:
 
             else:
                 # === SIMPLE WORKFLOW ACTIONS ===
-                from nomenclatures.services.status_manager import StatusManager
-                available_statuses = StatusManager._get_simple_next_statuses(document)
+                from ._status_resolver import StatusResolver
+                available_statuses = StatusResolver.get_next_possible_statuses(
+                    document.document_type, 
+                    document.status
+                )
 
                 for status in available_statuses:
-                    # Determine semantic type from status name
-                    semantic_type = 'generic'
-                    status_lower = status.lower()
-                    if 'submit' in status_lower:
-                        semantic_type = 'submit'
-                    elif 'approve' in status_lower:
-                        semantic_type = 'approve'
-                    elif 'reject' in status_lower:
-                        semantic_type = 'reject'
-                    elif 'cancel' in status_lower:
-                        semantic_type = 'cancel'
-                    elif 'draft' in status_lower:
-                        semantic_type = 'return_draft'
+                    # ✅ NEW: Get semantic type from DocumentTypeStatus configuration
+                    try:
+                        from nomenclatures.models import DocumentTypeStatus
+                        config = DocumentTypeStatus.objects.get(
+                            document_type=document.document_type,
+                            status__code=status
+                        )
+                        semantic_type = config.semantic_type
+                        status_label = config.status.name  # Use proper status name
+                    except DocumentTypeStatus.DoesNotExist:
+                        # Fallback to generic if configuration not found
+                        semantic_type = 'generic'
+                        status_label = status.replace('_', ' ').title()
                     
                     actions.append({
                         'action': 'transition',
                         'status': status,
-                        'label': status.replace('_', ' ').title(),
+                        'label': status_label,
                         'semantic_type': semantic_type,
                         'can_perform': True,
                         'requires_approval': False,

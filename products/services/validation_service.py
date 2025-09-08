@@ -95,7 +95,7 @@ class ProductValidationService:
                             data=details
                         )
                     else:
-                        details['warning'] = "Selling will create negative stock"
+                        details['warning'] = "Selling will create.html negative stock"
 
             except InventoryItem.DoesNotExist:
                 details['current_stock'] = Decimal('0')
@@ -242,7 +242,7 @@ class ProductValidationService:
         if old_status == ProductLifecycleChoices.DISCONTINUED:
             return Result.error(
                 code='TRANSITION_FORBIDDEN',
-                msg="Cannot change status from DISCONTINUED (create new product instead)",
+                msg="Cannot change status from DISCONTINUED (create.html new product instead)",
                 data={'current_status': old_status, 'requested_status': new_status}
             )
 

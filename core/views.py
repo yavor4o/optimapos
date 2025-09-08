@@ -130,14 +130,14 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         actions = [
             {
                 'title': 'Нова поръчка',
-                'url': '/purchases/orders/create/',
+                'url': '/purchases/orders/create.html/',
                 'icon': 'ki-plus',
                 'color': 'primary',
                 'permission': 'purchases.add_purchaseorder'
             },
             {
                 'title': 'Нова доставка', 
-                'url': '/purchases/deliveries/create/',
+                'url': '/purchases/deliveries/',
                 'icon': 'ki-truck',
                 'color': 'success',
                 'permission': 'purchases.add_deliveryreceipt'

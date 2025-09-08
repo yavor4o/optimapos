@@ -384,7 +384,7 @@ class DocumentTypeAdmin(admin.ModelAdmin):
                 if not all([draft_status, submitted_status, approved_status]):
                     continue
 
-                # Managers group (create if not exists)
+                # Managers group (create.html if not exists)
                 managers_group, _ = Group.objects.get_or_create(name='Managers')
 
                 # Rule 1: Draft → Submitted (anyone can submit)

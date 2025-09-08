@@ -577,7 +577,7 @@ class Product(models.Model):
         if not report['is_consistent'] and self.unit_type == 'PIECE':
             report['recommendations'].extend([
                 'Use whole number conversion factors only for PIECE products',
-                'Consider adjusting packaging sizes to create clean conversions',
+                'Consider adjusting packaging sizes to create.html clean conversions',
                 'Example: Instead of 12.5 pieces/box, use 12 or 13 pieces/box'
             ])
 

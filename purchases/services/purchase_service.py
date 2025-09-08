@@ -66,34 +66,49 @@ class PurchaseDocumentService:
         
         WORKFLOW:
         1. Create empty document instance with required fields
-        2. DocumentService.create() - saves to DB with numbering/status
+        2. DocumentService.create.html() - saves to DB with numbering/status
         3. Add lines to saved document 
         4. Calculate totals
         """
         try:
             logger.info(f"Creating {doc_type} document for partner {partner}")
 
-            # 1. ✅ Purchase-specific line preparation
+            # 1. ✅ Purchase-specific line preparation and validation
             lines_data = self._prepare_lines_data(lines)
+            
+            # ✅ MANDATORY: Purchase documents must have at least one line
+            if not lines_data:
+                return Result.error(
+                    'NO_LINES_PROVIDED', 
+                    f'Purchase {doc_type} must have at least one valid product line'
+                )
+            
+            # Additional check for invalid line data
             if lines and not lines_data:
                 return Result.error('INVALID_LINES', f'No valid lines provided from {len(lines)} input lines')
+            
+            # 2. ✅ INTEGRATED VALIDATION: Use DocumentService validation methods
+            validation_result = self._validate_creation_data(doc_type, partner, location, lines_data)
+            if not validation_result.ok:
+                logger.warning(f"Validation failed: {validation_result.msg}")
+                return validation_result
 
-            # 2. ✅ Create MINIMAL document instance (following USAGE_EXAMPLES.md pattern)
+            # 3. ✅ Create MINIMAL document instance (following USAGE_EXAMPLES.md pattern)
             doc_instance = self._create_minimal_instance(doc_type, partner, location, **kwargs)
             if not doc_instance:
-                return Result.error('INSTANCE_CREATION_FAILED', f'Failed to create {doc_type} instance')
+                return Result.error('INSTANCE_CREATION_FAILED', f'Failed to create.html {doc_type} instance')
 
-            # 3. ✅ DocumentService.create() - SAVES document to DB with numbering/status  
+            # 4. ✅ DocumentService.create.html() - SAVES document to DB with numbering/status
             facade = DocumentService(doc_instance, self.user)
             
             create_result = facade.create()
             if not create_result.ok:
-                logger.error(f"DocumentService.create() failed: {create_result.msg}")
+                logger.error(f"DocumentService.create.html() failed: {create_result.msg}")
                 return create_result
             
             logger.info(f"Document saved to DB: {doc_instance.document_number} (PK={doc_instance.pk})")
             
-            # 4. ✅ Add lines to SAVED document (now has PK and can have related objects)
+            # 5. ✅ Add lines to SAVED document (now has PK and can have related objects)
             for line_data in lines_data:
                 # DocumentService.add_line expects: product, quantity, **kwargs
                 product = line_data.pop('product')
@@ -106,7 +121,7 @@ class PurchaseDocumentService:
                     
                 logger.debug(f"Added line: {product} x{quantity}")
             
-            # 5. ✅ Calculate totals on completed document
+            # 6. ✅ Calculate totals on completed document
             totals_result = facade.calculate_totals()
             if not totals_result.ok:
                 logger.warning(f"Totals calculation failed: {totals_result.msg}")
@@ -129,7 +144,7 @@ class PurchaseDocumentService:
         Create MINIMAL document instance following USAGE_EXAMPLES.md pattern
         
         Pattern: request = PurchaseRequest(); request.supplier = supplier; request.location = warehouse
-        DocumentService(request, user).create()  # This saves with numbering/status
+        DocumentService(request, user).create.html()  # This saves with numbering/status
         """
         try:
             if doc_type == 'delivery':
@@ -182,7 +197,7 @@ class PurchaseDocumentService:
 
         CHANGED:
         - БЕЗ 'status': 'draft' hardcoding!
-        - БЕЗ .objects.create() calls
+        - БЕЗ .objects.create.html() calls
         - САМО purchase-specific fields
         """
         try:
@@ -205,7 +220,7 @@ class PurchaseDocumentService:
                     'delivery_date': kwargs.get('delivery_date', kwargs.get('document_date', timezone.now().date())),
                     'supplier_delivery_reference': kwargs.get('supplier_delivery_reference', ''),
                 })
-                return DeliveryReceipt(**base_data)  # ✅ БЕЗ .create()!
+                return DeliveryReceipt(**base_data)  # ✅ БЕЗ .create.html()!
 
             elif doc_type == 'order':
                 from purchases.models import PurchaseOrder
@@ -213,7 +228,7 @@ class PurchaseDocumentService:
                     'expected_delivery_date': kwargs.get('expected_delivery_date'),
                     'supplier_order_reference': kwargs.get('supplier_order_reference', ''),
                 })
-                return PurchaseOrder(**base_data)  # ✅ БЕЗ .create()!
+                return PurchaseOrder(**base_data)  # ✅ БЕЗ .create.html()!
 
             elif doc_type == 'request':
                 from purchases.models import PurchaseRequest
@@ -222,7 +237,7 @@ class PurchaseDocumentService:
                     'priority': kwargs.get('priority', 'normal'),
                     'justification': kwargs.get('justification', ''),
                 })
-                return PurchaseRequest(**base_data)  # ✅ БЕЗ .create()!
+                return PurchaseRequest(**base_data)  # ✅ БЕЗ .create.html()!
 
             else:
                 logger.error(f"Unknown document type: {doc_type}")
@@ -353,6 +368,51 @@ class PurchaseDocumentService:
 
         return prepared_lines
 
+    def _validate_creation_data(self, doc_type: str, partner, location, lines_data: List[dict]) -> Result:
+        """
+        ✅ PROFESSIONAL VALIDATION using DocumentService centralized validation
+        
+        DELEGATES TO: DocumentService.validate_for_purchase_creation()
+        WHICH USES:
+        - SupplierService.validate_supplier_operation() via ImportError fallback
+        - ProductValidationService.validate_purchase() via ImportError fallback  
+        - InventoryService location checks
+        - Comprehensive business rules from all app services
+        """
+        try:
+            # Calculate expected amount for supplier validation
+            expected_amount = sum(
+                Decimal(str(line.get('quantity', 0))) * Decimal(str(line.get('unit_price', 0)))
+                for line in lines_data
+            )
+            
+            # ✅ CENTRALIZED VALIDATION: DocumentService aggregates all app services
+            from nomenclatures.services import DocumentService
+            temp_facade = DocumentService(None, self.user)  # Validation doesn't need document instance
+            
+            validation_result = temp_facade.validate_for_purchase_creation(
+                partner=partner,
+                location=location, 
+                lines_data=lines_data,
+                expected_amount=expected_amount
+            )
+            
+            if not validation_result.ok:
+                logger.warning(f"Comprehensive validation failed for {doc_type}: {validation_result.msg}")
+                # Forward validation errors with proper structure for UI display
+                return Result.error(
+                    'VALIDATION_FAILED', 
+                    validation_result.msg,
+                    data=validation_result.data  # Contains errors list for UI
+                )
+                
+            logger.info(f"✅ All validation passed for {doc_type} (amount: {expected_amount})")
+            return Result.success({'expected_amount': expected_amount, 'warnings': validation_result.data.get('warnings', [])})
+            
+        except Exception as e:
+            logger.error(f"Validation system error: {e}")
+            return Result.error('VALIDATION_SYSTEM_ERROR', f'Validation system failed: {str(e)}')
+
 
 # =================================================
 # SPECIALIZED PURCHASE SERVICES - THIN WRAPPERS
@@ -364,7 +424,7 @@ class DeliveryReceiptService(PurchaseDocumentService):
     @classmethod
     def create(cls, user: User, partner, location, lines: List[dict], target_status: str = None, **kwargs) -> Result:
         """Create new delivery receipt with optional target status"""
-        logger.info(f"🔥 DeliveryReceiptService.create called with target_status='{target_status}'")
+        logger.info(f"🔥 DeliveryReceiptService.create.html called with target_status='{target_status}'")
         service = cls(None, user)  # No document yet
         
         # Create document first

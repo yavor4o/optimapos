@@ -182,6 +182,26 @@ class DocumentTypeStatus(models.Model):
         help_text=_('Is this the cancellation status for this type?')
     )
 
+    # =====================
+    # SEMANTIC TYPE FOR UI ACTIONS
+    # =====================
+    SEMANTIC_TYPE_CHOICES = [
+        ('submit', _('Submit')),
+        ('approve', _('Approve')),
+        ('reject', _('Reject')),
+        ('cancel', _('Cancel')),
+        ('return_draft', _('Return to Draft')),
+        ('generic', _('Generic')),
+    ]
+    
+    semantic_type = models.CharField(
+        _('Semantic Type'),
+        max_length=50,
+        choices=SEMANTIC_TYPE_CHOICES,
+        default='generic',
+        help_text=_('Semantic type for UI action buttons and transitions')
+    )
+
     # INVENTORY CONTROL FIELDS (добави в края на класа)
     creates_inventory_movements = models.BooleanField(
         _('Creates Inventory Movements'),
@@ -306,7 +326,7 @@ class DocumentTypeStatus(models.Model):
         if self.creates_inventory_movements and not self.document_type.affects_inventory:
             raise ValidationError({
                 'creates_inventory_movements': _(
-                    'Cannot create inventory movements - document type does not affect inventory'
+                    'Cannot create.html inventory movements - document type does not affect inventory'
                 )
             })
 
@@ -326,11 +346,11 @@ class DocumentTypeStatus(models.Model):
                 )
             })
 
-        # Cannot create and reverse movements simultaneously
+        # Cannot create.html and reverse movements simultaneously
         if self.creates_inventory_movements and self.reverses_inventory_movements:
             raise ValidationError({
                 'reverses_inventory_movements': _(
-                    'Cannot both create and reverse movements in the same status'
+                    'Cannot both create.html and reverse movements in the same status'
                 )
             })
 
@@ -382,7 +402,7 @@ class DocumentTypeStatus(models.Model):
             if self.creates_inventory_movements:
                 raise ValidationError({
                     'creates_inventory_movements': _(
-                        'Cancellation status should not create inventory movements'
+                        'Cancellation status should not create.html inventory movements'
                     )
                 })
 
@@ -523,7 +543,7 @@ class DocumentTypeStatus(models.Model):
         return self.custom_name or self.status.name
 
     def can_create_movements(self) -> bool:
-        """Check if this status can create inventory movements"""
+        """Check if this status can create.html inventory movements"""
         return (
                 self.creates_inventory_movements and
                 self.document_type.affects_inventory

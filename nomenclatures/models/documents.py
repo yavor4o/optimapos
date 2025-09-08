@@ -246,7 +246,7 @@ class DocumentType(BaseNomenclature):
     # =====================
 
     def can_create_movements(self):
-        """Check if this document type can create inventory movements"""
+        """Check if this document type can create.html inventory movements"""
         return self.affects_inventory and self.inventory_direction != 'none'
 
     def get_movement_type(self):

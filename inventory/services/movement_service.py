@@ -113,7 +113,7 @@ class MovementService:
             logger.error(f"Error creating incoming movement: {e}")
             return Result.error(
                 code='MOVEMENT_CREATION_ERROR',
-                msg=f'Failed to create incoming movement: {str(e)}',
+                msg=f'Failed to create.html incoming movement: {str(e)}',
                 data={'product_code': getattr(product, 'code', '?'), 'quantity': quantity}
             )
 
@@ -213,7 +213,7 @@ class MovementService:
             logger.error(f"Error creating outgoing movement: {e}")
             return Result.error(
                 code='MOVEMENT_CREATION_ERROR',
-                msg=f'Failed to create outgoing movement: {str(e)}',
+                msg=f'Failed to create.html outgoing movement: {str(e)}',
                 data={'product_code': getattr(product, 'code', '?'), 'quantity': quantity}
             )
 
@@ -820,7 +820,7 @@ class MovementService:
                 except InventoryItem.DoesNotExist:
                     raise ValidationError("No inventory record found for this product at this location")
         else:
-            # If negative allowed, update OR create with negative quantity
+            # If negative allowed, update OR create.html with negative quantity
             existing_item = InventoryItem.objects.filter(location=location, product=product).first()
 
             if existing_item:
@@ -1312,7 +1312,7 @@ class MovementService:
             else:
                 avg_cost = 0
                 
-            # Update or create InventoryItem
+            # Update or create.html InventoryItem
             item, created = InventoryItem.objects.update_or_create(
                 location=location,
                 product=product,
@@ -1612,7 +1612,7 @@ class MovementService:
         try:
             from nomenclatures.models import DocumentTypeStatus
 
-            # Check if current status should create movements
+            # Check if current status should create.html movements
             current_config = DocumentTypeStatus.objects.filter(
                 document_type=order.document_type,
                 status__code=order.status,
@@ -1620,7 +1620,7 @@ class MovementService:
             ).first()
 
             if not current_config or not current_config.creates_inventory_movements:
-                logger.debug(f"Order {order.document_number} status '{order.status}' does not create movements")
+                logger.debug(f"Order {order.document_number} status '{order.status}' does not create.html movements")
                 return movements
 
         except ImportError:

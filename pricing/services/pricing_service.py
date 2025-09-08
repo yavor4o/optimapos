@@ -716,6 +716,101 @@ class PricingService:
             return Decimal('0')
 
     @staticmethod
+    def get_last_purchase_price(product, partner=None, location=None, days_limit=365) -> Result:
+        """
+        Get last purchase price from delivery history with smart fallback
+        
+        PRIORITY:
+        1. Last price from specific partner at location
+        2. Last price from any partner at location  
+        3. Last price from specific partner at any location
+        4. Last price from any partner at any location
+        5. Fallback to avg_cost from inventory
+        """
+        try:
+            from purchases.models import DeliveryLine
+            from django.utils import timezone
+            from datetime import timedelta
+            from django.db.models import Q
+            from django.contrib.contenttypes.models import ContentType
+            
+            cutoff_date = timezone.now() - timedelta(days=days_limit)
+            
+            # Build query hierarchy - most specific first
+            query_scenarios = []
+            
+            # Handle GenericForeignKey queries properly
+            if partner and location:
+                partner_ct = ContentType.objects.get_for_model(partner.__class__)
+                location_ct = ContentType.objects.get_for_model(location.__class__)
+                query_scenarios.append(('exact', Q(
+                    product=product,
+                    document__partner_content_type=partner_ct,
+                    document__partner_object_id=partner.pk,
+                    document__location_content_type=location_ct,
+                    document__location_object_id=location.pk
+                )))
+            
+            if location:
+                location_ct = ContentType.objects.get_for_model(location.__class__)
+                query_scenarios.append(('location', Q(
+                    product=product,
+                    document__location_content_type=location_ct,
+                    document__location_object_id=location.pk
+                )))
+            
+            if partner:
+                partner_ct = ContentType.objects.get_for_model(partner.__class__)
+                query_scenarios.append(('partner', Q(
+                    product=product,
+                    document__partner_content_type=partner_ct,
+                    document__partner_object_id=partner.pk
+                )))
+            
+            query_scenarios.append(('global', Q(product=product)))
+            
+            for match_type, query in query_scenarios:
+                last_line = DeliveryLine.objects.filter(
+                    query,
+                    document__document_date__gte=cutoff_date,
+                    document__status__in=['approved', 'completed'],
+                    unit_price__gt=0  # Only lines with valid prices
+                ).select_related(
+                    'document', 
+                    'document__partner_content_type', 
+                    'document__location_content_type'
+                ).order_by(
+                    '-document__document_date', '-document__created_at'
+                ).first()
+                
+                if last_line:
+                    return Result.success({
+                        'price': last_line.unit_price,
+                        'date': last_line.document.document_date,
+                        'partner': last_line.document.partner.name if last_line.document.partner else 'Unknown',
+                        'location': last_line.document.location.name if last_line.document.location else 'Unknown',
+                        'match_type': match_type,
+                        'delivery_ref': last_line.document.document_number,
+                        'source': 'purchase_history'
+                    })
+            
+            # Fallback to inventory avg_cost
+            if location:
+                fallback_price = PricingService._get_inventory_cost_internal(location, product)
+                if fallback_price > 0:
+                    return Result.success({
+                        'price': fallback_price,
+                        'source': 'inventory_avg_cost',
+                        'match_type': 'fallback'
+                    })
+            
+            return Result.error('NO_PRICE_HISTORY', 'No purchase history or inventory cost found for this product')
+            
+        except Exception as e:
+            logger.error(f"Failed to get last purchase price for product {product}: {e}")
+            return Result.error('PRICING_ERROR', f'Failed to get last purchase price: {str(e)}')
+
+    @staticmethod
     def _get_inventory_cost_internal(location, product) -> Decimal:
         """Internal inventory cost retrieval - preserved original logic"""
         try:
