@@ -18,7 +18,8 @@ from django.utils import timezone
 from django.db import transaction
 import logging
 
-from core.utils.result import Result
+from core.utils.result import Result, ErrorCategory
+from core.utils.error_codes import PurchaseErrorCodes, ErrorCodes, get_error_message
 from nomenclatures.services import DocumentService
 
 User = get_user_model()
@@ -370,48 +371,112 @@ class PurchaseDocumentService:
 
     def _validate_creation_data(self, doc_type: str, partner, location, lines_data: List[dict]) -> Result:
         """
-        ✅ PROFESSIONAL VALIDATION using DocumentService centralized validation
-        
-        DELEGATES TO: DocumentService.validate_for_purchase_creation()
-        WHICH USES:
-        - SupplierService.validate_supplier_operation() via ImportError fallback
-        - ProductValidationService.validate_purchase() via ImportError fallback  
-        - InventoryService location checks
-        - Comprehensive business rules from all app services
+        🆕 Enhanced validation using new Result pattern with field-level errors
         """
+        validation_errors = {}
+        field_errors = {}
+        
         try:
-            # Calculate expected amount for supplier validation
-            expected_amount = sum(
-                Decimal(str(line.get('quantity', 0))) * Decimal(str(line.get('unit_price', 0)))
-                for line in lines_data
-            )
-            
-            # ✅ CENTRALIZED VALIDATION: DocumentService aggregates all app services
-            from nomenclatures.services import DocumentService
-            temp_facade = DocumentService(None, self.user)  # Validation doesn't need document instance
-            
-            validation_result = temp_facade.validate_for_purchase_creation(
-                partner=partner,
-                location=location, 
-                lines_data=lines_data,
-                expected_amount=expected_amount
-            )
-            
-            if not validation_result.ok:
-                logger.warning(f"Comprehensive validation failed for {doc_type}: {validation_result.msg}")
-                # Forward validation errors with proper structure for UI display
-                return Result.error(
-                    'VALIDATION_FAILED', 
-                    validation_result.msg,
-                    data=validation_result.data  # Contains errors list for UI
+            # 1. Partner validation
+            if not partner:
+                field_errors['partner_id'] = [get_error_message(PurchaseErrorCodes.DELIVERY_PARTNER_REQUIRED)]
+            elif not getattr(partner, 'is_active', True):
+                field_errors['partner_id'] = [get_error_message(PurchaseErrorCodes.SUPPLIER_NOT_ACTIVE)]
+
+            # 2. Location validation  
+            if not location:
+                field_errors['location_id'] = [get_error_message(PurchaseErrorCodes.DELIVERY_LOCATION_REQUIRED)]
+            elif not getattr(location, 'is_active', True):
+                field_errors['location_id'] = [get_error_message(PurchaseErrorCodes.LOCATION_NOT_AVAILABLE)]
+
+            # 3. Lines validation with field-level errors
+            if not lines_data:
+                return Result.validation_error(
+                    get_error_message(PurchaseErrorCodes.DELIVERY_NO_LINES),
+                    field_errors={'__all__': [get_error_message(PurchaseErrorCodes.DELIVERY_NO_LINES)]}
                 )
+
+            line_field_errors = {}
+            total_amount = Decimal('0.00')
+            
+            for i, line in enumerate(lines_data):
+                line_errors = {}
                 
-            logger.info(f"✅ All validation passed for {doc_type} (amount: {expected_amount})")
-            return Result.success({'expected_amount': expected_amount, 'warnings': validation_result.data.get('warnings', [])})
+                # Product validation
+                product = line.get('product')
+                if not product:
+                    line_errors['product'] = [get_error_message(PurchaseErrorCodes.DELIVERY_PRODUCT_REQUIRED)]
+                elif not getattr(product, 'is_active', True):
+                    line_errors['product'] = ['Този продукт вече не е активен']
+                elif not getattr(product, 'is_purchasable', True):
+                    line_errors['product'] = [get_error_message(PurchaseErrorCodes.PRODUCT_NOT_PURCHASABLE)]
+
+                # Quantity validation
+                quantity = line.get('quantity', 0)
+                if not quantity or quantity <= 0:
+                    line_errors['quantity'] = [get_error_message(PurchaseErrorCodes.DELIVERY_QUANTITY_INVALID)]
+                elif quantity > Decimal('10000'):
+                    line_errors['quantity'] = [get_error_message(PurchaseErrorCodes.QUANTITY_EXCEEDS_LIMIT)]
+
+                # Price validation
+                unit_price = line.get('unit_price', 0)
+                if unit_price < 0:
+                    line_errors['unit_price'] = ['Цената не може да е отрицателна']
+                elif unit_price > Decimal('100000'):
+                    line_errors['unit_price'] = [get_error_message(PurchaseErrorCodes.PRICE_OUT_OF_RANGE)]
+
+                # Business rules validation
+                if product and quantity and unit_price:
+                    line_total = Decimal(str(quantity)) * Decimal(str(unit_price))
+                    total_amount += line_total
+                    
+                    # Warn for very high line totals
+                    if line_total > Decimal('50000'):
+                        if 'unit_price' not in line_errors:
+                            line_errors['unit_price'] = []
+                        line_errors['unit_price'].append('Общата сума за реда е много висока')
+
+                if line_errors:
+                    line_field_errors[f'line_{i}'] = line_errors
+
+            # 4. Document-level validation
+            if total_amount > Decimal('1000000'):
+                validation_errors['total_too_high'] = 'Общата сума на документа е твърде висока'
+
+            # 5. Compile all validation errors
+            if field_errors or line_field_errors or validation_errors:
+                all_field_errors = {**field_errors}
+                all_field_errors.update(line_field_errors)
+                
+                error_msg = 'Моля поправете грешките във формата'
+                if validation_errors:
+                    error_msg += f': {", ".join(validation_errors.values())}'
+
+                return Result.validation_error(
+                    error_msg,
+                    field_errors=all_field_errors,
+                    context={
+                        'validation_errors': validation_errors,
+                        'total_amount': str(total_amount),
+                        'line_count': len(lines_data)
+                    }
+                )
+
+            logger.info(f"✅ All validation passed for {doc_type} (amount: {total_amount})")
+            return Result.success({
+                'expected_amount': total_amount, 
+                'line_count': len(lines_data),
+                'validation_passed': True
+            })
             
         except Exception as e:
             logger.error(f"Validation system error: {e}")
-            return Result.error('VALIDATION_SYSTEM_ERROR', f'Validation system failed: {str(e)}')
+            return Result.error(
+                ErrorCodes.CONFIGURATION_ERROR,
+                f'Validation system failed: {str(e)}',
+                category=ErrorCategory.SYSTEM,
+                context={'exception': str(e), 'doc_type': doc_type}
+            )
 
 
 # =================================================

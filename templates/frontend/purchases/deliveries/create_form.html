@@ -1,682 +1,147 @@
+<!-- templates/frontend/purchases/deliveries/create_form.html -->
+
 {% load static %}
 
-<!-- Self-contained Modal Form - All data needed for modal -->
+<!-- Контейнер за формата, който се инжектира в модала -->
 <div class="w-full h-full px-6 py-4" data-form-context="modal-create">
-    <!-- Main Content -->
     <div class="grid grid-cols-1 gap-6 mt-6">
-        <!-- Document Creation Card - EXACT same style as detail.html -->
         <div class="kt-card rounded-xl shadow-sm border border-gray-100">
-            <!-- Simple Header - EXACT copy from detail -->
             <div class="kt-card-header p-6 border-b border-gray-200">
-                <div class="flex items-center justify-between gap-2 w-full">
-                    <!-- Left: Title + Status -->
-                    <div class="flex items-center gap-3">
-                        <h3 class="kt-card-title text-lg font-semibold text-gray-900">Create New Delivery Receipt</h3>
-                        <!-- Status Badge -->
-                        <span class="kt-badge kt-badge-sm kt-badge-light-primary">
-                            Draft Mode
-                        </span>
-                    </div>
+                <div class="flex items-center gap-3">
+                    <h3 class="kt-card-title text-lg font-semibold text-gray-900">Create New Delivery Receipt</h3>
+                    <span class="kt-badge kt-badge-sm kt-badge-light-primary">Draft Mode</span>
                 </div>
             </div>
-            
-            <!-- Content Body - EXACT same as detail p-4 -->
+
             <div class="kt-card-body p-4">
-                    <!-- Validation Messages -->
-                    {% if messages %}
-                        <div class="mb-8">
-                            {% for message in messages %}
-                                <div class="alert alert-{% if message.level_tag == 'error' %}danger{% elif message.level_tag == 'warning' %}warning{% else %}primary{% endif %} mb-4">
-                                    <div class="alert-icon">
-                                        {% if message.level_tag == 'error' %}
-                                            <i class="ki-outline ki-information-4"></i>
-                                        {% elif message.level_tag == 'warning' %}
-                                            <i class="ki-outline ki-notification-bing"></i>
-                                        {% else %}
-                                            <i class="ki-outline ki-check-circle"></i>
-                                        {% endif %}
-                                    </div>
-                                    <div class="alert-text">{{ message|safe }}</div>
-                                </div>
-                            {% endfor %}
-                        </div>
-                    {% endif %}
-
-                    <form id="delivery-form" method="post" action="{% url 'purchases:delivery_create' %}" class="kt-form">
-                        {% csrf_token %}
-
-                        <!-- Hidden Fields -->
-                        <input type="hidden" name="action_type" id="action_type" value="save_draft">
-
-                        <!-- Key Information - Blue Section EXACTLY like detail.html -->
-                        <div class="mb-3 p-2 bg-blue-50 rounded-lg">
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <!-- Supplier -->
-                                <div>
-                                    <label class="text-xs font-medium text-gray-600 uppercase">Supplier *</label>
-                                    <select name="partner_id" id="partner_id" class="kt-select w-full" data-kt-select="{}" required>
-                                        <option value="">Select Supplier...</option>
-                                        {% for supplier in suppliers %}
-                                            <option value="{{ supplier.pk }}">{{ supplier.name }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <!-- Location -->
-                                <div>
-                                    <label class="text-xs font-medium text-gray-600 uppercase">Location *</label>
-                                    <select name="location_id" id="location_id" class="kt-select w-full" data-kt-select="{}" required>
-                                        <option value="">Select Location...</option>
-                                        {% for location in locations %}
-                                            <option value="{{ location.pk }}">{{ location.name }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Details in Single Row - EXACTLY like detail.html -->
-                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                            <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                                <label class="text-xs font-medium text-gray-500 uppercase block">Document Date</label>
-                                {{ form.document_date }}
-                            </div>
-
-                            <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                                <label class="text-xs font-medium text-gray-500 uppercase block">Delivery Date</label>
-                                {{ form.delivery_date }}
-                            </div>
-
-                            <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                                <label class="text-xs font-medium text-gray-500 uppercase block">Supplier Reference</label>
-                                {{ form.supplier_delivery_reference }}
-                            </div>
-
-                            <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                                <label class="text-xs font-medium text-gray-500 uppercase block">Status</label>
-                                <div class="text-sm text-gray-800 leading-tight">Draft</div>
-                            </div>
-                            <!-- Notes Section - Compact -->
-                        <div class="mt-1 p-1 bg-amber-50 rounded-lg shadow-sm">
-                            <label class="text-xs font-medium text-amber-700 uppercase block mb-1">Notes</label>
-                            <textarea name="notes" class="w-full border-amber-200  rounded px-2 py-1 text-sm h-16 resize-none focus:border-amber-400 focus:outline-none" placeholder="Optional notes..."></textarea>
-                        </div>
-                        </div>
-
-
-
-                        <!-- Line Items Section - EXACT copy from detail.html -->
-                        <div class="kt-separator my-8"></div>
-
-                        <div class="kt-card kt-card-bordered">
-                            <div class="kt-card-header">
-                                <div class="kt-card-title">
-                                    <i class="ki-outline ki-element-11 text-lg text-primary me-2"></i>
-                                    <span class="kt-card-title-text">Line Items</span>
-                                </div>
-                                <div class="kt-card-toolbar">
-                                    <button type="button" id="add-line-btn" class="btn btn-primary btn-sm">
-                                        <i class="ki-outline ki-plus"></i>
-                                        Add Item
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="kt-card-body p-6">
-                                <div class="kt-datatable table-responsive">
-                                    <table class="kt-table kt-table-rounded w-full text-sm" id="lineItemsTable">
-                                        <thead class="bg-gray-50">
-                                            <tr class="text-gray-600 font-medium">
-                                                <th class="p-4">Product</th>
-                                                <th class="p-4 text-right">Quantity</th>
-                                                <th class="p-4 text-right">Unit</th>
-                                                <th class="p-4 text-right">Unit Price</th>
-                                                <th class="p-4 text-right">Total</th>
-                                                <th class="p-4 text-center">Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="line-items-container">
-                                            <!-- Empty state row -->
-                                            <tr id="no-lines-message">
-                                                <td colspan="6" class="p-8 text-center">
-                                                    <div class="kt-empty-state">
-                                                        <div class="kt-empty-state-icon">
-                                                            <i class="ki-outline ki-element-plus text-4xl text-gray-400"></i>
-                                                        </div>
-                                                        <div class="kt-empty-state-content">
-                                                            <div class="kt-empty-state-title">No line items added</div>
-                                                            <div class="kt-empty-state-description">Click "Add Item" to start adding products to this delivery</div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Action buttons are in modal footer -->
-                    </form>
+                 <div id="form-errors-container" class="mb-4">
+                    <!-- JS ще добави kt-alert тук, ако има грешки -->
                 </div>
+                <form id="delivery-form" method="post" action="{% url 'purchases:delivery_create' %}" class="kt-form" novalidate>
+                    {% csrf_token %}
+                    <input type="hidden" name="action_type" id="action_type" value="save_draft">
+
+                    <!-- Key Information -->
+                    <div class="mb-3 p-2 bg-blue-50 rounded-lg">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs font-medium text-gray-600 uppercase">Supplier *</label>
+                                <select name="partner_id" id="partner_id" class="kt-select w-full" data-kt-select="{}" required></select>
+                            </div>
+                            <div>
+                                <label class="text-xs font-medium text-gray-600 uppercase">Location *</label>
+                                <select name="location_id" id="location_id" class="kt-select w-full" data-kt-select="{}" required></select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Details -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
+                            <label class="text-xs font-medium text-gray-500 uppercase block">Document Date</label>
+                            {{ form.document_date }}
+                        </div>
+                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
+                            <label class="text-xs font-medium text-gray-500 uppercase block">Delivery Date</label>
+                            {{ form.delivery_date }}
+                        </div>
+                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
+                            <label class="text-xs font-medium text-gray-500 uppercase block">Supplier Reference</label>
+                            {{ form.supplier_delivery_reference }}
+                        </div>
+                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
+                            <label class="text-xs font-medium text-gray-500 uppercase block">Status</label>
+                            <div class="text-sm text-gray-800 leading-tight">Draft</div>
+                        </div>
+                    </div>
+
+                    <!-- Line Items Section -->
+                    <div class="kt-separator my-8"></div>
+                    <div class="kt-card kt-card-bordered">
+                        <div class="kt-card-header">
+                            <div class="kt-card-title">
+                                <i class="ki-outline ki-element-11 text-lg text-primary me-2"></i>
+                                <span class="kt-card-title-text">Line Items</span>
+                            </div>
+                            <div class="kt-card-toolbar">
+                                <button type="button" id="add-line-btn" class="btn btn-primary btn-sm">
+                                    <i class="ki-outline ki-plus"></i> Add Item
+                                </button>
+                            </div>
+                        </div>
+                        <div class="kt-card-body p-6">
+                            {{ line_formset.management_form }}
+
+                            <div class="kt-datatable table-responsive">
+                                <table class="kt-table kt-table-rounded w-full text-sm" id="lineItemsTable">
+                                    <thead class="bg-gray-50">
+                                        <tr>
+                                            <th class="p-4">Product</th>
+                                            <th class="p-4 text-right">Quantity</th>
+                                            <th class="p-4 text-right">Unit Price</th>
+                                            <th class="p-4 text-right">Unit</th>
+                                            <th class="p-4 text-right">Total</th>
+                                            <th class="p-4 text-center">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="line-items-container">
+                                        <!-- JS will add rows here -->
+                                        <tr id="no-lines-message">
+                                            <td colspan="6" class="p-8 text-center">
+                                                <div class="kt-empty-state">
+                                                    <div class="kt-empty-state-icon"><i class="ki-outline ki-element-plus text-4xl text-gray-400"></i></div>
+                                                    <div class="kt-empty-state-title">No line items added</div>
+                                                    <div class="kt-empty-state-description">Click "Add Item" to start</div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
-</div>
 
-<!-- JavaScript -->
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('delivery-form');
-    const actionTypeInput = document.getElementById('action_type');
-
-    // Initialize line items
-    let lineIndex = 0;
-
-    // Product data preparation
-    let productOptionsHtml = '<option value="">Select Product...</option>';
-    const productPackagingData = {};
-
-    {% for product in products %}
-    productOptionsHtml += '<option value="{{ product.pk }}" data-price="0">{{ product.name|escapejs }} ({{ product.code|escapejs }})</option>';
-
-    productPackagingData[{{ product.pk }}] = {
-        base_unit: {
-            id: {{ product.base_unit.pk }},
-            name: '{{ product.base_unit.name|escapejs }}',
-            symbol: '{{ product.base_unit.symbol|escapejs }}'
-        },
-        packagings: [
-            {% for packaging in product.packagings.all %}
-            {
-                unit_id: {{ packaging.unit.pk }},
-                unit_name: '{{ packaging.unit.name|escapejs }}',
-                unit_symbol: '{{ packaging.unit.symbol|escapejs }}',
-                conversion_factor: {{ packaging.conversion_factor }},
-                allow_purchase: {{ packaging.allow_purchase|yesno:"true,false" }}
-            }{% if not forloop.last %},{% endif %}
-            {% endfor %}
-        ]
-    };
-    {% endfor %}
-
-    window.productPackagingData = productPackagingData;
-
-    let unitOptionsHtml = '<option value="">Auto</option>';
-    {% for unit in units %}
-    unitOptionsHtml += '<option value="{{ unit.pk }}">{{ unit.code|escapejs }}</option>';
-    {% endfor %}
-
-    // Semantic action handling - AJAX submit to prevent modal closing
-    document.querySelectorAll('.semantic-action-btn').forEach(button => {
-        button.addEventListener('click', function(e) {
-            e.preventDefault();
-            // Get target_status from button's value attribute (not actionType)
-            const targetStatus = this.value;
-            // Set the hidden field for compatibility
-            actionTypeInput.value = targetStatus;
-
-            if (targetStatus === 'reject') {
-                const comments = prompt('Please provide a reason for rejection:');
-                if (!comments || comments.trim() === '') {
-                    showAlert('Rejection reason is required.', 'danger');
-                    return;
-                }
-
-                const commentsField = document.createElement('input');
-                commentsField.type = 'hidden';
-                commentsField.name = 'comments';
-                commentsField.value = comments.trim();
-                form.appendChild(commentsField);
-            }
-
-            // Store original HTML for reset on error
-            this.dataset.originalHtml = this.innerHTML;
-            
-            // Show loading state
-            this.disabled = true;
-            this.innerHTML = '<i class="ki-outline ki-loading animate-spin"></i> Processing...';
-
-            // Submit via AJAX instead of form.submit()
-            submitFormViaAjax(this);
-        });
-    });
-
-    // Add line item functionality
-    document.getElementById('add-line-btn').addEventListener('click', function() {
-        addLineItem();
-    });
-
-    function addLineItem() {
-        const container = document.getElementById('line-items-container');
-        const noLinesMessage = document.getElementById('no-lines-message');
-
-        if (noLinesMessage) {
-            noLinesMessage.remove();
-        }
-
-        const lineHtml = `
-            <tr class="hover:bg-gray-50 transition-colors line-item" data-index="${lineIndex}">
-                <td class="p-4">
-                    <select name="line_product_${lineIndex}" class="kt-select product-select w-full" data-kt-select="{}" required>
-                        ${productOptionsHtml}
-                    </select>
-                </td>
-                <td class="p-4 text-right">
-                    <input type="number"
-                           name="line_quantity_${lineIndex}"
-                           class="quantity-input w-20 text-right"
-                           min="0.001"
-                           step="0.001"
-                           placeholder="0"
-                           required>
-                </td>
-                <td class="p-4 text-right">
-                    <select name="line_unit_${lineIndex}" class="kt-select unit-select w-20" data-kt-select="{}">
-                        ${unitOptionsHtml}
-                    </select>
-                </td>
-                <td class="p-4 text-right">
-                    <div class="relative">
-                        <input type="number"
-                               name="line_unit_price_${lineIndex}"
-                               class="price-input w-24 text-right"
-                               min="0"
-                               step="0.01"
-                               placeholder="Auto">
-                        <span class="price-indicator absolute right-1 top-1 hidden"></span>
-                    </div>
-                </td>
-                <td class="p-4 text-right">
-                    <input type="text"
-                           name="line_total_${lineIndex}"
-                           class="total-display w-24 text-right bg-gray-100 font-mono font-semibold"
-                           readonly
-                           placeholder="0.00">
-                </td>
-                <td class="p-4 text-center">
-                    <button type="button" class="btn btn-icon btn-danger btn-sm remove-line-btn" title="Remove line">
-                        <i class="ki-outline ki-trash"></i>
-                    </button>
-                </td>
-                <!-- Hidden fields -->
-                <input type="hidden" name="line_notes_${lineIndex}" value="">
-            </tr>
-        `;
-
-        container.insertAdjacentHTML('beforeend', lineHtml);
-        lineIndex++;
-
-        // Attach event listeners
-        attachLineEventListeners(container.lastElementChild);
-        updateLineCount();
-
-        // Initialize KtUI components for the new line
-        initializeKtUIComponents(container.lastElementChild);
-    }
-
-    function attachLineEventListeners(lineElement) {
-        const productSelect = lineElement.querySelector('.product-select');
-        const priceInput = lineElement.querySelector('.price-input');
-        const unitSelect = lineElement.querySelector('.unit-select');
-        const quantityInput = lineElement.querySelector('.quantity-input');
-        const removeBtn = lineElement.querySelector('.remove-line-btn');
-
-        // Product selection change
-        productSelect.addEventListener('change', function() {
-            const productId = this.value;
-
-            if (productId && productPackagingData[productId]) {
-                const productData = productPackagingData[productId];
-
-                // Update unit dropdown
-                unitSelect.innerHTML = '';
-
-                // Add base unit
-                const baseOption = document.createElement('option');
-                baseOption.value = productData.base_unit.id;
-                baseOption.textContent = `${productData.base_unit.name} (${productData.base_unit.symbol})`;
-                unitSelect.appendChild(baseOption);
-
-                // Add packaging units
-                productData.packagings.forEach(packaging => {
-                    if (packaging.allow_purchase) {
-                        const option = document.createElement('option');
-                        option.value = packaging.unit_id;
-                        option.textContent = `${packaging.unit_name} (${packaging.conversion_factor} x ${productData.base_unit.symbol})`;
-                        unitSelect.appendChild(option);
-                    }
-                });
-
-                unitSelect.value = productData.base_unit.id;
-            }
-
-            calculateLineTotal(lineElement);
-            loadProductPricing(lineElement);
-        });
-
-        // Quantity and price changes
-        quantityInput.addEventListener('input', () => calculateLineTotal(lineElement));
-        priceInput.addEventListener('input', function() {
-            calculateLineTotal(lineElement);
-            updatePriceVarianceIndicator(this);
-        });
-
-        // Remove line
-        removeBtn.addEventListener('click', function() {
-            lineElement.remove();
-            updateLineCount();
-
-            if (document.querySelectorAll('.line-item').length === 0) {
-                showEmptyState();
-            }
-        });
-    }
-
-    function calculateLineTotal(lineElement) {
-        const quantity = parseFloat(lineElement.querySelector('.quantity-input').value) || 0;
-        const price = parseFloat(lineElement.querySelector('.price-input').value) || 0;
-        const total = quantity * price;
-
-        const totalDisplay = lineElement.querySelector('.total-display');
-        totalDisplay.value = total.toFixed(2);
-
-        // Update styling
-        if (total > 0) {
-            totalDisplay.classList.remove('text-danger');
-            totalDisplay.classList.add('text-success');
-        } else {
-            totalDisplay.classList.remove('text-success');
-            totalDisplay.classList.add('text-danger');
-        }
-    }
-
-    function updateLineCount() {
-        const lineItems = document.querySelectorAll('.line-item').length;
-        const lineCountElement = document.getElementById('line-count');
-        const validationStatus = document.getElementById('validation-status');
-
-        if (lineCountElement) {
-            lineCountElement.textContent = `${lineItems} item${lineItems !== 1 ? 's' : ''}`;
-        }
-
-        if (validationStatus) {
-            if (lineItems > 0) {
-                validationStatus.textContent = `Ready with ${lineItems} item${lineItems !== 1 ? 's' : ''}`;
-                validationStatus.className = 'kt-timeline-text text-sm font-semibold text-success';
-            } else {
-                validationStatus.textContent = 'No items added';
-                validationStatus.className = 'kt-timeline-text text-sm font-semibold text-warning';
-            }
-        }
-    }
-
-    function showEmptyState() {
-        const container = document.getElementById('line-items-container');
-        container.innerHTML = `
-            <tr id="no-lines-message">
-                <td colspan="6" class="p-8 text-center">
-                    <div class="kt-empty-state">
-                        <div class="kt-empty-state-icon">
-                            <i class="ki-outline ki-element-plus text-4xl text-gray-400"></i>
-                        </div>
-                        <div class="kt-empty-state-content">
-                            <div class="kt-empty-state-title">No line items added</div>
-                            <div class="kt-empty-state-description">Click "Add Item" to start adding products</div>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }
-
-    function loadProductPricing(lineElement) {
-        const productSelect = lineElement.querySelector('.product-select');
-        const priceInput = lineElement.querySelector('.price-input');
-        const productId = productSelect.value;
-
-        if (!productId) return;
-
-        const partnerId = document.getElementById('partner_id')?.value;
-        const locationId = document.getElementById('location_id')?.value;
-
-        if (!partnerId || !locationId) return;
-
-        // Show loading
-        priceInput.style.backgroundColor = '#f8f9fa';
-        priceInput.disabled = true;
-
-        fetch('{% url "purchases:ajax_product_pricing" %}', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-            },
-            body: new URLSearchParams({
-                'product_id': productId,
-                'partner_id': partnerId,
-                'location_id': locationId
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                priceInput.value = data.recommended_price;
-                priceInput.setAttribute('data-suggested-price', data.recommended_price);
-                priceInput.setAttribute('data-has-suggestion', 'true');
-
-                const indicator = priceInput.parentElement.querySelector('.price-indicator');
-                indicator.classList.remove('hidden');
-                indicator.innerHTML = '<i class="ki-outline ki-check text-success"></i>';
-                indicator.title = `Auto-suggested: ${data.recommended_price}`;
-
-                calculateLineTotal(lineElement);
-            }
-        })
-        .catch(error => {
-            console.error('Pricing error:', error);
-        })
-        .finally(() => {
-            priceInput.disabled = false;
-            priceInput.style.backgroundColor = '';
-        });
-    }
-
-    function updatePriceVarianceIndicator(priceInput) {
-        const hasSuggestion = priceInput.getAttribute('data-has-suggestion') === 'true';
-        const suggestedPrice = parseFloat(priceInput.getAttribute('data-suggested-price'));
-        const currentPrice = parseFloat(priceInput.value);
-
-        if (!hasSuggestion || isNaN(suggestedPrice) || isNaN(currentPrice)) return;
-
-        const indicator = priceInput.parentElement.querySelector('.price-indicator');
-
-        if (Math.abs(currentPrice - suggestedPrice) < 0.01) {
-            indicator.innerHTML = '<i class="ki-outline ki-check text-success"></i>';
-            indicator.title = `Auto-suggested: ${suggestedPrice}`;
-            return;
-        }
-
-        const variance = ((currentPrice - suggestedPrice) / suggestedPrice) * 100;
-        const isHigher = variance > 0;
-        const arrow = isHigher ? '↗' : '↙';
-        const colorClass = isHigher ? 'text-danger' : 'text-success';
-
-        indicator.innerHTML = `<span class="${colorClass}">${arrow}${Math.abs(variance).toFixed(1)}%</span>`;
-        indicator.title = `${Math.abs(variance).toFixed(1)}% ${isHigher ? 'higher' : 'lower'} than suggested (${suggestedPrice})`;
-    }
-
-    function initializeKtUIComponents(container) {
-        // Initialize KtUI select components
-        const selects = container.querySelectorAll('[data-kt-select]');
-        selects.forEach(select => {
-            if (window.KtSelect) {
-                new KtSelect(select);
-            }
-        });
-    }
-
-    function submitFormViaAjax(button) {
-        // Create FormData from the form
-        const formData = new FormData(form);
-        
-        fetch(form.action, {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
-            },
-            body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Success - close modal and redirect
-                showAlert(data.message, 'success');
-                setTimeout(() => {
-                    window.location.href = data.redirect_url;
-                }, 1500);
-            } else {
-                // Error - show error message but keep modal open
-                showAlert(data.message || 'An error occurred', 'danger');
-                
-                // Reset button state
-                button.disabled = false;
-                button.innerHTML = button.dataset.originalHtml || 'Submit';
-            }
-        })
-        .catch(error => {
-            console.error('Form submit error:', error);
-            showAlert('Network error. Please try again.', 'danger');
-            
-            // Reset button state
-            button.disabled = false;
-            button.innerHTML = button.dataset.originalHtml || 'Submit';
-        });
-    }
-
-    function showAlert(message, type = 'info') {
-        // Remove existing alerts first
-        const existingAlerts = document.querySelectorAll('.alert');
-        existingAlerts.forEach(alert => alert.remove());
-        
-        const alertHtml = `
-            <div class="alert alert-${type} alert-dismissible">
-                <div class="alert-icon">
-                    <i class="ki-outline ki-information-4"></i>
+    <!-- ## CORRECTED: Шаблон за нов ред, управляван от Django ## -->
+    <template id="line-item-template">
+        {% with form=line_formset.empty_form %}
+        <tr class="line-item" data-index="__prefix__">
+            {{ form.id }}
+            <td class="p-4">{{ form.product }} {{ form.product.errors }}</td>
+            <td class="p-4 text-right">{{ form.quantity }} {{ form.quantity.errors }}</td>
+            <td class="p-4 text-right">
+                <div class="relative">
+                    {{ form.unit_price }} {{ form.unit_price.errors }}
+                    <span class="price-indicator absolute right-1 top-1 hidden"></span>
                 </div>
-                <div class="alert-text">${message}</div>
-                <button type="button" class="btn btn-icon btn-xs alert-close">
-                    <i class="ki-outline ki-cross"></i>
+            </td>
+            <td class="p-4 text-right">{{ form.unit }} {{ form.unit.errors }}</td>
+            <td class="p-4 text-right">
+                <input type="text" class="total-display w-24 text-right bg-gray-100 font-mono font-semibold" readonly placeholder="0.00">
+            </td>
+            <td class="p-4 text-center">
+                <button type="button" class="btn btn-icon btn-sm remove-line-btn" title="Remove line">
+                    <i class="ki-outline ki-trash text-danger"></i>
                 </button>
-            </div>
-        `;
+                {% if form.can_delete %}<input type="checkbox" name="{{ form.DELETE.html_name }}" id="{{ form.DELETE.id_for_label }}" style="display: none;">{% endif %}
+            </td>
+            {{ form.notes }}
+        </tr>
+        {% endwith %}
+    </template>
 
-        const alertContainer = document.createElement('div');
-        alertContainer.innerHTML = alertHtml;
-        form.insertBefore(alertContainer.firstElementChild, form.firstElementChild);
-
-        // Auto-hide after 5 seconds
-        setTimeout(() => {
-            alertContainer.remove();
-        }, 5000);
+    <!-- ## CORRECTED: Скриптовете с данни са МЕСТЕНИ ВЪТРЕ в основния контейнер ## -->
+    <script data-available-actions='{{ available_actions_json|safe }}' type="application/json"></script>
+    <script id="delivery-form-data" type="application/json">
+    {
+        "products": {{ products_json|safe }},
+        "units": {{ units_json|safe }},
+        "suppliers": {{ suppliers_json|safe }},
+        "locations": {{ locations_json|safe }},
+        "today": "{{ today }}"
     }
-
-    // Form validation
-    form.addEventListener('submit', function(e) {
-        const partnerId = document.getElementById('partner_id').value;
-        if (!partnerId) {
-            e.preventDefault();
-            showAlert('Please select a supplier.', 'danger');
-            return;
-        }
-
-        const lineItems = document.querySelectorAll('.line-item');
-        const actionType = actionTypeInput.value;
-
-        if (lineItems.length === 0 && actionType !== 'save_draft') {
-            const proceed = confirm('No line items added. Continue with empty delivery?');
-            if (!proceed) {
-                e.preventDefault();
-                return;
-            }
-        }
-    });
-
-    // Auto-hide success messages
-    const successAlerts = document.querySelectorAll('.alert-primary, .alert-success');
-    successAlerts.forEach(alert => {
-        setTimeout(() => {
-            alert.style.opacity = '0';
-            setTimeout(() => alert.remove(), 300);
-        }, 5000);
-    });
-
-    // Initialize with one line item
-    addLineItem();
-});
-</script>
-
-<!-- Enhanced CSS for Metronic components -->
-<style>
-.kt-form-row {
-    @apply grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-6;
-}
-
-.kt-form-group {
-    @apply flex flex-col gap-2;
-}
-
-.line-item {
-    @apply transition-all duration-200 hover:shadow-lg;
-}
-
-.line-item .kt-form-row {
-    @apply grid grid-cols-1 lg:grid-cols-6 gap-4 mb-0;
-}
-
-.price-indicator {
-    @apply transition-all duration-200;
-}
-
-.total-display {
-    @apply font-mono font-semibold;
-}
-
-.kt-empty-state {
-    @apply text-center py-12;
-}
-
-.kt-empty-state-icon {
-    @apply mb-4;
-}
-
-.kt-empty-state-title {
-    @apply text-lg font-semibold text-gray-700 mb-2;
-}
-
-.kt-empty-state-description {
-    @apply text-sm text-gray-500;
-}
-
-.kt-timeline-item {
-    @apply flex items-center gap-4;
-}
-
-.kt-timeline-icon {
-    @apply flex items-center justify-center w-8 h-8 rounded-lg bg-gray-100;
-}
-
-.kt-timeline-content {
-    @apply flex-1;
-}
-.kt-timeline-label {
-    @apply block mb-1;
-}
-
-.kt-timeline-text {
-    @apply block;
-}
-</style>
-
-<!-- Available Actions Data for Modal JavaScript -->
-<script data-available-actions='{{ available_actions_json|safe }}' type="application/json"></script>
+    </script>
+</div>

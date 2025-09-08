@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Dict, List
 
@@ -12,9 +13,16 @@ from django.utils import timezone
 
 
 from core.utils.result import Result
+from inventory.models import InventoryLocation
+from nomenclatures.models import UnitOfMeasure
+from nomenclatures.services import DocumentCreator
+from nomenclatures.services._status_resolver import StatusResolver
+from partners.models import Supplier
+from products.models import Product
+from .forms import DeliveryLineFormSet, DeliveryReceiptForm
 from .models.deliveries import DeliveryReceipt, DeliveryLine
 from core.interfaces import ServiceResolverMixin
-from .services import PurchaseDocumentService
+from .services import PurchaseDocumentService, DeliveryReceiptService
 
 logger = logging.getLogger(__name__)
 class PurchasesIndexView(LoginRequiredMixin, TemplateView):
@@ -110,20 +118,26 @@ class DeliveryReceiptListView(LoginRequiredMixin, PermissionRequiredMixin, ListV
             'approved_count': all_deliveries.filter(status='approved').count(),
         }
 
-class  DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverMixin):
-    """
-    Modal-only Create Delivery Receipt view
 
-    Features:
-    - Modal-only interface (no standalone pages)
-    - Dynamic status resolution
-    - Semantic action handling
-    - Clean architecture compliance
-    - JSON responses for AJAX requests
+class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverMixin):
+    """
+    🆕 Enhanced delivery receipt creation with proper form layer
+    
+    ARCHITECTURE COMPLIANCE:
+    ✅ Uses DeliveryReceiptForm for main fields (partner_id, location_id, etc.)
+    ✅ Uses DeliveryLineFormSet for line items
+    ✅ Clean delegation to service layer
+    ✅ NO ad-hoc validation in view layer
     """
     model = DeliveryReceipt
+    form_class = DeliveryReceiptForm  # 🆕 Use proper form class
     template_name = 'frontend/purchases/deliveries/create_form.html'
-    fields = ['document_date', 'delivery_date', 'supplier_delivery_reference', 'notes']
+    
+    def get_form_kwargs(self):
+        """Remove instance parameter since we're using regular Form, not ModelForm"""
+        kwargs = super().get_form_kwargs()
+        kwargs.pop('instance', None)  # Remove instance parameter
+        return kwargs
 
     def get_success_url(self):
         return reverse('purchases:delivery_detail', kwargs={'pk': self.object.pk})
@@ -131,333 +145,273 @@ class  DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolver
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        # ✅ OPTIMIZED: Single try-except block with specific exception handling
         try:
-            from partners.models import Supplier
-            from inventory.models import InventoryLocation  
-            from products.models import Product
-            from nomenclatures.models import UnitOfMeasure
-            from .services.purchase_service import PurchaseDocumentService
-
-            # ✅ OPTIMIZED: Load all data with proper error handling
+            # 1. Зареждаме данните, нужни за JSON сериализация
             suppliers = Supplier.objects.filter(is_active=True).order_by('name')
             locations = InventoryLocation.objects.filter(is_active=True).order_by('name')
-            
-         
-            products = Product.objects.active().prefetch_related(
-                'packagings__unit'
-            ).order_by('name')
-            
+            products = Product.objects.active().prefetch_related('packagings__unit').order_by('name')
             units = UnitOfMeasure.objects.filter(is_active=True).order_by('name')
 
-
-            from purchases.models import DeliveryReceipt
-            from nomenclatures.services.creator import DocumentCreator
-            
-            # Create empty document instance (not saved to DB)
+            # 2. Логика за достъпните екшъни (остава същата)
             empty_delivery = DeliveryReceipt()
-            
-            # Set document_type from model class
             document_type = DocumentCreator._get_document_type_for_model(DeliveryReceipt)
             empty_delivery.document_type = document_type
-            
-            # Set initial status for new documents
             if document_type:
-                from nomenclatures.services._status_resolver import StatusResolver
                 initial_status = StatusResolver.get_initial_status(document_type)
                 empty_delivery.status = initial_status or 'draft'
             else:
                 empty_delivery.status = 'draft'
-            
-            # Get CREATION actions through service facade (different from DetailView)
+
             doc_service = PurchaseDocumentService(empty_delivery, self.request.user)
             raw_actions = doc_service.facade.get_creation_actions()
-            
-            logger.info(f"🔥 get_creation_actions() returned: {raw_actions}")
-            logger.info(f"🔥 empty_delivery.document_type: {empty_delivery.document_type}")
-            logger.info(f"🔥 empty_delivery status: {empty_delivery.status}")
-            
-            # ✅ NEW: Convert to template-compatible format for CREATION actions
-            available_actions = []
-            for action in raw_actions:
-                template_action = {
+            available_actions = [
+                {
                     'action_key': action.get('action', 'save_draft'),
                     'label': action.get('label', 'Запази'),
                     'button_class': action.get('button_style', 'btn-secondary'),
                     'icon': action.get('icon', 'ki-filled ki-document'),
                     'can_perform': action.get('can_perform', True),
-                    'target_status': action.get('target_status'),  # Creation-specific
+                    'target_status': action.get('target_status'),
                     'semantic_type': action.get('semantic_type', 'creation')
-                }
-                available_actions.append(template_action)
-                
-            logger.info(f"🔥 Final available_actions count: {len(available_actions)}")
+                } for action in raw_actions
+            ]
 
-        except ImportError as e:
-            logger.error(f"Failed to import required models: {e}")
-            suppliers, locations, products, units, available_actions = [], [], [], [], []
-            
+            # 3. Сериализираме данните в JSON за фронтенда
+            context.update({
+                'available_actions': available_actions,
+                'available_actions_json': json.dumps(available_actions),
+                'products_json': self.serialize_products(products),
+                'units_json': json.dumps([{'pk': u.pk, 'code': u.code} for u in units]),
+                'suppliers_json': json.dumps([{'pk': s.pk, 'name': s.name} for s in suppliers]),
+                'locations_json': json.dumps([{'pk': l.pk, 'name': l.name} for l in locations]),
+                'today': timezone.now().date().isoformat(),
+            })
+
+            # ✅ FIXED: Създаваме formset само веднъж
+            context['line_formset'] = self.get_line_formset()
+
         except Exception as e:
-            logger.error(f"Failed to load form context data: {e}")
-            suppliers, locations, products, units, available_actions = [], [], [], [], []
+            logger.error(f"Грешка при подготовка на контекста за DeliveryReceipt: {e}", exc_info=True)
+            # В случай на грешка, задаваме празни стойности, за да не се счупи шаблона
+            context['available_actions_json'] = '[]'
+            context['products_json'] = '[]'
+            context['units_json'] = '[]'
+            context['suppliers_json'] = '[]'
+            context['locations_json'] = '[]'
+            context['line_formset'] = DeliveryLineFormSet(prefix='lines')
 
-        # Convert available_actions to JSON for template
-        import json
-        available_actions_json = json.dumps(available_actions)
-        
-        context.update({
-            'page_title': 'New Delivery Receipt',
-            'form_mode': 'create.html',
-            'is_create_mode': True,  # Flag for creation vs transition actions
-            'suppliers': suppliers,
-            'locations': locations,
-            'products': products,
-            'units': units,
-            'today': timezone.now().date(),
-            'available_actions': available_actions,
-            'available_actions_json': available_actions_json,
-        })
         return context
 
+    def get_line_formset(self):
+        """✅ FIXED: Централизирано създаване на formset"""
+        if self.request.POST:
+            return DeliveryLineFormSet(self.request.POST, prefix='lines')
+        else:
+            return DeliveryLineFormSet(prefix='lines')
+
     def form_valid(self, form):
-        """
-        OPTIMIZED VIEW: Само data extraction и service delegation
-        
-        ✅ OPTIMIZED:
-        - БЕЗ business логика в VIEW
-        - БЕЗ manual document_type assignment (DocumentCreator го прави)  
-        - БЕЗ дублираща се валидация
-        - БЕЗ unused variables
-        - САМО делегация към PurchaseService
-        """
-        try:
-            from .services.purchase_service import DeliveryReceiptService
+        # ## ENHANCED: Подобрена formset валидация с structured error handling
+        line_formset = DeliveryLineFormSet(self.request.POST, prefix='lines')
+
+        if not line_formset.is_valid():
+            # Enhanced formset error processing
+            formatted_errors = self._process_formset_errors(line_formset)
+            error_msg = "Моля, поправете грешките в редовете."
             
-            # ✅ FIXED: Extract target_status from action_type (set by JavaScript)
+            if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({
+                    'success': False,
+                    'message': error_msg,
+                    'errors': {
+                        'form_errors': form.errors.as_json() if form.errors else {},
+                        'formset_errors': formatted_errors['line_errors'],
+                        'formset_non_field_errors': formatted_errors['non_field_errors'],
+                        'error_summary': self._generate_error_summary(form, line_formset)
+                    },
+                    'error_count': formatted_errors['total_count']
+                }, status=400)
+
+            # Add detailed error messages for non-AJAX requests
+            for i, line_errors in enumerate(formatted_errors['line_errors']):
+                if line_errors:
+                    messages.error(self.request, f"Ред {i+1}: {', '.join(line_errors.values())}")
+            
+            messages.error(self.request, error_msg)
+            return self.form_invalid(form)
+
+        # Данните от редовете са вече валидирани и почистени!
+        lines_data = line_formset.cleaned_data
+
+        try:
+            # 🆕 CLEAN DELEGATION - use form.cleaned_data (NO ad-hoc validation!)
             target_status = self.request.POST.get('action_type')
             if target_status == 'save_draft':
-                target_status = None  # No transition needed for save_draft
-            
-            form_data = {
-                'partner_id': self.request.POST.get('partner_id'),
-                'location_id': self.request.POST.get('location_id'),
-                'target_status': target_status,  # From creation action buttons
-                **form.cleaned_data
-            }
+                target_status = None
 
-            # ✅ BASIC UI VALIDATION: Only for immediate UX feedback
-            # Comprehensive validation is handled by DocumentService via PurchaseDocumentService
+            # ✅ Use validated form data - NO .objects.get() calls!
+            partner = form.cleaned_data['partner_id']  # Already validated by form
+            location = form.cleaned_data['location_id']  # Already validated by form
 
-            # ✅ ЧИСТА ДЕЛЕГАЦИЯ - Използвай съществуващия create.html метод
-            from partners.models import Supplier
-            from inventory.models import InventoryLocation
-            
-            # Convert form data to service parameters - validation delegated to service layer
-            try:
-                partner = Supplier.objects.get(id=form_data['partner_id']) if form_data.get('partner_id') else None
-                location = InventoryLocation.objects.get(id=form_data['location_id']) if form_data.get('location_id') else None
-            except (Supplier.DoesNotExist, InventoryLocation.DoesNotExist):
-                # Let service layer handle validation and provide better error messages
-                partner = None if not form_data.get('partner_id') else None
-                location = None if not form_data.get('location_id') else None
-            
-            # Extract lines from POST data
-            lines = self._extract_lines_from_post(self.request.POST)
-            logger.info(f"🔥 Extracted {len(lines)} lines: {[str(line.get('product', 'NO_PRODUCT')) for line in lines]}")
-            
-            target_status_param = form_data.get('target_status')
-            logger.info(f"🔥 Calling DeliveryReceiptService.create.html with target_status='{target_status_param}'")
-            logger.info(f"🔥 Complete form_data: {form_data}")
-            
             result = DeliveryReceiptService.create(
                 user=self.request.user,
                 partner=partner,
                 location=location,
-                lines=lines,
-                target_status=target_status_param,
-                document_date=form_data.get('document_date'),
-                delivery_date=form_data.get('delivery_date'),
-                supplier_delivery_reference=form_data.get('supplier_delivery_reference', ''),
-                comments=form_data.get('notes', '')
+                lines=lines_data,  # <-- Подаваме чистите, валидирани данни
+                target_status=target_status,
+                document_date=form.cleaned_data.get('document_date'),
+                delivery_date=form.cleaned_data.get('delivery_date'),
+                supplier_delivery_reference=form.cleaned_data.get('supplier_delivery_reference', ''),
+                comments=form.cleaned_data.get('notes', '')
             )
 
-            # ✅ OPTIMIZED: Handle result with EXACT error messages
+            # Логиката за обработка на резултата си остава същата, защото е отлична
             if result.ok:
                 self.object = result.data['document']
                 final_status = result.data.get('final_status', self.object.status)
-                
-                # For AJAX requests, return JSON response
+                message = f'Документ {self.object.document_number} е създаден със статус: {final_status}'
+
                 if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
                     return JsonResponse({
-                        'success': True,
-                        'message': f'Delivery Receipt {self.object.document_number} created with status: {final_status}',
-                        'document_id': self.object.pk,
-                        'document_number': self.object.document_number,
-                        'redirect_url': self.get_success_url()
+                        'success': True, 'message': message, 'redirect_url': self.get_success_url()
                     })
-                
-                messages.success(
-                    self.request,
-                    f'Delivery Receipt {self.object.document_number} created with status: {final_status}'
-                )
+                messages.success(self.request, message)
                 return redirect(self.get_success_url())
             else:
-                # ✅ DETAILED ERROR HANDLING: Show all validation errors to user
-                if result.code == 'VALIDATION_FAILED' and result.data and 'errors' in result.data:
-                    # Show each validation error separately for better UX
-                    validation_errors = result.data['errors']
-                    
-                    # For AJAX requests, return JSON immediately with specific errors
-                    if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                        error_messages = []
-                        for error in validation_errors:
-                            error_messages.append(f"Validation Error: {error}")
-                        
-                        # Add warnings if any
-                        if 'warnings' in result.data and result.data['warnings']:
-                            for warning in result.data['warnings']:
-                                error_messages.append(f"Warning: {warning}")
-                        
-                        return JsonResponse({
-                            'success': False,
-                            'message': '; '.join(error_messages),
-                            'errors': validation_errors,
-                            'warnings': result.data.get('warnings', [])
-                        })
-                    
-                    # For regular requests, add messages and continue
-                    for error in validation_errors:
-                        messages.error(self.request, f"Validation Error: {error}")
-                    
-                    # Also show warnings if any
-                    if 'warnings' in result.data and result.data['warnings']:
-                        for warning in result.data['warnings']:
-                            messages.warning(self.request, f"Warning: {warning}")
-                    
-                    logger.error(f"Validation failed with {len(validation_errors)} errors: {validation_errors}")
-                else:
-                    # Generic error handling for non-validation errors
-                    error_message = f"Document creation failed: {result.msg}"
-                    
-                    # For AJAX requests, return JSON immediately
-                    if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                        return JsonResponse({
-                            'success': False,
-                            'message': error_message,
-                            'service_error': result.msg
-                        })
-                    
-                    # For regular requests, add message and continue
-                    messages.error(self.request, error_message)
-                    logger.error(f"DeliveryReceiptService.create.html() failed: {result.msg}")
-                    
+                # Връщаме грешката от service-а
+                if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({'success': False, 'message': result.msg}, status=400)
+                messages.error(self.request, f"Създаването на документ се провали: {result.msg}")
                 return self.form_invalid(form)
 
-        except ImportError as e:
-            import traceback
-            full_traceback = traceback.format_exc()
-            logger.error(f"Failed to import DeliveryReceiptService: {e}\nFull traceback: {full_traceback}")
-            messages.error(self.request, f'Import failed: {str(e)}')
-            return self.form_invalid(form)
-            
         except Exception as e:
-            logger.error(f"Form processing failed: {e}")
-            messages.error(self.request, f'Unexpected error: {str(e)}')
+            logger.error(f"Неочаквана грешка при form_valid: {e}", exc_info=True)
+            error_msg = f'Възникна неочаквана грешка: {str(e)}'
+            if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'message': error_msg}, status=500)
+            messages.error(self.request, error_msg)
             return self.form_invalid(form)
 
     def form_invalid(self, form):
-        """Handle form validation errors - return JSON for AJAX requests"""
+        # Логиката тук е добра, само я правим по-чиста за AJAX
         if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            # Collect all form errors
-            error_messages = []
-            
-            # Field errors
-            for field, errors in form.errors.items():
-                for error in errors:
-                    if field == '__all__':
-                        error_messages.append(error)
-                    else:
-                        field_name = form.fields.get(field, {}).get('label', field)
-                        error_messages.append(f"{field_name}: {error}")
-            
-            # Non-field errors
-            for error in form.non_field_errors():
-                error_messages.append(error)
-                
+            # ✅ FIXED: Използваме централизираната get_line_formset метод
+            line_formset = self.get_line_formset()
+            line_formset.is_valid()  # За да се попълни .errors
+
+            # ✅ FIXED: Match JavaScript expected structure with double nesting
+            form_errors = dict(form.errors.items())
+            formset_errors = [dict(line_form.errors.items()) for line_form in line_formset.forms]
+            formset_non_field_errors = []
+            if line_formset.non_form_errors():
+                formset_non_field_errors = list(line_formset.non_form_errors())
+
             return JsonResponse({
                 'success': False,
-                'message': '; '.join(error_messages) if error_messages else 'Validation failed',
-                'errors': form.errors
-            })
-        
-        # Regular HTML response for non-AJAX requests
+                'message': 'Моля, попълнете правилно всички задължителни полета.',
+                'errors': {
+                    'errors': {  # ✅ Match JavaScript expectation
+                        'form_errors': form_errors,
+                        'formset_errors': formset_errors,
+                        'formset_non_field_errors': formset_non_field_errors
+                    }
+                }
+            }, status=400)
+
         return super().form_invalid(form)
 
-    def _extract_lines_from_post(self, post_data):
+    def _process_formset_errors(self, formset) -> dict:
         """
-        Extract product lines from POST data
+        🆕 Enhanced formset error processing with structured output
         
-        Expected form fields:
-        - line_product_0, line_product_1, etc.
-        - line_quantity_0, line_quantity_1, etc.  
-        - line_unit_price_0, line_unit_price_1, etc.
-        - line_unit_0, line_unit_1, etc.
+        Args:
+            formset: Django formset instance
+            
+        Returns:
+            dict: Structured error data with counts and formatted messages
         """
-        lines = []
-        from products.models import Product
-        from decimal import Decimal
+        line_errors = []
+        non_field_errors = []
+        total_count = 0
         
-        # Find all line indices by looking for line_product_* fields
-        line_indices = []
-        for key in post_data.keys():
-            if key.startswith('line_product_') and post_data[key]:
-                try:
-                    index = int(key.split('_')[-1])
-                    line_indices.append(index)
-                except ValueError:
-                    continue
+        # Process individual form errors
+        for i, form in enumerate(formset.forms):
+            form_errors = {}
+            
+            # Field-specific errors
+            for field_name, error_list in form.errors.items():
+                if field_name != '__all__':
+                    form_errors[field_name] = [str(error) for error in error_list]
+                    total_count += len(error_list)
+                else:
+                    # Non-field errors for this form
+                    non_field_errors.extend([f"Ред {i+1}: {error}" for error in error_list])
+                    total_count += len(error_list)
+            
+            line_errors.append(form_errors)
         
-        # Process each line
-        for index in sorted(line_indices):
-            try:
-                product_id = post_data.get(f'line_product_{index}')
-                quantity_str = post_data.get(f'line_quantity_{index}', '0')
-                price_str = post_data.get(f'line_unit_price_{index}', '0')
-                unit_id = post_data.get(f'line_unit_{index}')
-                
-                # Skip empty lines
-                if not product_id or not quantity_str:
-                    continue
-                
-                # Get product object
-                product = Product.objects.get(id=product_id)
-                quantity = Decimal(quantity_str)
-                unit_price = Decimal(price_str) if price_str else Decimal('0')
-                
-                line_data = {
-                    'product': product,
-                    'quantity': quantity,
-                    'unit_price': unit_price,
-                    'notes': post_data.get(f'line_notes_{index}', ''),
-                }
-                
-                # Add unit if selected
-                if unit_id:
-                    from nomenclatures.models import UnitOfMeasure
-                    try:
-                        unit = UnitOfMeasure.objects.get(id=unit_id)
-                        line_data['unit'] = unit
-                    except UnitOfMeasure.DoesNotExist:
-                        logger.warning(f"Unit {unit_id} not found for line {index}")
-                
-                lines.append(line_data)
-                
-            except (Product.DoesNotExist, ValueError, TypeError) as e:
-                logger.warning(f"Skipping invalid line {index}: {e}")
-                continue
+        # Process formset-level non-field errors
+        if formset.non_form_errors():
+            non_field_errors.extend([str(error) for error in formset.non_form_errors()])
+            total_count += len(formset.non_form_errors())
         
-        logger.info(f"Extracted {len(lines)} valid lines from POST data")
-        return lines
+        return {
+            'line_errors': line_errors,
+            'non_field_errors': non_field_errors,
+            'total_count': total_count
+        }
+    
+    def _generate_error_summary(self, form, formset) -> str:
+        """
+        🆕 Generate user-friendly error summary
+        
+        Args:
+            form: Main form instance
+            formset: Formset instance
+            
+        Returns:
+            str: Human-readable error summary
+        """
+        error_parts = []
+        
+        # Count form errors
+        form_error_count = sum(len(errors) for errors in form.errors.values())
+        if form_error_count > 0:
+            error_parts.append(f"{form_error_count} грешки в основната форма")
+        
+        # Count formset errors
+        formset_error_count = 0
+        for form_instance in formset.forms:
+            formset_error_count += sum(len(errors) for errors in form_instance.errors.values())
+        
+        if formset_error_count > 0:
+            error_parts.append(f"{formset_error_count} грешки в редовете")
+        
+        if not error_parts:
+            return "Неизвестни грешки във формата"
+            
+        return "Намерени " + " и ".join(error_parts) + "."
+
+    def serialize_products(self, products_queryset):
+        """Хелпър метод за сериализация на продуктите, за да е по-чист get_context_data."""
+        products_data = []
+        for p in products_queryset:
+            products_data.append({
+                'pk': p.pk,
+                'name': p.name,
+                'code': p.code,
+                'base_unit': {
+                    'pk': p.base_unit.pk, 'name': p.base_unit.name, 'symbol': p.base_unit.symbol
+                } if p.base_unit else None,
+                'packagings': [
+                    {
+                        'unit_id': pkg.unit.pk,
+                        'unit_name': pkg.unit.name,
+                        'unit_symbol': pkg.unit.symbol,
+                        'conversion_factor': float(pkg.conversion_factor)
+                    } for pkg in p.packagings.filter(allow_purchase=True)
+                ]
+            })
+        return json.dumps(products_data)
 
 
 class DeliveryReceiptUpdateView(LoginRequiredMixin, PermissionRequiredMixin, UpdateView, ServiceResolverMixin):

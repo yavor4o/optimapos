@@ -787,39 +787,33 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="text-muted ms-3">Loading form...</div>
             </div>
 
-            <!-- Content State - hidden initially -->
-            <div id="contentState" style="display: none;">
-                <!-- Will be populated by JavaScript -->
-            </div>
+            <!-- Content State - ще бъде попълнен динамично от JS -->
+            <div id="contentState" style="display: none;"></div>
         </div>
-        
+
         <div class="kt-modal-footer justify-end">
             <button type="button" class="btn btn-light" data-kt-modal-dismiss="true">Cancel</button>
             <div id="modal-action-buttons" class="ms-3">
-                <!-- Action buttons will be loaded dynamically -->
+                <!-- Action бутоните ще бъдат заредени динамично от JS -->
             </div>
         </div>
     </div>
 </div>
 
 <!-- Import JS Modules -->
-<script type="module">
-import { showCreateDeliveryModal } from '{% static "js/purchases/deliveries/delivery-modal.js" %}';
-import { DeliveryForm } from '{% static "js/purchases/deliveries/delivery-form.js" %}';
-import { pricingManager } from '{% static "js/purchases/deliveries/product-pricing.js" %}';
-import { uiComponents } from '{% static "js/purchases/deliveries/ui-components.js" %}';
+<<script type="module">
+    import { showCreateDeliveryModal } from '{% static "js/purchases/deliveries/delivery-modal.js" %}';
 
-// Make showCreateDeliveryModal globally available for onclick handlers
-window.showCreateDeliveryModal = showCreateDeliveryModal;
+    // Правим функцията достъпна глобално, за да може `onclick` атрибутът да я намери.
+    window.showCreateDeliveryModal = showCreateDeliveryModal;
 
-// Initialize components on page load
-document.addEventListener('DOMContentLoaded', function() {
-    // Modal is initialized by DeliveryModal class
-    console.log('Delivery management modules loaded successfully');
-    
-    // Initialize any existing UI components on the page
-    uiComponents.initializeSelects(document);
-});
+    // Инициализираме Metronic компонентите на основната страница
+    document.addEventListener('DOMContentLoaded', function() {
+        if (window.KTDrawer) KTDrawer.init();
+        if (window.KTSelect) {
+            document.querySelectorAll('[data-kt-select]').forEach(el => new KTSelect(el));
+        }
+    });
 </script>
 
 {% endblock %}
