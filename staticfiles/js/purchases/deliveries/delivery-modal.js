@@ -92,7 +92,7 @@ export class DeliveryModal {
             actions.forEach(action => {
                 const button = document.createElement('button');
                 button.type = 'button'; // Важно: типът е button, за да не събмитва формата директно
-                button.className = `btn ${action.button_class || 'btn-secondary'} semantic-action-btn`;
+                button.className = `kt-btn ${action.button_class || 'kt-btn-secondary'} semantic-action-btn`;
                 button.innerHTML = `<i class="${action.icon || ''} text-sm me-2"></i> ${action.label}`;
 
                 // Запазваме данните в `dataset` атрибути

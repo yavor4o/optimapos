@@ -242,7 +242,7 @@
     @slot;
   }
 
-  .kt-menu-item.active > .kt-menu-link.& {
+  .kt-menu-item.active > .kt-menu-link {
     @slot;
   }
 
@@ -250,7 +250,7 @@
     @slot;
   }
 
-  .kt-menu-item.active > .kt-menu-label.& {
+  .kt-menu-item.active > .kt-menu-label {
     @slot;
   }
 
@@ -258,7 +258,7 @@
     @slot;
   }
 
-  .kt-menu-item.active > .kt-menu-toggle.& {
+  .kt-menu-item.active > .kt-menu-toggle {
     @slot;
   }
 }
@@ -273,7 +273,7 @@
     @slot;
   }
 
-  .kt-menu-item.here > .kt-menu-link.& {
+  .kt-menu-item.here > .kt-menu-link {
     @slot;
   }
 
@@ -281,7 +281,7 @@
     @slot;
   }
 
-  .kt-menu-item.here > .kt-menu-label.& {
+  .kt-menu-item.here > .kt-menu-label {
     @slot;
   }
 
@@ -289,7 +289,7 @@
     @slot;
   }
 
-  .kt-menu-item.here > .kt-menu-toggle.& {
+  .kt-menu-item.here > .kt-menu-toggle {
     @slot;
   }
 }
@@ -304,7 +304,7 @@
     @slot;
   }
 
-  .kt-menu-item.show > .kt-menu-link.& {
+  .kt-menu-item.show > .kt-menu-link {
     @slot;
   }
 
@@ -312,7 +312,7 @@
     @slot;
   }
 
-  .kt-menu-item.show > .kt-menu-label.& {
+  .kt-menu-item.show > .kt-menu-label {
     @slot;
   }
 
@@ -320,7 +320,7 @@
     @slot;
   }
 
-  .kt-menu-item.show > .kt-menu-toggle.& {
+  .kt-menu-item.show > .kt-menu-toggle {
     @slot;
   }
 }
@@ -335,7 +335,7 @@
     @slot;
   }
 
-  .kt-menu-item.disabled > .kt-menu-link.& {
+  .kt-menu-item.disabled > .kt-menu-link {
     @slot;
   }
 
@@ -343,7 +343,7 @@
     @slot;
   }
 
-  .kt-menu-item.disabled > .kt-menu-label.& {
+  .kt-menu-item.disabled > .kt-menu-label {
     @slot;
   }
 
@@ -351,7 +351,7 @@
     @slot;
   }
 
-  .kt-menu-item.disabled > .kt-menu-toggle.& {
+  .kt-menu-item.disabled > .kt-menu-toggle {
     @slot;
   }
 }

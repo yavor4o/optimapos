@@ -771,30 +771,40 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <!-- Full Screen Metronic Modal -->
-<div class="kt-modal kt-modal-full-screen" data-kt-modal="true" id="createDeliveryModal">
-    <div class="kt-modal-content">
+<div class="kt-modal" data-kt-modal="true" id="createDeliveryModal">
+    <div class="kt-modal-content h-full">
         <div class="kt-modal-header">
-            <h3 class="kt-modal-title">Create New Delivery Receipt</h3>
-            <button class="btn btn-sm btn-icon btn-light" data-kt-modal-dismiss="true">
-                <i class="ki-filled ki-cross"></i>
+            <div class="flex items-center gap-3">
+                <h3 class="kt-modal-title">Create New Delivery Receipt</h3>
+                <span class="kt-badge kt-badge-sm kt-badge-light-primary">Draft Mode</span>
+            </div>
+            <button type="button" class="kt-modal-close" aria-label="Close modal" data-kt-modal-dismiss="#createDeliveryModal">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x" aria-hidden="true">
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+                </svg>
             </button>
         </div>
         
-        <div class="kt-modal-body pe-2 h-100 overflow-auto" id="createDeliveryModalBody">
+        <div class="kt-modal-body pe-2" id="createDeliveryModalBody">
             <!-- Loading State -->
-            <div id="loadingState" class="d-flex align-items-center justify-content-center h-100">
-                <div class="spinner-border text-primary"></div>
-                <div class="text-muted ms-3">Loading form...</div>
+            <div id="loadingState" class="flex items-center justify-center h-full">
+                <div class="flex items-center gap-3">
+                    <div class="spinner-border text-primary"></div>
+                    <div class="text-muted">Loading form...</div>
+                </div>
             </div>
 
             <!-- Content State - ще бъде попълнен динамично от JS -->
             <div id="contentState" style="display: none;"></div>
         </div>
 
-        <div class="kt-modal-footer justify-end">
-            <button type="button" class="btn btn-light" data-kt-modal-dismiss="true">Cancel</button>
-            <div id="modal-action-buttons" class="ms-3">
-                <!-- Action бутоните ще бъдат заредени динамично от JS -->
+        <div class="kt-modal-footer">
+            <div class="flex gap-4 ms-auto">
+                <button type="button" class="kt-btn kt-btn-secondary" data-kt-modal-dismiss="#createDeliveryModal">Cancel</button>
+                <div id="modal-action-buttons" class="flex gap-2">
+                    <!-- Action бутоните ще бъдат заредени динамично от JS -->
+                </div>
             </div>
         </div>
     </div>

@@ -13,7 +13,7 @@ from core.utils.decimal_utils import round_currency
 from .models.deliveries import DeliveryReceipt
 
 
-class DeliveryReceiptForm(forms.Form):
+class DeliveryReceiptForm(forms.ModelForm):
     """
     🆕 Main form for delivery receipt - includes ALL required fields
     """
@@ -80,6 +80,10 @@ class DeliveryReceiptForm(forms.Form):
             'placeholder': 'Бележки'
         })
     )
+
+    class Meta:
+        model = DeliveryReceipt
+        fields = ['document_date', 'delivery_date', 'supplier_delivery_reference', 'notes']
 
 class DeliveryLineForm(forms.Form):
     """
@@ -158,6 +162,20 @@ class DeliveryLineForm(forms.Form):
         widget=forms.HiddenInput()
     )
 
+    def clean_quantity(self):
+        """Additional quantity-specific validation"""
+        quantity = self.cleaned_data.get('quantity')
+        
+        if quantity:
+            # Round to 3 decimal places for consistency
+            quantity = round(quantity, 3)
+            
+            # Business rule: reasonable quantity ranges per type
+            if quantity > Decimal('9999.999'):
+                raise ValidationError('Количеството превишава максимално позволеното (9999.999)')
+
+        return quantity
+
     def clean(self):
         """
         🆕 Enhanced cross-field валидация with business rules
@@ -179,77 +197,32 @@ class DeliveryLineForm(forms.Form):
 
             # Check if product is active
             if not getattr(product, 'is_active', True):
-                errors['product'] = 'Този продукт вече не е активен'
-
-        # 2. Quantity business rules
-        if quantity:
-            # Maximum reasonable quantity check (business rule)
-            if quantity > Decimal('10000'):
-                errors['quantity'] = 'Количеството е нереалистично голямо (максимум 10,000)'
-
-            # Minimum meaningful quantity
-            if quantity < Decimal('0.001'):
-                errors['quantity'] = 'Количеството е твърде малко'
-
-        # 3. Price validation with product context
-        if unit_price and product:
-            # Price reasonableness check
-            if unit_price > Decimal('100000'):
-                errors['unit_price'] = 'Цената изглежда нереалистично висока'
-
-            # Zero price warning (not error, but worth noting)
-            if unit_price == Decimal('0'):
-                # Add a context note but don't block
-                cleaned_data['_price_warning'] = 'Цена 0.00 - моля потвърдете'
-
-        # 4. Unit compatibility with product
-        if unit and product and hasattr(product, 'base_unit'):
-            # Check if selected unit is compatible with product
-            if product.base_unit and unit != product.base_unit:
-                # Verify unit is in product's packaging units
-                compatible_units = []
-                if hasattr(product, 'packagings'):
-                    compatible_units = [p.unit.pk for p in product.packagings.all()]
+                errors['product'] = 'Този продукт не е активен'
                 
-                if product.base_unit.pk not in compatible_units:
-                    compatible_units.append(product.base_unit.pk)
-                
-                if unit.pk not in compatible_units:
-                    errors['unit'] = f'Мерната единица не е съвместима с {product.name}'
+            # 🆕 PIECE product quantity validation
+            if product.unit_type == Product.PIECE and quantity is not None:
+                if quantity != int(quantity):
+                    errors['quantity'] = 'Въведете валидно количество, За бройкови артикули числото трябва да е цяло!'
 
-        # 5. Calculate line total if both values present
-        if quantity and unit_price:
-            try:
-                line_total = round_currency(quantity * unit_price)
-                cleaned_data['_calculated_total'] = line_total
-                
-                # Warn if line total is very high
-                if line_total > Decimal('50000'):
-                    cleaned_data['_total_warning'] = 'Общата сума за реда е много висока'
-                    
-            except (ValueError, TypeError) as e:
-                errors['__all__'] = 'Грешка при изчисляване на общата сума за реда'
+        # 2. Unit consistency validation
+        if product and unit:
+            # Verify unit is compatible with product
+            if hasattr(product, 'is_unit_compatible'):
+                if not product.is_unit_compatible(unit):
+                    errors['unit'] = f'Мерната единица {unit} не е съвместима с продукта'
 
-        # Raise validation errors if any
+        # 3. Mandatory field relationships
+        if product and not quantity:
+            errors['quantity'] = 'Количеството е задължително когато е избран продукт'
+        
+        if product and unit_price is None:
+            errors['unit_price'] = 'Цената е задължителна когато е избран продукт'
+
         if errors:
             # Create structured ValidationError for better handling
             raise ValidationError(errors)
 
         return cleaned_data
-
-    def clean_quantity(self):
-        """Additional quantity-specific validation"""
-        quantity = self.cleaned_data.get('quantity')
-        
-        if quantity:
-            # Round to 3 decimal places for consistency
-            quantity = round(quantity, 3)
-            
-            # Business rule: reasonable quantity ranges per type
-            if quantity > Decimal('9999.999'):
-                raise ValidationError('Количеството превишава максимално позволеното (9999.999)')
-
-        return quantity
 
     def clean_unit_price(self):
         """Additional price-specific validation"""

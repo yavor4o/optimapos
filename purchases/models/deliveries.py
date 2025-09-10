@@ -1,5 +1,6 @@
 # purchases/models/delivery.py - REFACTORED WITH SERVICE DELEGATION
-
+import datetime
+from datetime import date
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -209,12 +210,16 @@ class DeliveryReceipt(BaseDocument, FinancialMixin,PaymentMixin):
         """Model-level validation"""
         super().clean()
 
+        # Ensure we're working with date objects
+        if self.delivery_date:
+            # Force conversion to date
+            if isinstance(self.delivery_date, datetime.datetime):
+                self.delivery_date = self.delivery_date.date()
 
-        # Basic field validation - delivery_date (allow today)
-        if self.delivery_date and self.delivery_date > timezone.now().date():
-            raise ValidationError({
-                'delivery_date': _('Delivery date cannot be in the future')
-            })
+            if self.delivery_date > date.today():
+                raise ValidationError({
+                    'delivery_date': _('Delivery date cannot be in the future')
+                })
 
     def save(self, *args, **kwargs):
         """Enhanced save with auto-timestamps"""

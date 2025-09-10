@@ -283,7 +283,7 @@ class DocumentService:
                 'action': 'save_draft',
                 'label': f'Запази като {initial_status}',
                 'target_status': initial_status,
-                'button_style': 'btn-secondary',
+                'button_style': 'kt-btn-secondary',
                 'icon': 'ki-filled ki-document',
                 'can_perform': True
             }]
@@ -298,7 +298,7 @@ class DocumentService:
                     'action': 'save_and_next',
                     'label': f'Запази и премини към {next_status}',
                     'target_status': next_status,
-                    'button_style': 'btn-primary',
+                    'button_style': 'kt-btn-secondary',
                     'icon': 'ki-filled ki-arrow-right',
                     'can_perform': True
                 })

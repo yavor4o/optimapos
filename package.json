@@ -12,9 +12,9 @@
     "scripts": {
         "test": "echo \"Error: no test specified\" && exit 1",
         "build:js": "webpack --mode=development",
-        "build:css": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./dist/assets/css/styles.css",
-        "build:css:watch": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./dist/assets/css/styles.css --watch",
-        "build:prod": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./dist/assets/css/styles.css --minify && npx webpack --env production",
+        "build:css": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./staticfiles/css/styles.css",
+        "build:css:watch": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./staticfiles/css/styles.css --watch",
+        "build:prod": "npx @tailwindcss/cli -i ./src/css/styles.css -o ./staticfiles/css/styles.css --minify && npx webpack --env production",
         "build": "npm run build:css && npm run build:js --mode=development",
         "lint": "npx eslint src/core --ext .ts"
     },

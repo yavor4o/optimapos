@@ -2,16 +2,10 @@
 
 {% load static %}
 
-<!-- Контейнер за формата, който се инжектира в модала -->
-<div class="w-full h-full px-6 py-4" data-form-context="modal-create">
-    <div class="grid grid-cols-1 gap-6 mt-6">
+<!-- Форма за създаване на доставка -->
+<div class="grid grid-cols-1 gap-6" data-form-context="modal-create">
         <div class="kt-card rounded-xl shadow-sm border border-gray-100">
-            <div class="kt-card-header p-6 border-b border-gray-200">
-                <div class="flex items-center gap-3">
-                    <h3 class="kt-card-title text-lg font-semibold text-gray-900">Create New Delivery Receipt</h3>
-                    <span class="kt-badge kt-badge-sm kt-badge-light-primary">Draft Mode</span>
-                </div>
-            </div>
+
 
             <div class="kt-card-body p-4">
                  <div id="form-errors-container" class="mb-4">
@@ -21,114 +15,306 @@
                     {% csrf_token %}
                     <input type="hidden" name="action_type" id="action_type" value="save_draft">
 
-                    <!-- Key Information -->
-                    <div class="mb-3 p-2 bg-blue-50 rounded-lg">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                                <label class="text-xs font-medium text-gray-600 uppercase">Supplier *</label>
-                                <select name="partner_id" id="partner_id" class="kt-select w-full" data-kt-select="{}" required></select>
+                    <!-- 🏢📅🚚🔍 SECTIONS 1,2,3&4: Basic Information + Dates & References + Delivery & Transport + Quality Control (4-Block Row) -->
+                    <div class="mb-6 grid grid-cols-4 gap-4">
+                        <!-- Basic Information Block -->
+                        <div class="p-4 bg-blue-50 rounded-lg border border-gray-200">
+                            <h4 class="text-sm font-semibold text-blue-900 mb-3 flex items-center">
+                                <i class="ki-outline ki-user-square text-blue-600 me-2"></i>
+                                Basic Information
+                            </h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Supplier *</label>
+                                    <div class="flex items-center gap-2">
+                                        <select name="partner_id" id="partner_id" class="kt-select "
+                                                data-kt-select="true"
+                                                data-kt-select-enable-search="true"
+                                                data-kt-select-placeholder="Select supplier..."
+                                                data-kt-select-search-placeholder="Search suppliers..."
+                                                data-kt-select-search-empty="No suppliers found"
+                                                data-kt-select-config='{
+                                                    "optionsClass": "kt-scrollable overflow-auto max-h-[250px]"
+                                                }'
+                                                required></select>
+                                        <button type="button" id="advanced-supplier-search" 
+                                                class="btn btn-icon btn-sm btn-light-primary" 
+                                                title="Advanced supplier search">
+                                            <i class="ki-outline ki-magnifier text-sm"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Location *</label>
+                                    <select name="location_id" id="location_id" class="kt-select w-full" data-kt-select="{}" required></select>
+                                </div>
                             </div>
-                            <div>
-                                <label class="text-xs font-medium text-gray-600 uppercase">Location *</label>
-                                <select name="location_id" id="location_id" class="kt-select w-full" data-kt-select="{}" required></select>
+                        </div>
+
+                        <!-- Dates & References Block -->
+                        <div class="p-4 bg-blue-50  rounded-lg border border-gray-200">
+                            <h4 class="text-sm font-semibold text-neutral-900 mb-3 flex items-center">
+                                <i class="ki-outline ki-calendar text-gray-800 me-2"></i>
+                                Dates & References
+                            </h4>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Document Date *</label>
+                                    {{ form.document_date }}
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Delivery Date *</label>
+                                    {{ form.delivery_date }}
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Supplier Reference</label>
+                                    {{ form.supplier_delivery_reference }}
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Status</label>
+                                    <div class="flex flex-wrap gap-2.5">
+                                    <span class="kt-badge kt-badge-light   ">Draft</span>
+                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Delivery & Transport Block -->
+                        <div class="p-4 bg-blue-50  rounded-lg border border-gray-200">
+                            <h4 class="text-sm font-semibold text-neutral-800 mb-3 flex items-center">
+                                <i class="ki-outline ki-delivery text-neutral-800 me-2"></i>
+                                Delivery & Transport
+                            </h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Driver Name</label>
+                                    <input type="text" name="delivery_driver_name" class="kt-input w-full" placeholder="Driver name...">
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Vehicle Number</label>
+                                    <input type="text" name="delivery_vehicle_number" class="kt-input w-full" placeholder="Vehicle registration...">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quality Control Block -->
+                        <div class="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                            <h4 class="text-sm font-semibold text-orange-900 mb-3 flex items-center">
+                                <i class="ki-outline ki-shield-tick text-orange-600 me-2"></i>
+                                Quality Control
+                            </h4>
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Quality Status</label>
+                                    <select name="quality_status" class="kt-select w-full" data-kt-select="{}">
+                                        <option value="pending" selected>Pending QC</option>
+                                        <option value="approved">✅ Approved</option>
+                                        <option value="rejected">❌ Rejected</option>
+                                        <option value="partial">⚠️ Partial</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Quality Notes</label>
+                                    <textarea name="quality_notes" class="kt-input w-full h-16 resize-none text-xs" placeholder="Initial observations..."></textarea>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Details -->
-                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
-                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                            <label class="text-xs font-medium text-gray-500 uppercase block">Document Date</label>
-                            {{ form.document_date }}
-                        </div>
-                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                            <label class="text-xs font-medium text-gray-500 uppercase block">Delivery Date</label>
-                            {{ form.delivery_date }}
-                        </div>
-                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                            <label class="text-xs font-medium text-gray-500 uppercase block">Supplier Reference</label>
-                            {{ form.supplier_delivery_reference }}
-                        </div>
-                        <div class="px-2 py-2 bg-white rounded-md shadow-sm">
-                            <label class="text-xs font-medium text-gray-500 uppercase block">Status</label>
-                            <div class="text-sm text-gray-800 leading-tight">Draft</div>
+                    <!-- 💰 SECTION 5: Payment Information -->
+                    <div class="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200" id="payment-section">
+                        <h4 class="text-sm font-semibold text-neutral-800 mb-3 flex items-center">
+                            <i class="ki-outline ki-wallet text-neutral-800 me-2"></i>
+                            Payment Information
+                            <small class="text-xs text-gray-500 ml-2">(Optional - can be set later)</small>
+                        </h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" name="is_paid" id="is_paid" class="kt-checkbox">
+                                    <span class="text-sm font-medium text-gray-700">Mark as Paid</span>
+                                </label>
+                            </div>
+                            <div id="payment_date_field" class="hidden">
+                                <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Payment Date</label>
+                                <input type="date" name="payment_date" class="kt-input w-full">
+                            </div>
+                            <div id="payment_method_field" class="hidden">
+                                <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Payment Method</label>
+                                <select name="payment_method" class="kt-select w-full" data-kt-select="{}">
+                                    <option value="">Select method...</option>
+                                    <option value="cash">Cash</option>
+                                    <option value="bank_transfer">Bank Transfer</option>
+                                    <option value="card">Card</option>
+                                    <option value="check">Check</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
+
 
                     <!-- Line Items Section -->
                     <div class="kt-separator my-8"></div>
-                    <div class="kt-card kt-card-bordered">
+                    <div class="kt-card">
                         <div class="kt-card-header">
-                            <div class="kt-card-title">
-                                <i class="ki-outline ki-element-11 text-lg text-primary me-2"></i>
-                                <span class="kt-card-title-text">Line Items</span>
-                            </div>
+                            <h3 class="kt-card-title">Line Items</h3>
                             <div class="kt-card-toolbar">
-                                <button type="button" id="add-line-btn" class="btn btn-primary btn-sm">
-                                    <i class="ki-outline ki-plus"></i> Add Item
+                                <button type="button" id="add-line-btn" class="kt-btn kt-btn-sm kt-btn-primary">
+                                    <i class="ki-filled ki-plus"></i> Add Item
                                 </button>
                             </div>
                         </div>
-                        <div class="kt-card-body p-6">
+                        <div class="kt-card-table kt-scrollable-x-auto">
                             {{ line_formset.management_form }}
-
-                            <div class="kt-datatable table-responsive">
-                                <table class="kt-table kt-table-rounded w-full text-sm" id="lineItemsTable">
-                                    <thead class="bg-gray-50">
-                                        <tr>
-                                            <th class="p-4">Product</th>
-                                            <th class="p-4 text-right">Quantity</th>
-                                            <th class="p-4 text-right">Unit Price</th>
-                                            <th class="p-4 text-right">Unit</th>
-                                            <th class="p-4 text-right">Total</th>
-                                            <th class="p-4 text-center">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="line-items-container">
-                                        <!-- JS will add rows here -->
-                                        <tr id="no-lines-message">
-                                            <td colspan="6" class="p-8 text-center">
-                                                <div class="kt-empty-state">
-                                                    <div class="kt-empty-state-icon"><i class="ki-outline ki-element-plus text-4xl text-gray-400"></i></div>
-                                                    <div class="kt-empty-state-title">No line items added</div>
-                                                    <div class="kt-empty-state-description">Click "Add Item" to start</div>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
+                            <table class="kt-table table-fixed" id="lineItemsTable">
+                                <thead>
+                                    <tr>
+                                        <th class="text-start w-[250px]">Product</th>
+                                        <th class="text-center w-[100px]">Quantity</th>
+                                        <th class="text-center w-[110px]">Unit Price</th>
+                                        <th class="text-center w-[80px]">Unit</th>
+                                        <th class="text-center w-[120px]">Batch & Expiry</th>
+                                        <th class="text-center w-[100px]">Quality</th>
+                                        <th class="text-center w-[110px]">Total</th>
+                                        <th class="text-center w-[80px]">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="line-items-container">
+                                    <!-- JS will add rows here -->
+                                    <tr id="no-lines-message">
+                                        <td colspan="8" class="text-center py-8">
+                                            <div class="flex flex-col items-center">
+                                                <i class="ki-filled ki-element-plus text-4xl text-gray-400 mb-4"></i>
+                                                <div class="text-lg font-semibold text-gray-800 mb-2">No line items added</div>
+                                                <div class="text-sm text-gray-500">Click "Add Item" to start adding products</div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </form>
             </div>
         </div>
-    </div>
 
-    <!-- ## CORRECTED: Шаблон за нов ред, управляван от Django ## -->
+    <!-- ## ENHANCED: Шаблон за нов ред с всички полета ## -->
     <template id="line-item-template">
         {% with form=line_formset.empty_form %}
         <tr class="line-item" data-index="__prefix__">
             {{ form.id }}
-            <td class="p-4">{{ form.product }} {{ form.product.errors }}</td>
-            <td class="p-4 text-right">{{ form.quantity }} {{ form.quantity.errors }}</td>
-            <td class="p-4 text-right">
-                <div class="relative">
-                    {{ form.unit_price }} {{ form.unit_price.errors }}
-                    <span class="price-indicator absolute right-1 top-1 hidden"></span>
+            
+            <!-- Product Column -->
+            <td class="text-start">
+                {{ form.product }}
+                {{ form.product.errors }}
+            </td>
+            
+            <!-- Quantity Column -->
+            <td class="text-center">
+                <div class="flex flex-col items-center">
+                    {{ form.quantity }}
+                    {{ form.quantity.errors }}
+                    <span class="quantity-validation-hint text-xs text-gray-500"></span>
                 </div>
             </td>
-            <td class="p-4 text-right">{{ form.unit }} {{ form.unit.errors }}</td>
-            <td class="p-4 text-right">
-                <input type="text" class="total-display w-24 text-right bg-gray-100 font-mono font-semibold" readonly placeholder="0.00">
+            
+            <!-- Unit Price Column -->
+            <td class="text-center">
+                <div class="flex flex-col items-center">
+                    {{ form.unit_price }}
+                    {{ form.unit_price.errors }}
+                </div>
             </td>
-            <td class="p-4 text-center">
-                <button type="button" class="btn btn-icon btn-sm remove-line-btn" title="Remove line">
-                    <i class="ki-outline ki-trash text-danger"></i>
-                </button>
-                {% if form.can_delete %}<input type="checkbox" name="{{ form.DELETE.html_name }}" id="{{ form.DELETE.id_for_label }}" style="display: none;">{% endif %}
+            
+            <!-- Unit Column -->
+            <td class="text-center">
+                <div class="flex flex-col items-center">
+                    {{ form.unit }}
+                    {{ form.unit.errors }}
+                </div>
             </td>
-            {{ form.notes }}
+            
+            <!-- Batch & Expiry Column -->
+            <td class="text-center">
+                <div class="flex flex-col gap-2">
+                    <input type="text" name="lines-__prefix__-batch_number" 
+                           class="kt-input text-xs" 
+                           placeholder="Batch #..." 
+                           title="Batch/Lot number for traceability">
+                    <input type="date" name="lines-__prefix__-expiry_date" 
+                           class="kt-input text-xs" 
+                           title="Product expiry date">
+                </div>
+            </td>
+            
+            <!-- Quality Column -->
+            <td class="text-center">
+                <div class="flex flex-col gap-2">
+                    <select name="lines-__prefix__-quality_approved" 
+                            class="kt-select text-xs" 
+                            data-kt-select="{}"
+                            title="Initial quality assessment">
+                        <option value="">Pending</option>
+                        <option value="true">Approved</option>
+                        <option value="false">Rejected</option>
+                    </select>
+                    <div class="quality-issue-field hidden">
+                        <select name="lines-__prefix__-quality_issue_type" 
+                                class="kt-select text-xs" 
+                                data-kt-select="{}"
+                                title="Type of quality issue">
+                            <option value="">No Issues</option>
+                            <option value="damaged">Damaged</option>
+                            <option value="expired">Expired</option>
+                            <option value="wrong_product">Wrong Product</option>
+                            <option value="wrong_quantity">Wrong Quantity</option>
+                            <option value="poor_quality">Poor Quality</option>
+                            <option value="packaging_issues">Packaging Issues</option>
+                            <option value="other">Other Issues</option>
+                        </select>
+                    </div>
+                </div>
+            </td>
+            
+            <!-- Total Column -->
+            <td class="text-center">
+                <div class="text-sm font-semibold text-gray-800">
+                    <span class="total-display">0.00</span> лв
+                </div>
+                <div class="text-xs text-gray-500">
+                    <span class="variance-indicator"></span>
+                </div>
+            </td>
+            
+            <!-- Actions Column -->
+            <td class="text-center">
+                <div class="flex justify-center items-center gap-1">
+                    <button type="button" class="kt-btn kt-btn-icon kt-btn-sm kt-btn-light notes-toggle-btn" 
+                            title="Toggle notes">
+                        <i class="ki-outline ki-notepad text-sm"></i>
+                    </button>
+                    <button type="button" class="kt-btn kt-btn-icon kt-btn-sm kt-btn-light-danger remove-line-btn" 
+                            title="Remove line">
+                        <i class="ki-outline ki-trash text-sm"></i>
+                    </button>
+                </div>
+                
+                <!-- Hidden DELETE checkbox for formset -->
+                {% if form.can_delete %}
+                    <input type="checkbox" name="{{ form.DELETE.html_name }}" 
+                           id="{{ form.DELETE.id_for_label }}" class="hidden">
+                {% endif %}
+                
+                <!-- Hidden Notes Field (expandable) -->
+                <div class="notes-field mt-2 hidden">
+                    <textarea name="lines-__prefix__-notes" 
+                              class="kt-input text-xs" 
+                              rows="2"
+                              placeholder="Line notes..."></textarea>
+                </div>
+            </td>
         </tr>
         {% endwith %}
     </template>
@@ -144,4 +330,124 @@
         "today": "{{ today }}"
     }
     </script>
+    
+    <!-- Load Supplier Picker Module -->
+    <script type="module" src="{% static 'js/purchases/deliveries/supplier-picker.js' %}"></script>
+</div>
+
+<!-- Supplier Picker Modal -->
+<div class="kt-modal" id="supplierPickerModal" tabindex="-1" aria-hidden="true">
+    <div class="kt-modal-backdrop"></div>
+    <div class="kt-modal-container">
+        <div class="kt-modal-content max-w-4xl">
+            <div class="kt-modal-header">
+                <h3 class="kt-modal-title">Advanced Supplier Search</h3>
+                <button type="button" class="kt-btn kt-btn-sm kt-btn-icon kt-btn-light" data-kt-modal-dismiss="#supplierPickerModal">
+                    <i class="ki-outline ki-cross text-lg"></i>
+                </button>
+            </div>
+            <div class="kt-modal-body">
+                <!-- Search and Filter Controls -->
+                <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Search</label>
+                            <input type="text" id="supplier-search-input" class="kt-input w-full" 
+                                   placeholder="Search by name, code, or contact...">
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Division</label>
+                            <select id="supplier-division-filter" class="kt-select w-full" data-kt-select="{}">
+                                <option value="">All Divisions</option>
+                                <option value="food">Food & Beverages</option>
+                                <option value="alcohol">Alcohol</option>
+                                <option value="tobacco">Tobacco</option>
+                                <option value="household">Household</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs font-medium text-gray-700 uppercase block mb-1">Active Status</label>
+                            <select id="supplier-status-filter" class="kt-select w-full" data-kt-select="{}">
+                                <option value="active">Active Only</option>
+                                <option value="all">All Suppliers</option>
+                                <option value="inactive">Inactive Only</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <button type="button" id="clear-supplier-filters" class="kt-btn kt-btn-sm kt-btn-light">
+                            <i class="ki-outline ki-filter-remove text-sm me-1"></i>
+                            Clear Filters
+                        </button>
+                        <button type="button" id="search-suppliers" class="kt-btn kt-btn-sm kt-btn-primary ms-2">
+                            <i class="ki-outline ki-magnifier text-sm me-1"></i>
+                            Search
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="supplier-loading" class="text-center py-8 hidden">
+                    <div class="inline-flex items-center gap-2">
+                        <div class="kt-spinner"></div>
+                        <span>Searching suppliers...</span>
+                    </div>
+                </div>
+
+                <!-- Results Table -->
+                <div id="supplier-results-container">
+                    <div class="kt-scrollable-x-auto">
+                        <table class="kt-table" id="supplier-results-table">
+                            <thead>
+                                <tr>
+                                    <th class="text-start w-[250px]">Supplier</th>
+                                    <th class="text-center w-[100px]">Code</th>
+                                    <th class="text-center w-[120px]">Division</th>
+                                    <th class="text-center w-[100px]">Contact</th>
+                                    <th class="text-center w-[80px]">Status</th>
+                                    <th class="text-center w-[100px]">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="supplier-results-body">
+                                <!-- Results will be populated by JavaScript -->
+                                <tr id="no-suppliers-message">
+                                    <td colspan="6" class="text-center py-8">
+                                        <div class="flex flex-col items-center">
+                                            <i class="ki-filled ki-magnifier text-4xl text-gray-400 mb-4"></i>
+                                            <div class="text-lg font-semibold text-gray-800 mb-2">No suppliers found</div>
+                                            <div class="text-sm text-gray-500">Try adjusting your search criteria</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Pagination -->
+                <div id="supplier-pagination" class="mt-4 flex justify-between items-center hidden">
+                    <div class="text-sm text-gray-600">
+                        Showing <span id="results-start">1</span> to <span id="results-end">10</span> 
+                        of <span id="results-total">0</span> suppliers
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="button" id="prev-page" class="kt-btn kt-btn-sm kt-btn-light" disabled>
+                            <i class="ki-outline ki-left text-sm"></i>
+                            Previous
+                        </button>
+                        <button type="button" id="next-page" class="kt-btn kt-btn-sm kt-btn-light" disabled>
+                            Next
+                            <i class="ki-outline ki-right text-sm"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="kt-modal-footer">
+                <button type="button" class="kt-btn kt-btn-secondary" data-kt-modal-dismiss="#supplierPickerModal">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
 </div>

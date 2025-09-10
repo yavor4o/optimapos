@@ -20,4 +20,7 @@ urlpatterns = [
     
     # Ajax endpoints
     path('ajax/product-pricing/', views.ProductPricingAjaxView.as_view(), name='ajax_product_pricing'),
+    
+    # API endpoints
+    path('api/suppliers/search/', views.SupplierSearchAPIView.as_view(), name='api_supplier_search'),
 ]

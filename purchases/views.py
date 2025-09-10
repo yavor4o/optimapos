@@ -1,14 +1,14 @@
 import json
 import logging
-from typing import Dict, List
+from typing import  List
 
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import  get_object_or_404, redirect
 from django.views.generic import TemplateView, ListView, DetailView, CreateView, UpdateView, View
 from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
 from django.contrib import messages
-from django.urls import reverse_lazy, reverse
+from django.urls import  reverse
 from django.http import JsonResponse
-from django.db import transaction, models
+from django.db import  models
 from django.utils import timezone
 
 
@@ -147,7 +147,7 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
 
         try:
             # 1. Зареждаме данните, нужни за JSON сериализация
-            suppliers = Supplier.objects.filter(is_active=True).order_by('name')
+            suppliers = self._get_optimized_supplier_list()
             locations = InventoryLocation.objects.filter(is_active=True).order_by('name')
             products = Product.objects.active().prefetch_related('packagings__unit').order_by('name')
             units = UnitOfMeasure.objects.filter(is_active=True).order_by('name')
@@ -277,9 +277,18 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                 messages.success(self.request, message)
                 return redirect(self.get_success_url())
             else:
-                # Връщаме грешката от service-а
+                # Връщаме грешката от service-а в същия формат като form errors
                 if self.request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-                    return JsonResponse({'success': False, 'message': result.msg}, status=400)
+                    return JsonResponse({
+                        'success': False,
+                        'message': result.msg,
+                        'errors': {
+                            'errors': {
+                                'error_count': 1,
+                                'error_list': [f"Бизнес логика: {result.msg}"]
+                            }
+                        }
+                    }, status=400)
                 messages.error(self.request, f"Създаването на документ се провали: {result.msg}")
                 return self.form_invalid(form)
 
@@ -304,6 +313,32 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             formset_non_field_errors = []
             if line_formset.non_form_errors():
                 formset_non_field_errors = list(line_formset.non_form_errors())
+                
+            # ✅ Calculate error statistics
+            form_error_count = sum(len(errors) for errors in form_errors.values())
+            formset_error_count = sum(len(line_errors) for line_errors in formset_errors for line_errors in line_errors.values())
+            total_errors = form_error_count + formset_error_count
+            
+            # ✅ Build error summary list
+            error_list = []
+            
+            # Add form errors
+            for field_name, messages in form_errors.items():
+                field_label = form[field_name].label or field_name.replace('_', ' ').title()
+                for message in messages:
+                    error_list.append(f"{field_label}: {message}")
+            
+            # Add formset errors  
+            for line_idx, line_errors in enumerate(formset_errors):
+                if line_errors:  # Only if line has errors
+                    for field_name, messages in line_errors.items():
+                        field_label = field_name.replace('_', ' ').title()
+                        for message in messages:
+                            error_list.append(f"Ред {line_idx + 1} - {field_label}: {message}")
+            
+            # Add formset non-field errors
+            for error in formset_non_field_errors:
+                error_list.append(f"Формсет: {error}")
 
             return JsonResponse({
                 'success': False,
@@ -312,7 +347,9 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
                     'errors': {  # ✅ Match JavaScript expectation
                         'form_errors': form_errors,
                         'formset_errors': formset_errors,
-                        'formset_non_field_errors': formset_non_field_errors
+                        'formset_non_field_errors': formset_non_field_errors,
+                        'error_count': total_errors,
+                        'error_list': error_list
                     }
                 }
             }, status=400)
@@ -390,6 +427,88 @@ class DeliveryReceiptCreateView(LoginRequiredMixin, CreateView, ServiceResolverM
             return "Неизвестни грешки във формата"
             
         return "Намерени " + " и ".join(error_parts) + "."
+
+    def _get_optimized_supplier_list(self):
+        """
+        🆕 OPTIMIZED: Get smart supplier list (recent + popular, ~100 items)
+        
+        Strategy:
+        1. Get suppliers used in recent deliveries (last 90 days) 
+        2. Get most frequently used suppliers (all time)
+        3. Combine and dedupe, prioritize recent usage
+        4. Limit to ~100 items for performance
+        
+        Returns:
+            QuerySet: Optimized supplier list
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.db.models import Count, Q
+        
+        try:
+            # Define time window for "recent" activity
+            recent_cutoff = timezone.now() - timedelta(days=90)
+            
+            # 1. Get suppliers from recent deliveries (last 90 days)
+            recent_supplier_ids = DeliveryReceipt.objects.filter(
+                created_at__gte=recent_cutoff,
+                partner_content_type__model='supplier'
+            ).values_list('partner_object_id', flat=True).distinct()[:50]
+            
+            # 2. Get most popular suppliers (by delivery count, all time)
+            popular_supplier_ids = DeliveryReceipt.objects.filter(
+                partner_content_type__model='supplier'
+            ).values('partner_object_id').annotate(
+                delivery_count=Count('id')
+            ).order_by('-delivery_count').values_list('partner_object_id', flat=True)[:30]
+            
+            # 3. Combine recent and popular, remove duplicates
+            priority_supplier_ids = list(recent_supplier_ids) + [
+                sid for sid in popular_supplier_ids if sid not in recent_supplier_ids
+            ]
+            
+            # 4. Build final queryset with priority ordering (PostgreSQL compatible)
+            if priority_supplier_ids:
+                # Get priority suppliers first (converted to list for ordering)
+                priority_suppliers = list(Supplier.objects.filter(
+                    pk__in=priority_supplier_ids,
+                    is_active=True
+                ))
+                
+                # Sort by the priority_supplier_ids order
+                priority_dict = {supplier_id: index for index, supplier_id in enumerate(priority_supplier_ids)}
+                priority_suppliers.sort(key=lambda s: priority_dict.get(s.pk, 999))
+                
+                # Add other active suppliers (alphabetically) to fill to ~100
+                remaining_count = 100 - len(priority_supplier_ids)
+                if remaining_count > 0:
+                    other_suppliers = list(Supplier.objects.filter(
+                        is_active=True
+                    ).exclude(
+                        pk__in=priority_supplier_ids
+                    ).order_by('name')[:remaining_count])
+                    
+                    # Combine lists
+                    combined_suppliers = priority_suppliers + other_suppliers
+                    
+                    # Convert back to queryset IDs for consistent processing
+                    all_ids = [s.pk for s in combined_suppliers]
+                    final_queryset = Supplier.objects.filter(pk__in=all_ids)
+                else:
+                    # Convert to queryset IDs
+                    all_ids = [s.pk for s in priority_suppliers]
+                    final_queryset = Supplier.objects.filter(pk__in=all_ids)
+            else:
+                # Fallback: just get alphabetical active suppliers if no usage data
+                final_queryset = Supplier.objects.filter(is_active=True).order_by('name')[:100]
+            
+            logger.info(f"Optimized supplier list: {final_queryset.count()} suppliers (recent: {len(recent_supplier_ids)}, popular: {len(popular_supplier_ids)})")
+            return final_queryset
+            
+        except Exception as e:
+            logger.error(f"Error getting optimized supplier list: {e}", exc_info=True)
+            # Fallback to simple active suppliers
+            return Supplier.objects.filter(is_active=True).order_by('name')[:100]
 
     def serialize_products(self, products_queryset):
         """Хелпър метод за сериализация на продуктите, за да е по-чист get_context_data."""
@@ -1091,6 +1210,141 @@ class DeliveryLineQualityCheckView(LoginRequiredMixin, PermissionRequiredMixin, 
             'success': False,
             'message': 'Invalid quality status'
         })
+
+
+class SupplierSearchAPIView(LoginRequiredMixin, View):
+    """
+    🆕 API endpoint for advanced supplier search with filters and pagination
+    
+    Features:
+    - Text search (name, code, contact person)
+    - Division filtering
+    - Status filtering (active/inactive)
+    - Pagination support
+    - Smart relevance ordering
+    """
+    
+    def post(self, request):
+        """Advanced supplier search with filters"""
+        try:
+            import json
+            data = json.loads(request.body)
+            
+            # Extract search parameters
+            search_term = data.get('search', '').strip()
+            division = data.get('division', '').strip()
+            status = data.get('status', 'active')
+            page = int(data.get('page', 1))
+            page_size = int(data.get('page_size', 10))
+            
+            # Build base queryset
+            queryset = Supplier.objects.select_related().prefetch_related('divisions')
+            
+            # Apply status filter
+            if status == 'active':
+                queryset = queryset.filter(is_active=True)
+            elif status == 'inactive':
+                queryset = queryset.filter(is_active=False)
+            # 'all' means no status filter
+            
+            # Apply text search
+            if search_term:
+                queryset = queryset.filter(
+                    models.Q(name__icontains=search_term) |
+                    models.Q(code__icontains=search_term) |
+                    models.Q(contact_person__icontains=search_term) |
+                    models.Q(vat_number__icontains=search_term) |
+                    models.Q(phone__icontains=search_term) |
+                    models.Q(email__icontains=search_term)
+                )
+            
+            # Apply division filter
+            if division:
+                queryset = queryset.filter(divisions__name__icontains=division)
+            
+            # Apply ordering (relevance + name)
+            if search_term:
+                # Prioritize exact name matches, then partial matches
+                queryset = queryset.extra(
+                    select={
+                        'name_exact': f"CASE WHEN LOWER(name) = LOWER('{search_term}') THEN 1 ELSE 0 END",
+                        'name_starts': f"CASE WHEN LOWER(name) LIKE LOWER('{search_term}%') THEN 1 ELSE 0 END"
+                    }
+                ).order_by('-name_exact', '-name_starts', 'name')
+            else:
+                queryset = queryset.order_by('name')
+            
+            # Apply pagination
+            from django.core.paginator import Paginator
+            paginator = Paginator(queryset, page_size)
+            
+            try:
+                suppliers_page = paginator.page(page)
+            except:
+                suppliers_page = paginator.page(1)
+                page = 1
+            
+            # Serialize suppliers
+            suppliers_data = []
+            for supplier in suppliers_page:
+                # Get primary division
+                primary_division = supplier.divisions.first()
+                division_name = primary_division.name if primary_division else ''
+                
+                suppliers_data.append({
+                    'id': supplier.pk,
+                    'name': supplier.name,
+                    'code': supplier.code,
+                    'vat_number': supplier.vat_number,
+                    'contact_person': supplier.contact_person,
+                    'phone': supplier.phone,
+                    'email': supplier.email,
+                    'is_active': supplier.is_active,
+                    'division': division_name,
+                    'city': supplier.city,
+                    'address': supplier.address,
+                })
+            
+            # Build pagination info
+            pagination_info = {
+                'current_page': page,
+                'total_pages': paginator.num_pages,
+                'total_count': paginator.count,
+                'page_size': page_size,
+                'has_previous': suppliers_page.has_previous(),
+                'has_next': suppliers_page.has_next(),
+                'start_index': suppliers_page.start_index(),
+                'end_index': suppliers_page.end_index(),
+            }
+            
+            return JsonResponse({
+                'success': True,
+                'suppliers': suppliers_data,
+                'pagination': pagination_info,
+                'search_info': {
+                    'search_term': search_term,
+                    'division': division,
+                    'status': status,
+                    'results_count': len(suppliers_data)
+                }
+            })
+            
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'message': 'Invalid JSON data'
+            }, status=400)
+        except ValueError as e:
+            return JsonResponse({
+                'success': False,
+                'message': f'Invalid parameters: {str(e)}'
+            }, status=400)
+        except Exception as e:
+            logger.error(f"Supplier search API error: {e}", exc_info=True)
+            return JsonResponse({
+                'success': False,
+                'message': 'Internal server error'
+            }, status=500)
 
 
 class ProductPricingAjaxView(LoginRequiredMixin, View):
